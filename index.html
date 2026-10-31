@@ -112,7 +112,9 @@ function prepare(){
 const spriteName=(i,j,z)=>z===0?'grass':'dirt'+hash(i,j,z);
 
 /* ---------- scene ---------- */
-let camY=0,shake=0,fx=[];
+let camY=0,camTarget=0,follow=true,shake=0,fx=[];
+const maxCam=()=>Math.min(cur(),DIG-1)*BH;   // ниже текущего слоя листать нельзя
+const clampCam=v=>Math.max(0,Math.min(maxCam(),v));
 const TOP=()=>Math.round(H*.30)-BH;          // где верх участка, когда камера наверху
 function org(i,j,z){return [Math.round(W/2+(i-j)*32-32),Math.round(TOP()+(i+j)*16+z*BH-camY)]}
 function blockExists(i,j,z){const a=isAct(i,j);return a<0||d[a]<=z}
@@ -123,7 +125,9 @@ function forEachBlock(fn){
     if(!blockExists(i,j,z))continue;const [x,y]=org(i,j,z);if(y>H||y<-BW)continue;fn(i,j,z,x,y)}
 }
 function draw(t){
-  const target=Math.min(cur(),DIG-1)*BH;camY+=(target-camY)*.12;if(Math.abs(target-camY)<.4)camY=target;
+  if(follow)camTarget=maxCam();
+  if(!drag&&Math.abs(vel)>.05){camTarget=clampCam(camTarget+vel);vel*=.92;if(camTarget>=maxCam())follow=true}
+  if(drag)camY=camTarget;else{camY+=(camTarget-camY)*.18;if(Math.abs(camTarget-camY)<.3)camY=camTarget}
   ctx.drawImage(bg,0,0);
   const sx=shake>0?(Math.random()<.5?-1:1):0,sy=shake>0?(Math.random()<.5?-1:0):0;if(shake>0)shake--;
   ctx.save();ctx.translate(sx,sy);
@@ -147,7 +151,18 @@ function hit(px,py){
 }
 const pickBtn=document.getElementById('pick');
 pickBtn.addEventListener('click',()=>{active=!active;pickBtn.setAttribute('aria-pressed',active);haptic('light')});
-cv.addEventListener('pointerdown',e=>{
+/* прокрутка: палец или мышь тянет участок вверх-вниз, колесо мыши листает */
+let drag=null,vel=0;
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);drag={y:e.clientY,cam:camTarget,moved:false,lastY:e.clientY,lastT:performance.now()};vel=0});
+cv.addEventListener('pointermove',e=>{if(!drag)return;const dy=(e.clientY-drag.y)/SCALE;
+  if(!drag.moved&&Math.abs(dy)>4)drag.moved=true;
+  if(drag.moved){camTarget=clampCam(drag.cam-dy);follow=camTarget>=maxCam();
+    const now=performance.now(),dt=Math.max(1,now-drag.lastT);vel=-(e.clientY-drag.lastY)/SCALE/dt*16;drag.lastY=e.clientY;drag.lastT=now}});
+const endDrag=e=>{if(!drag)return;const wasTap=!drag.moved,still=performance.now()-drag.lastT>80;drag=null;if(wasTap){vel=0;tap(e)}else if(still)vel=0};
+cv.addEventListener('pointerup',endDrag);
+cv.addEventListener('pointercancel',()=>{drag=null;vel=0});
+cv.addEventListener('wheel',e=>{e.preventDefault();vel=0;camTarget=clampCam(camTarget+e.deltaY/SCALE*.6);follow=camTarget>=maxCam()},{passive:false});
+function tap(e){
   const r=cv.getBoundingClientRect();const px=Math.floor((e.clientX-r.left)/SCALE),py=Math.floor((e.clientY-r.top)/SCALE);
   const a=hit(px,py);if(a<0)return;
   if(!active){pickBtn.classList.remove('nudge');void pickBtn.offsetWidth;pickBtn.classList.add('nudge');haptic('warn');return}
@@ -155,7 +170,7 @@ cv.addEventListener('pointerdown',e=>{
   const cols=z===0?['#46823a','#25562e','#4d2b32','#7a4836']:['#ad7757','#7a4841','#4d2b32','#341c27'];
   for(let k=0;k<16;k++)fx.push({x:x+32+(Math.random()-.5)*24,y:y+16+(Math.random()-.5)*10,vx:(Math.random()-.5)*2.2,vy:-Math.random()*2.6-.6,l:24+Math.random()*12|0,c:cols[k%4],s:Math.random()<.35?2:1});
   d[a]++;shake=5;haptic('light');
-});
+}
 
 function start(){prepare();resize();addEventListener('resize',resize);if(tg)tg.onEvent&&tg.onEvent('viewportChanged',resize);requestAnimationFrame(draw)}
 </script>
