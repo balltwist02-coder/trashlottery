@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Копаю участок</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+<style>
+/* Layout: full-height Telegram Mini App — pixel scene fills the screen, tool bar pinned to the bottom. */
+:root{
+  --bg:#1b2a3a; --bar:#14202c; --slot:#22344a; --slot-edge:#2f4a66; --slot-dark:#0e1620;
+  --active:#f2c14e; --active-glow:rgba(242,193,78,.35); --fg:#e9f0ee; --muted:#8fa3ad;
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
+body{background:var(--bg);color:var(--fg);font:14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+.app{position:fixed;inset:0;display:flex;flex-direction:column}
+.stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#2f4f7a}
+canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none}
+.depth{position:absolute;right:max(10px,env(safe-area-inset-right,0px));top:10px;font:600 12px ui-monospace,Menlo,Consolas,monospace;color:var(--fg);background:rgba(10,16,24,.55);padding:3px 7px;border-radius:4px;pointer-events:none;font-variant-numeric:tabular-nums}
+.bar{flex:none;background:var(--bar);border-top:2px solid var(--slot-dark);display:flex;justify-content:center;gap:8px;padding-top:10px;padding-bottom:max(12px,env(safe-area-inset-bottom,0px));padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
+.slot{width:54px;height:54px;padding:0;display:grid;place-items:center;background:var(--slot);border:0;border-radius:2px;cursor:pointer;
+  box-shadow:inset 0 0 0 2px var(--slot-edge),inset 0 -4px 0 0 var(--slot-dark);transition:transform .08s}
+.slot:disabled{cursor:default;opacity:.55}
+.slot canvas{position:static;transform:none;width:48px;height:48px}
+.slot[aria-pressed="true"]{background:#3a3220;box-shadow:inset 0 0 0 2px var(--active),inset 0 -4px 0 0 #8a6a1e,0 0 0 2px var(--slot-dark),0 0 14px var(--active-glow);transform:translateY(-3px)}
+.slot:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.slot.nudge{animation:nudge .35s}
+@keyframes nudge{0%,100%{transform:none}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+@media (prefers-reduced-motion:reduce){.slot{transition:none}.slot.nudge{animation:none}}
+</style>
+
+<div class="app">
+  <div class="stage" id="stage">
+    <canvas id="cv" aria-label="Участок"></canvas>
+    <div class="depth" id="depth">0 / 30</div>
+  </div>
+  <div class="bar" role="toolbar" aria-label="Инструменты">
+    <button class="slot" id="pick" aria-pressed="false" aria-label="Кирка"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+  </div>
+</div>
+
+<script>
+const IMG={dirt0:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAEs0lEQVR4nM1bTWvbQBAdQSEGH+RDa3Cob4ESHBNw+hty8x/ttbf8hxRKXELBlxKIIfXBPhjkk3twR16NZ3Znv6S8SxxJu9J783Z2tJIAOsR8MjvMJ7NDl9fwoYuTIunpuPy/5fj/918/iravpdUTnhNv4ullCwDtCtHKiVzEKdoUIusJXMTvbofw+POt/kvRhhBZOrYRv7sdqvowBckpRNIk6EMcI28DOiNnskzSEUdcG2ktcjkiqoM2iFOkFiKoYRfEKVIJ4dUghrhmzIcgVgjVge8h4jbQKdRHCOsBscRzRV06F4VGCHbHe4+4Btqh0diQIuJSG5sbQvdprwfBCVEAyAVMyInbtL0GrqFRzCezQ0zJGovcgnECIB4Wr1CYCxJdCpEDEvmHxSsAAGz20BQA0bUQKVzBkf/2eCS+PlRw1esBACPAarsDAIBR2bfexsaijcIIgRHnwDqAIqcQqWAjvqwq+Fj0YHBx3q74+vlLLcCo7FtPEiKET6RDXCFZ3SS72Z9+UxFUDjCx2u7g/uaS3ZfKERohtFa3kQcIEMBEF8lSm9wkoCB4bJAAmCgRqR3BOUAivj4cxzcAH2EOZk5gBaAEaW4wZwoTsY7QErdldQnmUAA4iaVygCmIlChd02eK5PaweBWJ2IAR544PzgEulwCEOSJHxG0i1QJooqwBJ4x2lZjClziSlghzotR1gMvaCK04nKDaJ0MhEdeCipBkCPg6RhIiJ3EJwQ9GYoYJ3o+jEF0QR1gFSJEXXH1oyYdkfw2sAsREWdPH08vWmbgA+OS12UNQEUT7i3ZASJLENvc3l2ftOVBySCCW/OCCEUAiLRHlCHN92ITSztk+x2jbngmgJWQDd8yo7IvRHlycj3GErzgSpKHWEMAnyiGw9SORk+wvbZfaSf03BNCMc+nGyNUHB5wOTZjJjbtorVBaqHKAad/Vdtcg6SJsE286Luv9ZgRd9/Qu2IYNdYqYA1bbXYOsLfI2EbSO8Knf6Xa6z5wq6XqgeDeY42ZIO3V2idoBsZWeT8K0Ta++wJxhDhufqlFdCAHI05tvG/PYzT6skDEtPYBe0HS52StKYd8I+VSMo7IPYOmfW8/XzAKa8hr3F/PJ7CCt8WkQkzvQAXgxucEuiHBJECD9AgmH6bhsPMRIVfW50LgZen7bNU7mIkQTGOceH1do7I2IFYi2X1bVMQfgjuuhXzRpzYDbNCvH9KJy3wSZ7ZdVBevq+Lt+VeTq0+kZIR6orfJCbqDwERtdEMHEx5XDsQ5YVtWpr/WfAoB5ScoU4nrYV9s5JBlOx2Ury2EccYT4+phNCAC/5Gd7khS69A3Au8B8CLI+yMQRzhcJqRCpYaszQqdIW8Qp1K+U+gjhWw1SaEtZepwm4hTeLxdzyRKAX/pybeOSIAfO9r5WlxD8mnmqofH8dhSHi7JmvNfHehJHRH9wECOETxI0xYiJOEWyT09C6giAkwPMdhJSRJwi2TdDy7+/C4CjEBitkaONuSRm7TsDcUTyL0dNITC6tqHBrQeY7/HU2xITR2T7dNZHCFMEXOGp92Uijsj+7bBLCDP6Oa0uobWPpzkhpuOy9YhTtP61NgJnDSTfNnHEP39QZCkXtrGAAAAAAElFTkSuQmCC",dirt1:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAEkElEQVR4nNVbwWobMRCdLQYbcrAPaSChuQVKSUMh6Tf0lms/Mtfe/A8uhKaEgi+l4ICbg3MIrE/uwRlndjwazWi1WvogsNZK2n1PM6ORogXoEdfnl5vr88tNn+8w6OOhSPridPxSsv397ef3qvS7FH3gPvEmfvx5AoCyQhR5kET86tNRo87sdrm7LilEpw+wEOcoLUQnHacQ5yglRNYOcxDn6FqILB2lEp/dLnf16HWoLiKnEK066GLEY8gtRFLDPohTUBEA2gnhauAhHjPpHMghhKli3yOugYsA4BNCrRDK3EqQlyzIEygBbEKIN9oQL2H6FliDZaOglKmXFCkmRAXQjriXTF8WEhKiuj6/3Eirs5IjVCqmcEzvFlDRDYk+hcgNFDZEHPEGLx6enmF6t2jcxI6wE96Z1Ln3JS1lKXWkehK/StuSslpEWzPO6QaxEedQBUD8D65hJb5aN39HBXh4et5df/l4sne/y9zAm/ggbmZb4pNhuO95XcNhNbJZAEdoTy+3VYQECBHXTD2EJAEQfbiG18fR5EPWkCQAdYvj8YEqRK4A5yFO/VxzAwCA6vO79w0BjscH/rd7Qcg1ANItI3XEAeLkAZgAIfJ8xGkZbYNlUrBEeFJsjlBwi5m5Vsc8C3DitCyElGCpjbhldC1iULQKghKoQADxGIHQRhzATsgCKtKeALER1u5L5Cm0GEExvVuYfZnWe9zUcDYamZ6BcFmA5PfetgDhGHEzW5hIIGleN1Qeag9gFKANcQ1oER4ft2K13gpxWI3E/vBZu3+Pa5GelmnlMUhCSuQfNzVMwGfKEkLkaVmvFgAAcL98FZO+KF+05AyCFKYDElqw806PvB4SW623f/i7K8IcUQGk0ZcIWqyDzxIUKclNKmjfogApPm5pI02LIVG8xD0BlN4faC/u8fnj8YE6whpwbc5fzoJQrLAKMrCac8oIW7Ba69FaAgo2GeptLDmF6gIxv7fA4040CNIynM/xnjXbO6xGYp8U7mNysXSXQ7Omi9OxOko40mghGrjJ97YYsiIlXkjW0BaqBXhH2wNcJUqZIEA4e8uRIdLnNQSwEG4jihYPePSO+W5bYN8NASxkUmYITyqdYxEk9RVynz0X8OwHYJ1YDqARz53xhTJKAHn22BMgJapb2iG4UJPh6zqAlnmgxY9YX4P75TN8OJIXO55N0pQ61peMIbX9vK6hOnv7uivMhfDCu2y+OB0H9/0010jZBqP9zet6V747KhITInUTJNQPToOSALHdHAskASnx1ePvCkA4JBUSwiNAbL+AltMNkZRNTQ5pX1AijggeH7O4htcqLMJ4EEueNOKI6EHCtjHCE1BzwUIcYT5SSoWgSrdNj7kAqXkBJQ0QJ45wHy7OOWsA2CwgJopnxDmSj5nnEkITIDYbtCGOaP3BQa4YoQU0niXmII7I9umJVwhO3OLzOYkjsn+E5BGC7gdo6II4IvuXo/O/vyqArRCY5KTGiC6JIzr7dFYSYjK0TZsliCOKfaJqSbFLEkcU/1iZCvH16mR3JgBRijiiuAAIFALJlyaO+AcerlmaEb95TQAAAABJRU5ErkJggg==",dirt2:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAEmUlEQVR4nNVbTUtbQRQ9DwIGsogLFRS7E4LYUlB/Q3du+9P6I7rtzt9QC6UWKYRCKRiwLswiEFevi3hfJpM7c+98Jp5N0/dm5s05c79mfA/YIK7Ozturs/N2k3PobeKhRPrdm+HLlcX/v/z81tSeS9UHrhNfxY+/UwB1hajyII74xfuD7vfN94eV9jWFKPoAiTgHU4waQhQZWLPi2yJE1gFzELdRWogsA8WYeihKCZE0gCuq5yZvIrcQUR196cwmH2P2mr65hAjqEEK8BnKkT1XDbSPOIdYivA1K+bhk2jGZgvqECsHeqBHVSyBGiJUL20xcaxl2O0mIBggnHjuZTcIlRO/yeNS6dmcuaEltC3kbxHcyHbWNeSCxzVE+FnaqBIDr2/vudyfAZDrrLn54e7TW6bUJIREnNL4jqRoWQXEiV7zQEB/P59hr+gAEAQivwTW0Kw4AT8+Lf3d3HC5wOByAu5YiBJeecuwRQohzaC6PRy2wJG2DE6aWRWg3QwSOOK02sFhxGyoX4DCZzlTBMqdvU6ywQcRNsgBP2IbXBbTI6Rq+djZCTB3grcFrAZIodL+ka3DEP98siBMJycxNmAEQcAigJe66n0MIralrzNwHMQb4yNoWYCNGCBfxGP/WYE0AF2GJrE8o7dGZDa2Pm4WNzy3UMUAiGwvtpuvzzT07aWB95UMsw/Z/4EWAnIQ12cQlhLTiHAFXG4LkKsF1QEq6tEFCmCsOyEHu6Rl4bOcAgJN+P2kO0YUQoAuQ3D2zjWZVgSXpVMI2kuqAELhK6tBixgVJSJdVeV+QiIn4oWNp4Jp8SD2wu7NsP54v3SfqDREuPXL3JNDZnAQNuZBxdrF0o04AzXbYBw1xbnt997C8FlrchJo7h06Aw+Ggm+BkOsPhcKAiRf24VGoT5sZLreg43/dljr2mvxoDtNHahN3O1U/aR4SeRnMIMv/nhemboq3EAFp5G6Z1xCIlVnCI2RBx7Xqlo7ivytQGQYKGtC8dcv3VWSB2BSU34OCq9DQr7WvDWgA3odTV5sZxFUJ2GUwTNVOVb+VTt8k9mpA5QVcsIMQI5HIBrrDhBHHB7m+PIbnNShokcGlNWk37twQ6VL17mGU73DBJS9WjNwbkKHo4cMK58nfKsZc2AAIVX5bmyPuyQEgxo1ltl4jNyf6oPT0IL31jYbtWan2RgvF8vrAAqsdJiBRIImqF1Z4TSO3N80K6T7tBwHhF5mR/1J0L5BBCg5jzAOmw07xu96PaAgCeHv80APOSVKoQWjeiLGD/kaMEzBUn4gTn62OSENL22bwe0odDqDsQfMQJ4ouEphDmBLS+LP294NPX32tRPRYkFGfqLohpcPzvVwMshKAHnB4MvJscE9L90ENOX30QQpygrgNMIUKzhnavoQlmXLUXQ5wQ/Zp5rqwREgMIJILGxyUkf3DACaF1DzMNhpS+OYgTkkvhFNcwoQmCOYkTsn+E5HINVxzQuEAJ4oRin6Np0icdiNhtCCWJE4p/mGgL4SuOAHfJWgrVPlHVuEaNFbdR/WNlU4iPF0e4vr3fCHFCdQEIJASZe23ihP9uvmQGpJty+gAAAABJRU5ErkJggg==",grass:"data:image/png;base64,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"};
+const N=3, DIG=30, LAYERS=DIG+1;            // 30 копаемых слоёв (трава + 29 земли) и неразрушимое дно
+const ACT=[[1,1],[2,1],[1,2],[2,2]];        // участок 2×2; остальное — декорация сзади и по бокам
+const BW=64, BH=32;                          // большой блок: ромб 64×32, высота 32
+
+/* ---------- Telegram ---------- */
+const tg=window.Telegram&&window.Telegram.WebApp;
+if(tg){try{tg.ready();tg.expand();tg.disableVerticalSwipes&&tg.disableVerticalSwipes();tg.setHeaderColor('#1b2a3a');tg.setBackgroundColor('#1b2a3a');tg.setBottomBarColor&&tg.setBottomBarColor('#14202c')}catch(e){}}
+const haptic=(k)=>{try{tg&&tg.HapticFeedback&&(k==='warn'?tg.HapticFeedback.notificationOccurred('warning'):tg.HapticFeedback.impactOccurred(k))}catch(e){}};
+
+/* ---------- pickaxe icon ---------- */
+const PICK=["................",".....kkkkkk.....","...kksssssSkk...","..ksSSkkkkSSsk..",".ksSk.kwWk.kSsk.",".kSk..kwWk..kSk.",".kk...kwWk...kk.","......kwWk......","......kwWk......","......kwWk......","......kwWk......","......kwWk......","......kwWk......","......kWWk......",".......kk.......","................"];
+const PAL={k:'#10141f',s:'#c9d3dc',S:'#7d8c9c',w:'#a8683c',W:'#6b3f28'};
+(function(){const c=document.createElement('canvas');c.width=c.height=16;const x=c.getContext('2d');
+  PICK.forEach((r,y)=>[...r].forEach((ch,i)=>{if(PAL[ch]){x.fillStyle=PAL[ch];x.fillRect(i,y,1,1)}}));
+  document.getElementById('pick').appendChild(c)})();
+
+/* ---------- state ---------- */
+const d=[0,0,0,0];                           // сколько блоков выкопано в каждой из 4 клеток
+const cur=()=>Math.min(...d);
+let active=false;
+const isAct=(i,j)=>ACT.findIndex(a=>a[0]===i&&a[1]===j);
+const hash=(a,b,c)=>{let h=(a*73856093)^(b*19349663)^(c*83492791);h=Math.imul(h^(h>>>13),1274126177);return ((h^(h>>>16))>>>0)%3};
+
+/* ---------- canvas sizing (integer pixel scale) ---------- */
+const stage=document.getElementById('stage'),cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let W=200,H=300,SCALE=2,bg=null,pickCv=document.createElement('canvas'),pctx=pickCv.getContext('2d',{willReadFrequently:true});
+function resize(){
+  const r=stage.getBoundingClientRect();
+  SCALE=Math.max(1,Math.floor(r.width/176));
+  W=Math.ceil(r.width/SCALE);H=Math.ceil(r.height/SCALE);
+  cv.width=W;cv.height=H;cv.style.width=W*SCALE+'px';cv.style.height=H*SCALE+'px';
+  pickCv.width=W;pickCv.height=H;
+  ctx.imageSmoothingEnabled=false;pctx.imageSmoothingEnabled=false;
+  makeBg();
+}
+function makeBg(){
+  bg=document.createElement('canvas');bg.width=W;bg.height=H;const x=bg.getContext('2d');
+  const g=x.createLinearGradient(0,0,0,H);g.addColorStop(0,'#2b4a78');g.addColorStop(.6,'#4f8ea0');g.addColorStop(1,'#7cc0b6');
+  x.fillStyle=g;x.fillRect(0,0,W,H);
+  const rows=[['#3d7891','#9fe0d6',.10,.30],['#2f6278','#c8f0e0',.07,.42],['#24506a','#f7e7a6',.05,.56]];
+  rows.forEach(([col,win,p,base],L)=>{let xx=-6;const seed=L*997;
+    while(xx<W){const r1=((Math.sin(xx*12.9898+seed)*43758.5453)%1+1)%1,r2=((Math.sin(xx*78.233+seed)*12345.678)%1+1)%1;
+      const w=10+Math.floor(r1*20),h=Math.floor(H*(base+r2*.25));const y=H-h;
+      x.fillStyle=col;x.fillRect(xx,y,w,h);x.fillStyle=win;
+      for(let wy=y+3;wy<H-2;wy+=4)for(let wx=xx+2;wx<xx+w-2;wx+=3){const q=((Math.sin(wx*3.1+wy*7.7+seed)*9999)%1+1)%1;if(q<p)x.fillRect(wx,wy,1,2)}
+      xx+=w+1}});
+}
+
+/* ---------- sprites ---------- */
+const SPR={};let loaded=0;
+const names=Object.keys(IMG);
+names.forEach(n=>{const im=new Image();im.onload=()=>{SPR[n]=im;if(++loaded===names.length)start()};im.src=IMG[n]});
+let MASK=[],GLOW={};
+function prepare(){
+  // flat silhouettes for tap detection: index 0 = occluder, 1..4 = diggable cells
+  const cols=['#000000','#010000','#020000','#030000','#040000'];
+  MASK=cols.map(c=>{const m=document.createElement('canvas');m.width=m.height=64;const x=m.getContext('2d');x.drawImage(SPR.dirt0,0,0);x.globalCompositeOperation='source-in';x.fillStyle=c;x.fillRect(0,0,64,64);return m});
+  // lighter copies shown on diggable blocks while the pickaxe is active
+  for(const n of names){const m=document.createElement('canvas');m.width=m.height=64;const x=m.getContext('2d');x.beginPath();x.moveTo(32,0);x.lineTo(64,16);x.lineTo(32,32);x.lineTo(0,16);x.closePath();x.clip();x.drawImage(SPR[n],0,0);x.globalCompositeOperation='source-atop';x.fillStyle='rgba(255,236,190,.22)';x.fillRect(0,0,64,64);GLOW[n]=m}
+}
+const spriteName=(i,j,z)=>z===0?'grass':'dirt'+hash(i,j,z);
+
+/* ---------- scene ---------- */
+let camY=0,shake=0,fx=[];
+const TOP=()=>Math.round(H*.30)-BH;          // где верх участка, когда камера наверху
+function org(i,j,z){return [Math.round(W/2+(i-j)*32-32),Math.round(TOP()+(i+j)*16+z*BH-camY)]}
+function blockExists(i,j,z){const a=isAct(i,j);return a<0||d[a]<=z}
+function diggable(a,z){return d[a]===z&&z===cur()&&z<DIG}
+function forEachBlock(fn){
+  const z0=Math.max(0,Math.floor((camY-H)/BH)-1),z1=Math.min(LAYERS-1,Math.floor((camY+H)/BH)+2);
+  for(let z=z1;z>=z0;z--)for(let s=0;s<=2*(N-1);s++)for(let i=0;i<N;i++){const j=s-i;if(j<0||j>=N)continue;
+    if(!blockExists(i,j,z))continue;const [x,y]=org(i,j,z);if(y>H||y<-BW)continue;fn(i,j,z,x,y)}
+}
+function draw(t){
+  const target=Math.min(cur(),DIG-1)*BH;camY+=(target-camY)*.12;if(Math.abs(target-camY)<.4)camY=target;
+  ctx.drawImage(bg,0,0);
+  const sx=shake>0?(Math.random()<.5?-1:1):0,sy=shake>0?(Math.random()<.5?-1:0):0;if(shake>0)shake--;
+  ctx.save();ctx.translate(sx,sy);
+  const pulse=.55+.45*Math.sin(t/260);
+  forEachBlock((i,j,z,x,y)=>{
+    const a=isAct(i,j),n=spriteName(i,j,z);
+    ctx.drawImage(SPR[n],x,y);
+    if(active&&a>=0&&diggable(a,z)){ctx.globalAlpha=pulse;ctx.drawImage(GLOW[n],x,y);ctx.globalAlpha=1}
+  });
+  fx=fx.filter(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=.22;p.l--;ctx.fillStyle=p.c;ctx.fillRect(Math.round(p.x),Math.round(p.y),p.s,p.s);return p.l>0});
+  ctx.restore();
+  document.getElementById('depth').textContent=Math.min(cur(),DIG)+' / '+DIG;
+  requestAnimationFrame(draw);
+}
+
+/* ---------- input ---------- */
+function hit(px,py){
+  pctx.clearRect(0,0,W,H);
+  forEachBlock((i,j,z,x,y)=>{const a=isAct(i,j);pctx.drawImage(MASK[a>=0&&diggable(a,z)?a+1:0],x,y)});
+  const p=pctx.getImageData(px,py,1,1).data;return p[3]>0&&p[0]>0?p[0]-1:-1;
+}
+const pickBtn=document.getElementById('pick');
+pickBtn.addEventListener('click',()=>{active=!active;pickBtn.setAttribute('aria-pressed',active);haptic('light')});
+cv.addEventListener('pointerdown',e=>{
+  const r=cv.getBoundingClientRect();const px=Math.floor((e.clientX-r.left)/SCALE),py=Math.floor((e.clientY-r.top)/SCALE);
+  const a=hit(px,py);if(a<0)return;
+  if(!active){pickBtn.classList.remove('nudge');void pickBtn.offsetWidth;pickBtn.classList.add('nudge');haptic('warn');return}
+  const z=d[a];const [x,y]=org(ACT[a][0],ACT[a][1],z);
+  const cols=z===0?['#46823a','#25562e','#4d2b32','#7a4836']:['#ad7757','#7a4841','#4d2b32','#341c27'];
+  for(let k=0;k<16;k++)fx.push({x:x+32+(Math.random()-.5)*24,y:y+16+(Math.random()-.5)*10,vx:(Math.random()-.5)*2.2,vy:-Math.random()*2.6-.6,l:24+Math.random()*12|0,c:cols[k%4],s:Math.random()<.35?2:1});
+  d[a]++;shake=5;haptic('light');
+});
+
+function start(){prepare();resize();addEventListener('resize',resize);if(tg)tg.onEvent&&tg.onEvent('viewportChanged',resize);requestAnimationFrame(draw)}
+</script>
+
+</body>
+</html>
