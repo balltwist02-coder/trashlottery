@@ -191,9 +191,8 @@ function reveal(t){const [cx,cy]=centerOf(t.cells,t.lvl);
   toast('Найдено: '+TINFO[t.type].name);haptic('medium')}
 function lift(t){
   const cs=colsOf(t.cells);
-  for(const o of trash)if(o.lifted)drop(o);
   t.lifted=true;t.falling=false;t.lvl=hoverFor(t.cells,t);haptic('light');return true}
-function drop(t){t.lifted=false;t.lvl=Math.round(t.lvl);updateTrash()}
+function drop(t){t.lifted=false;t.lvl=Math.floor(t.lvl);updateTrash()}
 function landed(t){const [cx,cy]=centerOf(t.cells,t.lvl);shake=Math.max(shake,TINFO[t.type].size>2?6:3);haptic('medium');
   for(let k=0;k<14;k++)fx.push({x:cx+(Math.random()-.5)*36,y:cy+12+(Math.random()-.5)*8,vx:(Math.random()-.5)*2.4,vy:-Math.random()*1.4-.2,l:18+Math.random()*10|0,c:['#8c7a6a','#5e4c42','#b8a48c'][k%3],s:Math.random()<.3?2:1})}
 /* 1–2 клетки: пока тащим — выбираем ближайшее к пальцу место среди возможных положений этой формы */
@@ -252,32 +251,40 @@ function hit(px,py){let res=null;for(const it of scene(performance.now()))if(inC
 const pickBtn=document.getElementById('pick');
 pickBtn.addEventListener('click',()=>{active=!active;pickBtn.setAttribute('aria-pressed',active);haptic('light')});
 const local=e=>{const r=cv.getBoundingClientRect();return [Math.floor((e.clientX-r.left)/SCALE),Math.floor((e.clientY-r.top)/SCALE)]};
-/* прокрутка: палец или мышь тянет участок вверх-вниз, колесо мыши листает; мусор 1–2 клетки можно тащить */
-let drag=null,vel=0;
+/* прокрутка: палец или мышь тянет участок вверх-вниз, колесо мыши листает.
+   мусор: зажал — поднят и едет за пальцем, отпустил — падает. 1–2 клетки переставляются, 3–4 только вверх-вниз */
+let drag=null,vel=0;const grabs=new Map();
 cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);
-  const it=hit(...local(e)),g=it&&it.k===1&&it.t.active&&TINFO[it.t.type].size<=2?it.t:null;
-  drag={x:e.clientX,y:e.clientY,cam:camTarget,moved:false,lastY:e.clientY,lastT:performance.now(),grab:g};vel=0});
-cv.addEventListener('pointermove',e=>{if(!drag)return;const dx=(e.clientX-drag.x)/SCALE,dy=(e.clientY-drag.y)/SCALE;
-  if(!drag.moved&&Math.hypot(dx,dy)>4){drag.moved=true;
-    if(drag.grab&&!drag.grab.lifted&&!lift(drag.grab))drag.grab=null;
-    if(!drag.grab){drag.y=e.clientY;drag.cam=camTarget}}
+  const it=hit(...local(e));
+  if(it&&it.k===1){const t=it.t;
+    if(!t.active){t.wob=10;haptic('warn');return}             // ещё не откопан целиком
+    if([...grabs.values()].some(g=>g.t===t))return;
+    lift(t);grabs.set(e.pointerId,{t,y:e.clientY,h0:t.lvl});return}
+  if(drag)return;
+  drag={id:e.pointerId,x:e.clientX,y:e.clientY,cam:camTarget,moved:false,lastY:e.clientY,lastT:performance.now()};vel=0});
+cv.addEventListener('pointermove',e=>{
+  const g=grabs.get(e.pointerId);
+  if(g){if(TINFO[g.t.type].size<=2)placeNear(g.t,...local(e));
+    else g.t.lvl=Math.max(-1,g.h0-Math.max(0,(g.y-e.clientY)/SCALE/BH));return}
+  if(!drag||drag.id!==e.pointerId)return;const dx=(e.clientX-drag.x)/SCALE,dy=(e.clientY-drag.y)/SCALE;
+  if(!drag.moved&&Math.hypot(dx,dy)>4){drag.moved=true;drag.y=e.clientY;drag.cam=camTarget}
   if(!drag.moved)return;
-  if(drag.grab){placeNear(drag.grab,...local(e));return}
   camTarget=clampCam(drag.cam-(e.clientY-drag.y)/SCALE);follow=camTarget>=maxCam();
   const now=performance.now(),dt=Math.max(1,now-drag.lastT);vel=-(e.clientY-drag.lastY)/SCALE/dt*16;drag.lastY=e.clientY;drag.lastT=now});
-const endDrag=e=>{if(!drag)return;const dr=drag,wasTap=!dr.moved,still=performance.now()-dr.lastT>80;drag=null;
-  if(wasTap){vel=0;tap(e)}else if(dr.grab){vel=0;drop(dr.grab)}else if(still)vel=0};
-cv.addEventListener('pointerup',endDrag);
-cv.addEventListener('pointercancel',()=>{if(drag&&drag.grab&&drag.grab.lifted)drop(drag.grab);drag=null;vel=0});
+const endDrag=(e,cancel)=>{
+  const g=grabs.get(e.pointerId);if(g){grabs.delete(e.pointerId);drop(g.t);return}
+  if(!drag||drag.id!==e.pointerId)return;const dr=drag,wasTap=!dr.moved,still=performance.now()-dr.lastT>80;drag=null;
+  if(cancel){vel=0;return}
+  if(wasTap){vel=0;tap(e)}else if(still)vel=0};
+cv.addEventListener('pointerup',e=>endDrag(e,false));
+cv.addEventListener('pointercancel',e=>endDrag(e,true));
 cv.addEventListener('wheel',e=>{e.preventDefault();vel=0;camTarget=clampCam(camTarget+e.deltaY/SCALE*.6);follow=camTarget>=maxCam()},{passive:false});
 const CRUMB={'Т':['#46823a','#25562e','#4d2b32','#7a4836'],'З':['#ad7757','#7a4841','#4d2b32','#341c27'],'*':['#ad7757','#7a4841','#4d2b32','#341c27'],
   'П':['#8a5a44','#5e3a33','#3d2329','#2a1820'],'Г':['#c06a4a','#9a4a3a','#6e3030','#4a2026'],'Б':['#9aa3a8','#6c757c','#474e55','#2c3136'],
   'К':['#a7b0b6','#7d878e','#565f66','#363c42'],'Р':['#5fa04a','#ad7757','#7a4841','#3d2329'],'В':['#6fb552','#3f7a35','#9a4a3a','#4a2026'],'Я':['#5fa04a','#4d2b32','#7a4836','#2a1820']};
 function tap(e){
   const it=hit(...local(e));if(!it)return;
-  if(it.k===1){const t=it.t;                                  // мусор: поднять / опустить
-    if(!t.active){t.wob=10;haptic('warn');return}             // ещё не откопан целиком
-    if(t.lifted)drop(t);else lift(t);return}
+  if(it.k===1)return;                                         // мусор берут зажатием, см. pointerdown
   const a=isAct(it.i,it.j);if(a<0||!diggable(a,it.z))return;
   if(!active){pickBtn.classList.remove('nudge');void pickBtn.offsetWidth;pickBtn.classList.add('nudge');haptic('warn');return}
   const z=d[a];const [x,y]=org(ACT[a][0],ACT[a][1],z);
