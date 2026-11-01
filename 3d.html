@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Копаю участок — 3D проба</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","cannon-es":"https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"}}</script>
+<script src="3d_data.js"></script>
+<style>
+/* Layout: full-height Telegram Mini App — pixel scene fills the screen, tool bar pinned to the bottom. */
+:root{
+  --bg:#1b2a3a; --bar:#14202c; --slot:#22344a; --slot-edge:#2f4a66; --slot-dark:#0e1620;
+  --active:#f2c14e; --active-glow:rgba(242,193,78,.35); --fg:#e9f0ee; --muted:#8fa3ad;
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none}
+body{background:var(--bg);color:var(--fg);font:14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+.app{position:fixed;inset:0;display:flex;flex-direction:column}
+.stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#2f4f7a}
+canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none}
+.depth{position:absolute;right:max(10px,env(safe-area-inset-right,0px));top:10px;font:600 12px ui-monospace,Menlo,Consolas,monospace;color:var(--fg);background:rgba(10,16,24,.55);padding:3px 7px;border-radius:4px;pointer-events:none;font-variant-numeric:tabular-nums}
+.bar{flex:none;background:var(--bar);border-top:2px solid var(--slot-dark);display:flex;justify-content:center;gap:8px;padding-top:10px;padding-bottom:max(12px,env(safe-area-inset-bottom,0px));padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
+.slot{width:54px;height:54px;padding:0;display:grid;place-items:center;background:var(--slot);border:0;border-radius:2px;cursor:pointer;
+  box-shadow:inset 0 0 0 2px var(--slot-edge),inset 0 -4px 0 0 var(--slot-dark);transition:transform .08s}
+.slot:disabled{cursor:default;opacity:.55}
+.slot canvas{position:static;transform:none;width:48px;height:48px}
+.slot[aria-pressed="true"]{background:#3a3220;box-shadow:inset 0 0 0 2px var(--active),inset 0 -4px 0 0 #8a6a1e,0 0 0 2px var(--slot-dark),0 0 14px var(--active-glow);transform:translateY(-3px)}
+.slot:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.slot.nudge{animation:nudge .35s}
+@keyframes nudge{0%,100%{transform:none}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+.toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);max-width:60%;text-align:center;font:600 12px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1b1406;background:var(--active);padding:5px 10px;border-radius:2px;box-shadow:0 2px 0 #8a6a1e;pointer-events:none}
+.mapbtn{position:absolute;left:max(10px,env(safe-area-inset-left,0px));top:10px;width:44px;height:44px;padding:0;display:grid;place-items:center;background:var(--slot);border:0;border-radius:2px;cursor:pointer;
+  box-shadow:inset 0 0 0 2px var(--slot-edge),inset 0 -4px 0 0 var(--slot-dark)}
+.mapbtn canvas,.cell canvas,.close canvas{position:static;transform:none}
+.mapbtn canvas{width:32px;height:32px}
+.mapbtn:focus-visible,.close:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.mapwrap{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:rgba(6,10,16,.6);padding:16px}
+.map{position:relative;background:var(--bar);box-shadow:inset 0 0 0 2px var(--slot-edge),0 0 0 2px var(--slot-dark);border-radius:2px;padding:14px;width:min(100%,340px)}
+.map h2{margin:0 0 12px;font:600 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);padding-right:40px}
+.close{position:absolute;right:8px;top:8px;width:34px;height:34px;padding:0;display:grid;place-items:center;background:var(--slot);border:0;border-radius:2px;cursor:pointer;box-shadow:inset 0 0 0 2px var(--slot-edge),inset 0 -3px 0 0 var(--slot-dark)}
+.close canvas{width:16px;height:16px}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.cell{aspect-ratio:1;display:grid;place-items:center;background:#1a1612;border-radius:2px;box-shadow:inset 0 0 0 2px #2a221b,inset 0 -3px 0 0 #0c0a08}
+.cell canvas{width:60%;height:60%}
+.cell.on{background:#3a3220;box-shadow:inset 0 0 0 2px var(--active),inset 0 -3px 0 0 #8a6a1e,0 0 12px var(--active-glow)}
+.cell.on canvas{width:84%;height:84%}
+@media (prefers-reduced-motion:reduce){.slot{transition:none}.slot.nudge{animation:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage" id="stage">
+    <canvas id="bg" aria-hidden="true" style="pointer-events:none"></canvas>
+    <canvas id="cv" aria-label="Участок"></canvas>
+    <div class="depth" id="depth">0 / 30</div>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <button class="mapbtn" id="mapbtn" aria-label="Карта участков" aria-haspopup="dialog"></button>
+  </div>
+  <div class="bar" role="toolbar" aria-label="Инструменты">
+    <button class="slot" id="pick" aria-pressed="false" aria-label="Кирка"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+    <button class="slot" disabled aria-label="Пустой слот"></button>
+  </div>
+  <div class="mapwrap" id="mapwrap" hidden>
+    <div class="map" role="dialog" aria-modal="true" aria-labelledby="maptitle">
+      <h2 id="maptitle">Участки</h2>
+      <button class="close" id="mapclose" aria-label="Закрыть карту"></button>
+      <div class="grid" id="mapgrid"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="3d_main.js"></script>
+</body>
+</html>
