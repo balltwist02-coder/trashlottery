@@ -199,8 +199,15 @@ function landed(t){const [cx,cy]=centerOf(t.cells,t.lvl);shake=Math.max(shake,TI
 function placeNear(t,px,py){let best=null,bd=1e9;
   for(const cells of placements(t.type,t.k)){const hv=hoverFor(cells,t),[cx,cy]=centerOf(cells,hv),dd=(cx-px)**2+(cy-py)**2;if(dd<bd){bd=dd;best={cells,hv}}}
   if(best&&best.cells.some((c,m)=>c[0]!==t.cells[m][0]||c[1]!==t.cells[m][1])){t.cells=best.cells;t.lvl=best.hv;haptic('light')}}
+/* 1–2 клетки: по горизонтали пальца выбираем положение (влево / по центру / вправо) */
+function pickX(t,px){const cur=t.cells.map(c=>c+'').join();let best=[],bd=1e9;
+  for(const cells of placements(t.type,t.k)){const cx=centerOf(cells,0)[0],dd=Math.abs(cx-px);
+    if(dd<bd-1){bd=dd;best=[cells]}else if(Math.abs(dd-bd)<=1)best.push(cells)}
+  if(best.some(c=>c.map(x=>x+'').join()===cur))return;
+  const pick=best.sort((a,b)=>b.reduce((s,c)=>s+c[0]+c[1],0)-a.reduce((s,c)=>s+c[0]+c[1],0))[0];
+  if(pick){t.cells=pick;haptic('light')}}
 function stepTrash(now){for(const t of trash){
-  if(t.lifted){t.ry+=(t.lvl-t.ry)*.2;if(Math.abs(t.lvl-t.ry)<.02)t.ry=t.lvl;continue}
+  if(t.lifted){t.ry+=(t.lvl-t.ry)*.45;if(Math.abs(t.lvl-t.ry)<.02)t.ry=t.lvl;continue}
   if(t.ry<t.lvl-.001){t.vy=Math.min(t.vy+.03,.7);t.ry+=t.vy;if(t.ry>=t.lvl){t.ry=t.lvl;t.vy=0;if(t.falling)landed(t);t.falling=false}}
   else if(t.ry>t.lvl){t.ry=t.lvl;t.falling=false}else t.falling=false}}
 let toastT=0;function toast(s){const el=document.getElementById('toast');el.textContent=s;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,1800)}
@@ -259,13 +266,15 @@ cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);
   if(it&&it.k===1){const t=it.t;
     if(!t.active){t.wob=10;haptic('warn');return}             // ещё не откопан целиком
     if([...grabs.values()].some(g=>g.t===t))return;
-    lift(t);grabs.set(e.pointerId,{t,y:e.clientY,h0:t.lvl});return}
+    t.lifted=true;t.falling=false;haptic('light');grabs.set(e.pointerId,{t,y:e.clientY,h0:t.lvl});return}   // взяли — висит ровно там, где лежал
   if(drag)return;
   drag={id:e.pointerId,x:e.clientX,y:e.clientY,cam:camTarget,moved:false,lastY:e.clientY,lastT:performance.now()};vel=0});
 cv.addEventListener('pointermove',e=>{
   const g=grabs.get(e.pointerId);
-  if(g){if(TINFO[g.t.type].size<=2)placeNear(g.t,...local(e));
-    else g.t.lvl=Math.max(-1,g.h0-Math.max(0,(g.y-e.clientY)/SCALE/BH));return}
+  if(g){const t=g.t,up=Math.max(0,(g.y-e.clientY)/SCALE/BH);       // насколько палец ушёл вверх, в слоях
+    if(TINFO[t.type].size<=2)pickX(t,local(e)[0]);
+    const floor=Math.min(...colsOf(t.cells).map(a=>topSolid(a,t)))-1;   // ниже опоры в новых клетках не опускаем
+    t.lvl=Math.max(-2,Math.min(floor,g.h0-up));return}
   if(!drag||drag.id!==e.pointerId)return;const dx=(e.clientX-drag.x)/SCALE,dy=(e.clientY-drag.y)/SCALE;
   if(!drag.moved&&Math.hypot(dx,dy)>4){drag.moved=true;drag.y=e.clientY;drag.cam=camTarget}
   if(!drag.moved)return;
