@@ -96,6 +96,10 @@ function addBlock(i, j, z) {
   world.addBody(body); blocks.set(i + ',' + j + ',' + z, { mesh, body });
 }
 for (let z = 0; z <= DIG; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') addBlock(i, j, z);
+// невидимые стенки по краю участка 2×2 от неба до дна: мусор не вылетит из ямы, даже если его сильно дёрнуть
+{ const top = 3, bot = -(DIG + 1) * BH, hh = (top - bot) / 2, cy = (top + bot) / 2;
+  for (const [x, z, hx, hz] of [[.5, 2, .5, 1.5], [3.5, 2, .5, 1.5], [2, .5, 1.5, .5], [2, 3.5, 1.5, .5]])
+    world.addBody(new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(hx, hh, hz)), position: new CANNON.Vec3(x, cy, z), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH })) }
 function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; scene.remove(b.mesh); world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z) }
 
 /* ---------- свет только для мусора (блоки уже нарисованы с тенью) ---------- */
@@ -216,7 +220,7 @@ cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId);
     // зажали: предмет цепляется к «руке» в точке касания и висит там, где лежал
     const b = t.body, p = h.point, local = b.pointToLocalFrame(new CANNON.Vec3(p.x, p.y, p.z));
     hand.position.set(p.x, p.y, p.z);
-    const c = new CANNON.PointToPointConstraint(b, local, hand, new CANNON.Vec3(0, 0, 0), 600);
+    const c = new CANNON.PointToPointConstraint(b, local, hand, new CANNON.Vec3(0, 0, 0), TYPES[t.type].mass * 120);
     world.addConstraint(c); b.fixedRotation = true; b.updateMassProperties(); b.linearDamping = .9; b.wakeUp();
     grabs.set(e.pointerId, { t, c, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(PLANE_N, p.clone()), x0: p.x, z0: p.z, y0: p.y });
     haptic('light'); return }
@@ -269,6 +273,7 @@ mapclose.addEventListener('click', () => { mapwrap.hidden = true; mapbtn.focus()
 let last = performance.now(), landed = new Map();
 function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
+  for (const g of grabs.values()) { const v = g.t.body.velocity, s = v.length(); if (s > 6) v.scale(6 / s, v) }   // тащим не быстрее 6 ед/с — иначе предмет может проскочить блок
   world.step(1 / 60, dt, 4);
   for (const t of trash) if (t.body) {
     t.g.position.copy(t.body.position); t.g.quaternion.copy(t.body.quaternion);
