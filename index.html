@@ -176,7 +176,7 @@ function genTrash(){
 }
 function blockSolid(a,z){if(z>=DIG)return true;const [i,j]=ACT[a];return z>=d[a]&&code(i,j,z)!=='.'}
 const trashAt=(a,z,ex)=>trash.find(t=>t!==ex&&!t.lifted&&t.lvl===z&&colsOf(t.cells).includes(a));
-const solid=(a,z,ex)=>blockSolid(a,z)||!!trashAt(a,z,ex);
+const solid=(a,z,ex)=>blockSolid(a,z);                      // мусор опирается только на блоки: предметы друг друга не замечают и просто накладываются
 function restLevel(t){const cs=colsOf(t.cells);for(let z=t.lvl+1;z<=DIG;z++)if(cs.some(a=>solid(a,z,t)))return z-1;return DIG-1}
 function topSolid(a,ex){for(let z=0;z<=DIG;z++)if(solid(a,z,ex))return z;return DIG}
 const hoverFor=(cells,t)=>Math.max(-1,Math.min(...colsOf(cells).map(a=>topSolid(a,t)))-2);
@@ -191,7 +191,6 @@ function reveal(t){const [cx,cy]=centerOf(t.cells,t.lvl);
   toast('Найдено: '+TINFO[t.type].name);haptic('medium')}
 function lift(t){
   const cs=colsOf(t.cells);
-  if(trash.some(o=>o!==t&&!o.lifted&&o.lvl<t.lvl&&colsOf(o.cells).some(a=>cs.includes(a)))){haptic('warn');t.wob=12;return false}  // сверху что-то лежит
   for(const o of trash)if(o.lifted)drop(o);
   t.lifted=true;t.falling=false;t.lvl=hoverFor(t.cells,t);haptic('light');return true}
 function drop(t){t.lifted=false;t.lvl=Math.round(t.lvl);updateTrash()}
@@ -224,7 +223,7 @@ function scene(now){
     const bob=t.lifted?Math.round(Math.sin(now/280)*1.5)-1:0,wob=t.wob>0?(t.wob--%4<2?1:-1):0,slot=t.ry>t.lvl?Math.floor(t.ry):Math.ceil(t.ry-1e-6);   // поднимается — рисуем в верхнем слое, падает — в нижнем
     t.cells.forEach(([i,j],m)=>{const a=isAct(i,j);if(!t.active&&!(d[a]>t.layer))return;
       const [x,y]=org(i,j,t.ry);if(y>H||y<-BW)return;out.push({k:1,z:slot,s:i+j,i,j,x:x+wob,y:y+bob,t,m})})}
-  out.sort((p,q)=>q.z-p.z||p.s-q.s||p.k-q.k);return out}
+  out.sort((p,q)=>q.z-p.z||p.s-q.s||p.k-q.k||(p.k&&trash.indexOf(p.t)-trash.indexOf(q.t)));return out}
 function draw(now){
   if(follow)camTarget=maxCam();
   if(!drag&&Math.abs(vel)>.05){camTarget=clampCam(camTarget+vel);vel*=.92;if(camTarget>=maxCam())follow=true}
