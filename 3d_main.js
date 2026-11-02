@@ -104,7 +104,7 @@ const blocks = new Map();                                   // "i,j,z" -> {mesh,
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -24, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world); world.allowSleep = true;
 world.solver.iterations = 15;
-world.defaultContactMaterial.friction = .7; world.defaultContactMaterial.restitution = 0;   // без отскоков
+world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitution = 0;   // без отскоков
 const G_BLOCK = 1, G_TRASH = 2;
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
 function addBlock(i, j, z) {
@@ -196,17 +196,20 @@ function updateTrash() {
 }
 function activate(t) {
   t.active = true; t.g.visible = true; setGrey(t, false);
-  // сильное торможение движения и вращения + быстрое «засыпание»: предметы ведут себя спокойно и тяжело
-  const body = new CANNON.Body({ mass: TYPES[t.type].mass, collisionFilterGroup: G_TRASH, collisionFilterMask: G_BLOCK, linearDamping: .35, angularDamping: .75 });
-  for (const [s, o, q] of TYPES[t.type].shapes()) body.addShape(s, new CANNON.Vec3(...o), q);
-  body.position.set(t.g.position.x, t.g.position.y, t.g.position.z);
-  body.quaternion.set(t.g.quaternion.x, t.g.quaternion.y, t.g.quaternion.z, t.g.quaternion.w);
-  body.sleepSpeedLimit = .25; body.sleepTimeLimit = .3;
-  world.addBody(body); t.body = body;
-  // габариты предмета относительно его центра — для проверки по сетке и тени
+  // габариты предмета в его собственных осях; центр масс ставим ровно в середину предмета —
+  // раньше он был у дна, и упавшая на бок банка сама вставала, как неваляшка
+  t.g.updateMatrixWorld(true);
   const inv = t.g.matrixWorld.clone().invert(), bb = new THREE.Box3();
   t.g.traverse(o => { if (o.isMesh) { o.geometry.computeBoundingBox(); bb.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld).applyMatrix4(inv)) } });
-  t.local = bb;
+  const c = bb.getCenter(new THREE.Vector3()); t.com = c; t.local = bb.translate(c.clone().negate());
+  // умеренное торможение: предмет не «липнет» к стенкам и не застывает в наклоне
+  const body = new CANNON.Body({ mass: TYPES[t.type].mass, collisionFilterGroup: G_TRASH, collisionFilterMask: G_BLOCK, linearDamping: .3, angularDamping: .45 });
+  for (const [s, o, q] of TYPES[t.type].shapes()) body.addShape(s, new CANNON.Vec3(o[0] - c.x, o[1] - c.y, o[2] - c.z), q);
+  const wc = c.clone().applyQuaternion(t.g.quaternion).add(t.g.position);
+  body.position.set(wc.x, wc.y, wc.z);
+  body.quaternion.set(t.g.quaternion.x, t.g.quaternion.y, t.g.quaternion.z, t.g.quaternion.w);
+  body.sleepSpeedLimit = .12; body.sleepTimeLimit = .5;
+  world.addBody(body); t.body = body;
 }
 function removeTrash(t) { scene.remove(t.g); if (t.body) world.removeBody(t.body); trash.splice(trash.indexOf(t), 1) }
 
@@ -316,7 +319,7 @@ function breakTrash(t) {
   const b = t.body, kind = TYPES[t.type].breaks, q = b.quaternion, ry = t.g.rotation.y;
   removeTrash(t);
   for (const s of [-1, 1]) {                                 // две половины на месте целой трубы, с лёгким толчком в стороны
-    const p = b.pointToWorldFrame(new CANNON.Vec3(s * .43, 0, 0));
+    const p = b.pointToWorldFrame(new CANNON.Vec3(s * .43, -.075, 0));   // от центра трубы к «дну» половинки
     const h = makeTrash(kind, p.x, p.y, p.z, 0, -1); h.g.quaternion.set(q.x, q.y, q.z, q.w); h.g.updateMatrixWorld(true);
     activate(h); const dir = q.vmult(new CANNON.Vec3(s, 0, 0));
     h.body.velocity.set(dir.x * 1.6, 2.2, dir.z * 1.6);
@@ -411,7 +414,7 @@ function frame(now) {
   world.step(1 / 120, dt, 8);
   for (const t of trash) if (t.body) {
     if (!t.held) depenetrate(t);
-    t.g.position.copy(t.body.position); t.g.quaternion.copy(t.body.quaternion);
+    t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
     const vy = t.body.velocity.y;                             // удар об пол: тряска и пыль — один раз за падение
     if (!t.held && t.falling && vy > -1) { t.falling = false; if (t.fallV < -5) { shake = Math.max(shake, 3); haptic('medium'); const p = t.g.position; burst(p.x, p.y + .05, p.z, ['#8c7a6a', '#5e4c42', '#b8a48c'], 10, .5) } }
     if (!t.held && vy < -3) { t.falling = true; t.fallV = Math.min(t.fallV || 0, vy) } else if (!t.falling) t.fallV = 0;
