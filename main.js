@@ -29,8 +29,9 @@ icon(MAPI, { k: '#10141f', p: '#e7d7a4', P: '#c4ad74', g: '#5f9c4f', b: '#7a4836
 const XI = ["................", ".kk..........kk.", ".kxk........kxk.", "..kxk......kxk..", "...kxk....kxk...", "....kxk..kxk....", ".....kxkkxk.....", "......kxxk......", "......kxxk......", ".....kxkkxk.....", "....kxk..kxk....", "...kxk....kxk...", "..kxk......kxk..", ".kxk........kxk.", ".kk..........kk.", "................"];
 
 /* ---------- инструменты: кирка копает, лом ломает мусор ---------- */
-let tool = null;
-function setTool(t) { tool = tool === t ? null : t; pickBtn.setAttribute('aria-pressed', tool === 'pick'); barBtn.setAttribute('aria-pressed', tool === 'bar'); haptic('light') }
+let tool = 'pick';
+function setTool(t) { tool = tool === t ? null : t; pickBtn.setAttribute('aria-pressed', tool === 'pick'); barBtn.setAttribute('aria-pressed', tool === 'bar'); haptic('light'); abIcon() }
+pickBtn.setAttribute('aria-pressed', 'true');
 pickBtn.addEventListener('click', () => setTool('pick'));
 barBtn.addEventListener('click', () => setTool('bar'));
 const nudge = b => { b.classList.remove('nudge'); void b.offsetWidth; b.classList.add('nudge'); haptic('warn') };
@@ -80,7 +81,7 @@ function makeBg() {
 }
 /* камера двигается только на целые пиксели — иначе пиксельные текстуры «дрожат» при прокрутке */
 let camY = 0, camTarget = 0, follow = true, shake = 0;
-const maxCam = () => Math.min(cur(), DIG - 1) * 32;
+const maxCam = () => Math.min(cur() + 1, DIG - 1) * 32;
 const clampCam = v => Math.max(0, Math.min(maxCam(), v));
 function placeCam() {
   const upPx = Math.round(0.2 * H);                        // верх ямы на ~30% высоты экрана
@@ -90,12 +91,19 @@ function placeCam() {
 }
 
 /* ---------- блоки: кубы с гранями из ваших тайлов ---------- */
+/* свет: солнце почти сверху (чуть со стороны задней стенки) даёт настоящие тени, мягкий свет спереди — объём мусору.
+   у блоков яркость каждой грани заранее выровнена, чтобы нарисованные тайлы выглядели как раньше,
+   а темнело только то, что попало в тень */
+const SUN_DIR = new THREE.Vector3(-.15, 1, -.22).normalize(), FILL_DIR = new THREE.Vector3(.19, .875, .45).normalize();
+const AMB = .5, SUN = .55, FILL = .3;
+const FACE_K = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(a => { const n = new THREE.Vector3(...a);
+  return 1 / (AMB + SUN * Math.max(0, n.dot(SUN_DIR)) + FILL * Math.max(0, n.dot(FILL_DIR))) });
 const loader = new THREE.TextureLoader();
 const MATS = {}, GLOW = {};
 function tex(src) { const t = loader.load(src); t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t }
 for (const k in TEX) {
   const [R, L, T] = TEX[k].map(tex);
-  const mk = () => [R, R, T, T, L, L].map(m => new THREE.MeshBasicMaterial({ map: m }));
+  const mk = () => [R, R, T, T, L, L].map((m, f) => { const mm = new THREE.MeshLambertMaterial({ map: m }); mm.userData.k = FACE_K[f]; mm.color.setScalar(FACE_K[f]); return mm });
   MATS[k] = mk(); GLOW[k] = mk();
 }
 const matKey = (i, j, z) => { const c = code(i, j, z); return c === '*' || c === 'З' ? ['З', 'З1', 'З2'][hash(i, j, z)] : c };
@@ -105,12 +113,13 @@ const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -24, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world); world.allowSleep = true;
 world.solver.iterations = 15;
 world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitution = 0;   // без отскоков
-const G_BLOCK = 1, G_TRASH = 2;
+const G_BLOCK = 1, G_TRASH = 2, G_CHAR = 4;
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
 function addBlock(i, j, z) {
   const k = matKey(i, j, z), mesh = new THREE.Mesh(boxGeo, MATS[k]);
   mesh.position.set(i + .5, -(z + .5) * BH, j + .5); mesh.userData = { kind: 'b', i, j, z, k };
   mesh.matrixAutoUpdate = false; mesh.updateMatrix();       // блоки не двигаются никогда
+  mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
   let body = null;
   if (isAct(i, j) >= 0) {                                    // физика нужна только блокам ямы; декорации отгорожены стенками
@@ -127,8 +136,14 @@ for (let z = 0; z <= DIG; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N
 function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; scene.remove(b.mesh); if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z) }
 
 /* ---------- свет только для мусора (блоки уже нарисованы с тенью) ---------- */
-scene.add(new THREE.AmbientLight(0xffffff, .32 * Math.PI));
-const sun = new THREE.DirectionalLight(0xffffff, .8 * Math.PI); sun.position.set(.19, .875, .45); scene.add(sun);
+scene.add(new THREE.AmbientLight(0xffffff, AMB * Math.PI));
+const fill = new THREE.DirectionalLight(0xffffff, FILL * Math.PI); fill.position.copy(FILL_DIR); scene.add(fill);
+const sun = new THREE.DirectionalLight(0xffffff, SUN * Math.PI); sun.castShadow = true;
+sun.shadow.mapSize.set(256, 256);                           // крупные «пиксели» тени — в стиле игры и дёшево
+Object.assign(sun.shadow.camera, { left: -3.2, right: 3.2, top: 3.2, bottom: -3.2, near: 1, far: 40 }); sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -.002; sun.shadow.normalBias = .02;
+scene.add(sun, sun.target);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.BasicShadowMap; renderer.shadowMap.autoUpdate = false;
 
 /* ---------- мусор ---------- */
 const M = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
@@ -166,7 +181,7 @@ function makeTrash(type, x, y, z, ry, layer) {
   g.position.set(x, y, z); g.rotation.y = ry; scene.add(g); g.updateMatrixWorld(true);
   const colors = new Map(); g.traverse(o => { if (o.isMesh) colors.set(o, o.material) });
   const t = { type, layer, g, colors, cells: [], active: false, body: null, held: false };
-  g.traverse(o => { if (o.isMesh) o.userData.t = t });
+  g.traverse(o => { if (o.isMesh) { o.userData.t = t; o.castShadow = o.receiveShadow = true } });
   trash.push(t); return t;
 }
 function genTrash() {
@@ -204,7 +219,7 @@ function activate(t) {
   t.g.traverse(o => { if (o.isMesh) { o.geometry.computeBoundingBox(); bb.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld).applyMatrix4(inv)) } });
   const c = bb.getCenter(new THREE.Vector3()); t.com = c; t.local = bb.translate(c.clone().negate());
   // умеренное торможение: предмет не «липнет» к стенкам и не застывает в наклоне
-  const body = new CANNON.Body({ mass: TYPES[t.type].mass, collisionFilterGroup: G_TRASH, collisionFilterMask: G_BLOCK, linearDamping: .3, angularDamping: .45 });
+  const body = new CANNON.Body({ mass: TYPES[t.type].mass, collisionFilterGroup: G_TRASH, collisionFilterMask: G_BLOCK | G_CHAR, linearDamping: .3, angularDamping: .45 });
   for (const [s, o, q] of TYPES[t.type].shapes()) body.addShape(s, new CANNON.Vec3(o[0] - c.x, o[1] - c.y, o[2] - c.z), q);
   const wc = c.clone().applyQuaternion(t.g.quaternion).add(t.g.position);
   body.position.set(wc.x, wc.y, wc.z);
@@ -257,7 +272,7 @@ function obbFloor(f, m = .03) {                            // самый выс�
   if (y === -Infinity) { const a = ACT.findIndex(([i, j]) => f.c.x >= i && f.c.x < i + 1 && f.c.z >= j && f.c.z < j + 1); y = floorY(a < 0 ? 0 : a) }
   return y;
 }
-function placeShadow(f, floor) {
+function placeShadow(f, floor) { return;   // настоящая тень от солнца заменила наклейку
   shadow.visible = true; shadow.rotation.y = Math.atan2(-f.ax.z, f.ax.x); shadow.scale.set(f.ha * 2, 1, f.hb * 2);
   shadow.position.set(f.c.x, floor + .004, f.c.z);
 }
@@ -327,10 +342,11 @@ function tap(e) {
     if (tool !== 'bar') return;
     if (!t.active || !TYPES[t.type].breaks) { nudge(barBtn); return }
     breakTrash(t); return }
-  const { i, j, z, k } = h.object.userData, a = isAct(i, j); if (a < 0 || !diggable(a, z)) return;
+  const { i, j, z } = h.object.userData, a = isAct(i, j); if (a < 0 || !diggable(a, z)) return;
   if (tool !== 'pick') { nudge(pickBtn); return }
-  removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
-  d[a]++; settle(); updateTrash(); shake = 5; haptic('light');
+  if (!reach(a)) { haptic('warn'); return }                    // копает персонаж: только блок под ногами или стенку рядом
+  if (a !== charCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
+  digCell(a);
 }
 function breakTrash(t) {
   const b = t.body, kind = TYPES[t.type].breaks, q = b.quaternion, ry = t.g.rotation.y;
@@ -418,10 +434,152 @@ function drawOutlines() {
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
     t.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = t.idMat } }) });
+  chG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = CH_ID } });
   const shV = shadow.visible; shadow.visible = false; for (const p of parts) p.m.visible = false;
   renderer.setRenderTarget(idRT); renderer.clear(); renderer.render(scene, cam); renderer.setRenderTarget(null);
   for (const [o, m] of saved) o.material = m; shadow.visible = shV; for (const p of parts) p.m.visible = true;
   renderer.autoClear = false; renderer.render(olScene, cam); renderer.autoClear = true;
+}
+
+/* ---------- персонаж (заглушка: девочка в жёлтом дождевике) ----------
+   ходит джойстиком; у обрыва останавливается и смотрит вниз, у стенки — смотрит вверх;
+   если продолжать держать джойстик в ту сторону — прыгает вниз или залезает */
+const CH = { x: 3.5, z: 3.5, y: 0, face: new THREE.Vector3(0, 0, 1), state: 'walk', t: 0, vy: 0, anim: null, walkT: 0, moving: false, land: 0, swing: 0, yaw: 0 };
+CH.y = floorY(3);
+const R = .13, SPEED = 1.5;
+const G_UP = new THREE.Vector3(-1, 0, -1).normalize();          // «вверх по экрану» на полу
+const cellAt = (x, z) => ACT.findIndex(([i, j]) => x >= i && x < i + 1 && z >= j && z < j + 1);
+const charCell = () => cellAt(CH.x, CH.z);
+function reach(a) {                                            // можно ли копать блок клетки a, стоя там, где стоим
+  const c = charCell(); if (c < 0) return false; if (a === c) return true;
+  if (floorY(a) <= floorY(c) + .01) return false;              // соседняя клетка должна быть выше — это стенка перед нами
+  const [i, j] = ACT[a], dx = Math.max(i - CH.x, 0, CH.x - (i + 1)), dz = Math.max(j - CH.z, 0, CH.z - (j + 1));
+  return Math.hypot(dx, dz) < R + .3;
+}
+const chG = new THREE.Group(), chBody = new THREE.Group(); chG.add(chBody); scene.add(chG);
+const CH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(252 / 255, 0, 0) });
+{ const coat = M(0xe8b830), coatD = M(0xc4921f), skin = M(0xefcfae), dark = M(0x1d1822), boot = M(0x3a2a26);
+  const pivot = (parent, x, y, z) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g };
+  CH.legs = [-1, 1].map(s => { const g = pivot(chBody, s * .04, .09, 0); part(g, new THREE.BoxGeometry(.05, .09, .06), boot, 0, -.045, 0); return g });
+  part(chBody, new THREE.CylinderGeometry(.07, .125, .25, 8), coat, 0, .205, 0);
+  CH.arms = [-1, 1].map(s => { const g = pivot(chBody, s * .1, .3, 0); part(g, new THREE.BoxGeometry(.045, .14, .05), coatD, 0, -.07, 0); return g });
+  CH.head = pivot(chBody, 0, .36, 0);
+  part(CH.head, new THREE.SphereGeometry(.08, 8, 6), skin, 0, 0, .02);
+  part(CH.head, new THREE.SphereGeometry(.1, 8, 6), coat, 0, .015, -.025);
+  part(CH.head, new THREE.ConeGeometry(.04, .09, 6), coat, 0, .11, -.04, 0, -.35);     // острый капюшон
+  for (const s of [-1, 1]) part(CH.head, new THREE.BoxGeometry(.018, .024, .01), dark, s * .03, 0, .1);
+  chG.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }) }
+const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.12, .12, .45, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
+world.addBody(chP);
+
+/* джойстик и кнопка действия */
+const joy = { x: 0, y: 0, id: null }, keys = new Set();
+const jb = document.createElement('div'), jk = document.createElement('div');
+jb.style.cssText = 'position:absolute;left:16px;bottom:16px;width:104px;height:104px;border-radius:50%;background:rgba(10,14,22,.35);border:2px solid rgba(233,240,238,.35);touch-action:none;z-index:5';
+jk.style.cssText = 'position:absolute;left:30px;top:30px;width:40px;height:40px;border-radius:50%;background:rgba(233,240,238,.8);pointer-events:none';
+jb.setAttribute('aria-label', 'Джойстик'); jb.appendChild(jk); stage.appendChild(jb);
+function joyMove(e) { const r = jb.getBoundingClientRect(); let x = (e.clientX - r.left - r.width / 2) / (r.width / 2 - 20), y = (e.clientY - r.top - r.height / 2) / (r.height / 2 - 20);
+  const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l } joy.x = x; joy.y = y; jk.style.transform = `translate(${x * 32}px,${y * 32}px)`; follow = true }
+jb.addEventListener('pointerdown', e => { e.preventDefault(); jb.setPointerCapture(e.pointerId); joy.id = e.pointerId; joyMove(e) });
+jb.addEventListener('pointermove', e => { if (joy.id === e.pointerId) joyMove(e) });
+const joyEnd = e => { if (joy.id !== e.pointerId) return; joy.id = null; joy.x = joy.y = 0; jk.style.transform = '' };
+jb.addEventListener('pointerup', joyEnd); jb.addEventListener('pointercancel', joyEnd);
+const ab = document.createElement('button');
+ab.style.cssText = 'position:absolute;right:16px;bottom:26px;width:76px;height:76px;border-radius:50%;background:rgba(10,14,22,.45);border:2px solid rgba(233,240,238,.45);z-index:5;display:grid;place-items:center;touch-action:none;padding:0';
+ab.setAttribute('aria-label', 'Применить инструмент'); stage.appendChild(ab);
+function abIcon() { ab.innerHTML = ''; if (!tool) return;
+  const c = tool === 'pick' ? icon(PICK, { k: '#10141f', s: '#c9d3dc', S: '#7d8c9c', w: '#a8683c', W: '#6b3f28' }) : icon(BAR, { k: '#10141f', r: '#c8423a', R: '#7a2420' });
+  c.style.cssText = 'width:44px;height:44px;image-rendering:pixelated'; ab.appendChild(c) }
+abIcon();
+ab.addEventListener('pointerdown', e => { e.preventDefault(); act() });
+addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space' || e.code === 'KeyE') { e.preventDefault(); if (!e.repeat) act() } if (/Arrow|Key[WASD]/.test(e.code)) { e.preventDefault(); follow = true } });
+addEventListener('keyup', e => keys.delete(e.code));
+
+function digCell(a) {
+  const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.mesh.userData.k : 'З';
+  removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
+  d[a]++; settle(); updateTrash(); shake = 5; haptic('light'); CH.swing = .3;
+}
+function act() {
+  if (!tool) { haptic('warn'); return }
+  if (CH.state === 'jump' || CH.state === 'fall') return;
+  if (tool === 'bar') {                                        // лом: ближайший ломаемый предмет перед персонажем
+    let best = null, bd = .95;
+    for (const t of trash) { if (!t.active || !TYPES[t.type].breaks) continue; const p = t.body.position, dx = p.x - CH.x, dz = p.z - CH.z, dist = Math.hypot(dx, dz);
+      if (Math.abs(p.y - CH.y) < .7 && dist < bd && dx * CH.face.x + dz * CH.face.z > -.05) { bd = dist; best = t } }
+    if (best) { CH.swing = .3; breakTrash(best) } else haptic('warn'); return }
+  const a = charCell(), nb = cellAt(CH.x + CH.face.x * (R + .25), CH.z + CH.face.z * (R + .25));
+  if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else haptic('warn'); return }   // стенка перед нами
+  if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
+  haptic('warn');
+}
+function stepChar(dt) {
+  let ix = joy.x, iy = joy.y;
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
+  if (keys.has('KeyW') || keys.has('ArrowUp')) iy -= 1; if (keys.has('KeyS') || keys.has('ArrowDown')) iy += 1;
+  const dir = SCR_R.clone().multiplyScalar(ix).addScaledVector(G_UP, -iy); dir.y = 0;
+  const m = Math.min(1, dir.length()); if (m > 0) dir.normalize();
+  const a = charCell(), fl = a < 0 ? CH.y : floorY(a);
+  const p0x = CH.x, p0z = CH.z, p0y = CH.y;
+  CH.moving = false;
+  if (CH.state === 'jump') {
+    const A = CH.anim; A.t += dt / A.dur; const k = Math.min(1, A.t);
+    if (A.kind === 'climb') {                                  // сначала подтягиваемся на месте, потом шагаем на край
+      const k1 = Math.min(1, k / .65), k2 = Math.max(0, (k - .65) / .35);
+      CH.y = A.y0 + (A.y1 + .02 - A.y0) * Math.sin(k1 * Math.PI / 2); CH.x = A.x0 + (A.x1 - A.x0) * k2; CH.z = A.z0 + (A.z1 - A.z0) * k2;
+    } else { CH.x = A.x0 + (A.x1 - A.x0) * k; CH.z = A.z0 + (A.z1 - A.z0) * k; CH.y = A.y0 + (A.y1 - A.y0) * k * k + .16 * Math.sin(Math.PI * k) }
+    if (k >= 1) { CH.y = A.y1; CH.state = 'walk'; CH.land = .14; haptic(A.kind === 'down' ? 'medium' : 'light') }
+  } else if (CH.y > fl + .005) {                               // под ногами выкопали блок — падаем
+    CH.state = 'fall'; CH.vy -= 22 * dt; CH.y = Math.max(fl, CH.y + CH.vy * dt);
+    if (CH.y <= fl) { if (CH.vy < -4) { shake = Math.max(shake, 3); haptic('medium') } CH.vy = 0; CH.land = .16; CH.state = 'walk' }
+  } else {
+    CH.y = fl; CH.vy = 0; if (CH.state === 'fall') CH.state = 'walk';
+    if (m < .15) { if (CH.state !== 'walk') CH.state = 'walk'; CH.t = 0 }
+    else {
+      CH.face.copy(dir);
+      const step = SPEED * m * dt; let blocked = null;
+      for (const ax of ['x', 'z']) {                           // по осям отдельно — вдоль стенки можно скользить
+        const dv = dir[ax] * step; if (Math.abs(dv) < 1e-6) continue;
+        const nx = ax === 'x' ? CH.x + dv : CH.x, nz = ax === 'z' ? CH.z + dv : CH.z;
+        const b = cellAt(ax === 'x' ? nx + Math.sign(dv) * R : nx, ax === 'z' ? nz + Math.sign(dv) * R : nz);
+        if (b < 0) continue;                                    // край участка
+        const h = floorY(b);
+        if (Math.abs(h - fl) < .01) { CH.x = nx; CH.z = nz; CH.moving = true }
+        else if (Math.abs(dir[ax]) > .55) blocked = { h, ad: new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0) };
+      }
+      const kind = blocked ? (blocked.h < fl ? 'edge' : blocked.h - fl < BH + .05 ? 'wall' : null) : null;
+      if (kind) {
+        if (CH.state !== kind) { CH.state = kind; CH.t = 0 }
+        CH.t += dt; CH.face.copy(blocked.ad);
+        if (CH.t > (kind === 'edge' ? .55 : .6)) {              // всё ещё держим джойстик к краю — прыгаем
+          const ad = blocked.ad, x1 = CH.x + ad.x * (2 * R + .12), z1 = CH.z + ad.z * (2 * R + .12);
+          CH.anim = { kind: kind === 'edge' ? 'down' : 'climb', t: 0, dur: kind === 'edge' ? .35 + .07 * Math.min(4, (fl - blocked.h) / BH) : .62, x0: CH.x, z0: CH.z, y0: CH.y, x1, z1, y1: blocked.h };
+          CH.state = 'jump';
+        }
+      } else if (CH.state !== 'walk') { CH.state = 'walk'; CH.t = 0 }
+    }
+  }
+  chP.position.set(CH.x, CH.y + .225, CH.z);                    // толкаем мусор телом
+  chP.velocity.set((CH.x - p0x) / Math.max(dt, 1e-3), (CH.y - p0y) / Math.max(dt, 1e-3), (CH.z - p0z) / Math.max(dt, 1e-3));
+}
+const lerp = (a, b, k) => a + (b - a) * k;
+function drawChar(dt, now) {
+  chG.position.set(CH.x, CH.y, CH.z);
+  let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 14); chG.rotation.y = CH.yaw;
+  if (CH.moving) CH.walkT += dt * 11;
+  const sw = CH.moving ? Math.sin(CH.walkT) : 0, st = CH.state, climb = st === 'jump' && CH.anim.kind === 'climb', down = st === 'jump' && CH.anim.kind === 'down';
+  const lean = st === 'edge' ? .42 : climb ? .25 : 0;           // у обрыва наклоняется вперёд
+  const headX = st === 'edge' ? .55 : st === 'wall' ? -.5 : climb ? -.3 : 0;   // смотрит вниз / вверх
+  const armX = st === 'wall' || climb ? -2.7 : down ? -1.2 : st === 'edge' ? .35 : -sw * .6;
+  CH.swing = Math.max(0, CH.swing - dt);
+  chBody.rotation.x = lerp(chBody.rotation.x, lean, Math.min(1, dt * 10));
+  CH.head.rotation.x = lerp(CH.head.rotation.x, headX, Math.min(1, dt * 10));
+  CH.arms[0].rotation.x = lerp(CH.arms[0].rotation.x, armX, Math.min(1, dt * 14));
+  CH.arms[1].rotation.x = CH.swing > 0 ? -2.6 + (1 - CH.swing / .3) * 3.4 : lerp(CH.arms[1].rotation.x, st === 'wall' || climb ? -2.7 : down ? -1.2 : st === 'edge' ? .35 : sw * .6, Math.min(1, dt * 14));
+  CH.legs[0].rotation.x = sw * .7; CH.legs[1].rotation.x = -sw * .7;
+  CH.land = Math.max(0, CH.land - dt);
+  chBody.position.y = CH.moving ? Math.abs(Math.sin(CH.walkT)) * .02 : 0;
+  chBody.scale.set(1 + CH.land * .9, 1 - CH.land * 1.4, 1 + CH.land * .9);   // приземление — сплющивается
 }
 
 /* ---------- цикл ---------- */
@@ -429,7 +587,7 @@ let last = performance.now(), acc = 0;
 function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   for (const g of grabs.values()) stepHeld(g);
-  world.step(1 / 120, dt, 8);
+  stepChar(dt); world.step(1 / 120, dt, 8); drawChar(dt, now);
   for (const t of trash) if (t.body) {
     if (!t.held) depenetrate(t);
     t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
@@ -440,20 +598,23 @@ function frame(now) {
   stepParts(dt);
   // подсветка блоков, которые можно копать
   const pulse = 1 + (.12 + .1 * Math.sin(now / 260)) * (tool === 'pick' ? 1 : 0);
-  for (const k in GLOW) for (const m of GLOW[k]) m.color.setScalar(pulse);
-  for (let a = 0; a < 4; a++) for (const z of [d[a] - 1, d[a]]) { const b = blocks.get(ACT[a][0] + ',' + ACT[a][1] + ',' + z); if (b) { const u = b.mesh.userData; b.mesh.material = tool === 'pick' && diggable(a, u.z) ? GLOW[u.k] : MATS[u.k] } }
-  if (follow) camTarget = maxCam();
+  for (const k in GLOW) for (const m of GLOW[k]) m.color.setScalar(m.userData.k * pulse);
+  for (let a = 0; a < 4; a++) for (const z of [d[a] - 1, d[a]]) { const b = blocks.get(ACT[a][0] + ',' + ACT[a][1] + ',' + z); if (b) { const u = b.mesh.userData; b.mesh.material = tool === 'pick' && diggable(a, u.z) && reach(a) ? GLOW[u.k] : MATS[u.k] } }
+  if (follow) camTarget = clampCam(-CH.y / BH * 32);
   if (!drag && Math.abs(vel) > .05) { camTarget = clampCam(camTarget + vel); vel *= .92; if (camTarget >= maxCam()) follow = true }
   if (drag) camY = camTarget; else { camY += (camTarget - camY) * .18; if (Math.abs(camTarget - camY) < .3) camY = camTarget }
   // рисуем только слои рядом с камерой
   const cl = Math.round(camY) / 32, z0 = Math.floor(cl - 8), z1 = Math.ceil(cl + 14);
   for (const b of blocks.values()) b.mesh.visible = b.mesh.userData.z >= z0 && b.mesh.userData.z <= z1;
   placeCam();
+  // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
+  const ty = -Math.round(camY / 32) * BH; sun.target.position.set(3, ty, 3); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
+  renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, cam);
-  if (trash.some(t => t.g.visible)) drawOutlines();
-  document.getElementById('depth').textContent = '3D · ' + Math.min(cur(), DIG) + ' / ' + DIG;
+  drawOutlines();
+  document.getElementById('depth').textContent = '3D · ' + Math.round(-CH.y / BH) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }
 genTrash(); resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
-window.__dbg = { d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
+window.__dbg = { CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
