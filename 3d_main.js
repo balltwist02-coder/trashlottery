@@ -94,8 +94,8 @@ function placeCam() {
 /* свет: солнце почти сверху (чуть со стороны задней стенки) даёт настоящие тени, мягкий свет спереди — объём мусору.
    у блоков яркость каждой грани заранее выровнена, чтобы нарисованные тайлы выглядели как раньше,
    а темнело только то, что попало в тень */
-const SUN_DIR = new THREE.Vector3(-.15, 1, -.22).normalize(), FILL_DIR = new THREE.Vector3(.19, .875, .45).normalize();
-const AMB = .5, SUN = .55, FILL = .3;
+const SUN_DIR = new THREE.Vector3(-.3, 1, -.42).normalize(), FILL_DIR = new THREE.Vector3(.19, .875, .45).normalize();
+const AMB = .4, SUN = .72, FILL = .26;
 const FACE_K = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(a => { const n = new THREE.Vector3(...a);
   return 1 / (AMB + SUN * Math.max(0, n.dot(SUN_DIR)) + FILL * Math.max(0, n.dot(FILL_DIR))) });
 const loader = new THREE.TextureLoader();
@@ -552,7 +552,7 @@ function stepChar(dt) {
         if (CH.state !== kind) { CH.state = kind; CH.t = 0 }
         CH.t += dt; CH.face.copy(blocked.ad);
         if (CH.t > (kind === 'edge' ? .55 : .6)) {              // всё ещё держим джойстик к краю — прыгаем
-          const ad = blocked.ad, x1 = CH.x + ad.x * (2 * R + .12), z1 = CH.z + ad.z * (2 * R + .12);
+          const ad = blocked.ad, x1 = CH.x + ad.x * (2 * R + .2), z1 = CH.z + ad.z * (2 * R + .2);
           CH.anim = { kind: kind === 'edge' ? 'down' : 'climb', t: 0, dur: kind === 'edge' ? .35 + .07 * Math.min(4, (fl - blocked.h) / BH) : .62, x0: CH.x, z0: CH.z, y0: CH.y, x1, z1, y1: blocked.h };
           CH.state = 'jump';
         }
@@ -616,5 +616,5 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 genTrash(); resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
-window.__dbg = { CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
+window.__dbg = { sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
