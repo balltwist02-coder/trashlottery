@@ -64,7 +64,7 @@ function resize() {
   renderer.setSize(W, H, false);
   for (const c of [cv, bgc]) { c.style.width = W * SCALE + 'px'; c.style.height = H * SCALE + 'px' }
   cam.left = -W / 2 / PX; cam.right = W / 2 / PX; cam.top = H / 2 / PX; cam.bottom = -H / 2 / PX; cam.updateProjectionMatrix();
-  makeBg();
+  makeBg(); idRT.setSize(W, H); olMat.uniforms.px.value.set(1 / W, 1 / H);
 }
 function makeBg() {
   bgc.width = W; bgc.height = H; const x = bgc.getContext('2d');
@@ -225,8 +225,22 @@ function floorUnder(minX, maxX, minZ, maxZ) {               // самый выс
 }
 
 /* ---------- тень под предметом, пока его держат: показывает, куда он упадёт ---------- */
-const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .38, depthWrite: false });
-const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), shadowMat); shadow.rotation.x = -Math.PI / 2; shadow.visible = false; scene.add(shadow);
+// пиксельный овал, повёрнутый вместе с предметом: у банки — кружок, у трубы — длинный овал
+const shC = document.createElement('canvas'); shC.width = shC.height = 16;
+{ const x = shC.getContext('2d'); x.fillStyle = '#000'; for (let yy = 0; yy < 16; yy++) for (let xx = 0; xx < 16; xx++) { const u = (xx + .5 - 8) / 8, v = (yy + .5 - 8) / 8; if (u * u + v * v <= 1) x.fillRect(xx, yy, 1, 1) } }
+const shTex = new THREE.CanvasTexture(shC); shTex.magFilter = shTex.minFilter = THREE.NearestFilter; shTex.generateMipmaps = false;
+const shGeo = new THREE.PlaneGeometry(1, 1); shGeo.rotateX(-Math.PI / 2);
+const shadow = new THREE.Mesh(shGeo, new THREE.MeshBasicMaterial({ map: shTex, color: 0x000000, transparent: true, opacity: .38, depthWrite: false })); shadow.visible = false; scene.add(shadow);
+function placeShadow(t, pos, floor) {                        // след предмета на полу по его собственным осям
+  const q = new THREE.Quaternion(t.body.quaternion.x, t.body.quaternion.y, t.body.quaternion.z, t.body.quaternion.w);
+  const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(q); ax.y = 0; if (ax.lengthSq() < 1e-3) ax.set(1, 0, 0); ax.normalize();
+  const az = new THREE.Vector3(-ax.z, 0, ax.x), v = new THREE.Vector3();
+  let a0 = 1e9, a1 = -1e9, b0 = 1e9, b1 = -1e9;
+  for (const x of [t.local.min.x, t.local.max.x]) for (const y of [t.local.min.y, t.local.max.y]) for (const z of [t.local.min.z, t.local.max.z]) {
+    v.set(x, y, z).applyQuaternion(q); const a = v.dot(ax), b = v.dot(az); a0 = Math.min(a0, a); a1 = Math.max(a1, a); b0 = Math.min(b0, b); b1 = Math.max(b1, b) }
+  shadow.visible = true; shadow.rotation.y = Math.atan2(-ax.z, ax.x); shadow.scale.set(a1 - a0, 1, b1 - b0);
+  shadow.position.copy(pos).addScaledVector(ax, (a0 + a1) / 2).addScaledVector(az, (b0 + b1) / 2); shadow.position.y = floor + .004;
+}
 
 /* ---------- частицы ---------- */
 const parts = []; const pGeo = new THREE.BoxGeometry(.045, .045, .045);
@@ -243,8 +257,16 @@ function pick(e) {
   const objs = [...[...blocks.values()].map(b => b.mesh), ...trash.filter(t => t.g.visible).map(t => t.g)];
   return ray.intersectObjects(objs, true)[0] || null;
 }
-let drag = null, vel = 0; const grabs = new Map();
+let drag = null, vel = 0, rotP = null; const grabs = new Map();
+// вращение предмета в руке: второй палец водит по экрану (или колесо мыши)
+function rotateHeld(dx, dy) {
+  const len = Math.hypot(dx, dy); if (!len) return;
+  const axis = SCR_U.clone().multiplyScalar(dx).addScaledVector(SCR_R, dy).normalize();
+  const dq = new THREE.Quaternion().setFromAxisAngle(axis, len / SCALE * .045);
+  for (const g of grabs.values()) g.q.premultiply(dq);
+}
 cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId);
+  if (grabs.size && !rotP) { rotP = { id: e.pointerId, x: e.clientX, y: e.clientY }; return }
   const h = pick(e);
   if (h && h.object.userData.t && tool !== 'bar') { const t = h.object.userData.t;
     if (!t.active) { haptic('warn'); return }
@@ -253,11 +275,12 @@ cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId);
     const b = t.body; t.held = true;
     b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
     const p0 = new THREE.Vector3(b.position.x, b.position.y, b.position.z);
-    grabs.set(e.pointerId, { t, plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -h.point.y), off: p0.clone().sub(h.point), target: p0.clone() });
+    grabs.set(e.pointerId, { t, plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -h.point.y), off: p0.clone().sub(h.point), target: p0.clone(), q: new THREE.Quaternion(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w) });
     haptic('light'); return }
   if (drag) return;
   drag = { id: e.pointerId, h, y: e.clientY, cam: camTarget, moved: false, lastY: e.clientY, lastT: performance.now() }; vel = 0 });
 cv.addEventListener('pointermove', e => {
+  if (rotP && rotP.id === e.pointerId) { rotateHeld(e.clientX - rotP.x, e.clientY - rotP.y); rotP.x = e.clientX; rotP.y = e.clientY; return }
   const g = grabs.get(e.pointerId);
   if (g) { ray.setFromCamera(ndc(e), cam); const p = new THREE.Vector3(); if (ray.ray.intersectPlane(g.plane, p)) g.target.set(p.x + g.off.x, 0, p.z + g.off.z); return }
   if (!drag || drag.id !== e.pointerId) return;
@@ -267,13 +290,16 @@ cv.addEventListener('pointermove', e => {
   const now = performance.now(), dt = Math.max(1, now - drag.lastT); vel = -(e.clientY - drag.lastY) / SCALE / dt * 16; drag.lastY = e.clientY; drag.lastT = now });
 function release(g) { const b = g.t.body; g.t.held = false; b.type = CANNON.Body.DYNAMIC; b.updateMassProperties(); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.wakeUp(); shadow.visible = false }
 const endDrag = (e, cancel) => {
-  const g = grabs.get(e.pointerId); if (g) { grabs.delete(e.pointerId); release(g); return }
+  if (rotP && rotP.id === e.pointerId) { rotP = null; return }
+  const g = grabs.get(e.pointerId); if (g) { grabs.delete(e.pointerId); release(g); if (!grabs.size) rotP = null; return }
   if (!drag || drag.id !== e.pointerId) return; const dr = drag, still = performance.now() - dr.lastT > 80; drag = null;
   if (cancel) { vel = 0; return }
   if (!dr.moved) { vel = 0; tap(e) } else if (still) vel = 0 };
 cv.addEventListener('pointerup', e => endDrag(e, false));
 cv.addEventListener('pointercancel', e => endDrag(e, true));
-cv.addEventListener('wheel', e => { e.preventDefault(); vel = 0; camTarget = clampCam(camTarget + e.deltaY / SCALE * .6); follow = camTarget >= maxCam() }, { passive: false });
+cv.addEventListener('wheel', e => { e.preventDefault();
+  if (grabs.size) { const dq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.sign(e.deltaY) * Math.PI / 12); for (const g of grabs.values()) g.q.premultiply(dq); return }
+  vel = 0; camTarget = clampCam(camTarget + e.deltaY / SCALE * .6); follow = camTarget >= maxCam() }, { passive: false });
 function tap(e) {
   const h = pick(e); if (!h) return;
   const t = h.object.userData.t;
@@ -314,6 +340,8 @@ mapclose.addEventListener('click', () => { mapwrap.hidden = true; mapbtn.focus()
 /* ---------- предмет в руке: движение по сетке, без прохода сквозь блоки ---------- */
 function stepHeld(g) {
   const t = g.t, b = t.body, cur3 = new THREE.Vector3(b.position.x, b.position.y, b.position.z);
+  const bq = new THREE.Quaternion(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w).slerp(g.q, .25);   // плавно доворачиваем
+  b.quaternion.set(bq.x, bq.y, bq.z, bq.w); b.angularVelocity.set(0, 0, 0);
   // плавно идём к пальцу, но не быстрее 0.25 клетки за кадр
   const want = new THREE.Vector3(g.target.x - cur3.x, 0, g.target.z - cur3.z); if (want.length() > .25) want.setLength(.25);
   const nx = cur3.clone().add(want);
@@ -327,15 +355,52 @@ function stepHeld(g) {
   const needY = floor + lift + (nx.y - bb.min.y);
   nx.y = needY > cur3.y ? needY : cur3.y + (needY - cur3.y) * .3;   // вверх сразу, вниз — плавно
   b.position.set(nx.x, nx.y, nx.z); b.velocity.set(0, 0, 0);
-  shadow.visible = true; shadow.scale.set(bb.max.x - bb.min.x, bb.max.z - bb.min.z, 1);
-  shadow.position.set((bb.min.x + bb.max.x) / 2, floor + .004, (bb.min.z + bb.max.z) / 2);
+  placeShadow(t, nx, floor);
 }
 /* страховка: если предмет всё же оказался внутри блока — аккуратно ставим его на пол без вращения */
 function depenetrate(t) {
-  // проверяем по клетке под центром: центр ниже её верха — значит предмет провалился в блок
-  const b = t.body, x = b.position.x, z = b.position.z;
-  const floor = floorUnder(x - .001, x + .001, z - .001, z + .001);
-  if (b.position.y < floor - .08) { const bb = worldBox(t, new THREE.Vector3(x, b.position.y, z)); b.position.y += floor + .01 - bb.min.y; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0) }
+  // срабатывает, только если СЕРЕДИНА предмета оказалась внутри блока; край, свисающий со ступеньки, — это нормально
+  const b = t.body; if (b.sleepState === CANNON.Body.SLEEPING) return;
+  const c = t.local.getCenter(new THREE.Vector3()), w = b.pointToWorldFrame(new CANNON.Vec3(c.x, c.y, c.z));
+  const a = ACT.findIndex(([i, j]) => w.x >= i && w.x < i + 1 && w.z >= j && w.z < j + 1); if (a < 0) return;
+  const f = floorY(a); if (w.y >= f - .03) return;
+  const bb = worldBox(t, new THREE.Vector3(b.position.x, b.position.y, b.position.z));
+  b.position.y += f + .01 - bb.min.y; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+}
+
+/* ---------- контур мусора: 1 пиксель тёмной обводки, чтобы предметы не сливались в куче ----------
+   отдельный проход рисует каждый предмет своим «номером» в скрытую картинку, потом граница номеров
+   закрашивается тёмным — у ближнего к камере предмета, поэтому в куче видно, кто сверху */
+const idRT = new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, depthTexture: new THREE.DepthTexture(1, 1) });
+const ID_BLOCK = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const olMat = new THREE.ShaderMaterial({
+  uniforms: { tId: { value: idRT.texture }, tD: { value: idRT.depthTexture }, px: { value: new THREE.Vector2(1, 1) } },
+  transparent: true, depthTest: false, depthWrite: false,
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
+  fragmentShader: `uniform sampler2D tId, tD; uniform vec2 px; varying vec2 vUv;
+    float idAt(vec2 u){ return floor(texture2D(tId, u).r * 255. + .5); }
+    void main(){
+      float me = idAt(vUv); if (me < .5) discard;
+      float dm = texture2D(tD, vUv).r; bool e = false;
+      for (int k = 0; k < 4; k++) {
+        vec2 o = k == 0 ? vec2(px.x, 0.) : k == 1 ? vec2(-px.x, 0.) : k == 2 ? vec2(0., px.y) : vec2(0., -px.y);
+        float n = idAt(vUv + o);
+        if (n != me && (n < .5 || texture2D(tD, vUv + o).r > dm + 1e-5)) e = true;
+      }
+      if (!e) discard;
+      gl_FragColor = vec4(.07, .05, .09, 1.);
+    }` });
+const olScene = new THREE.Scene(); { const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), olMat); q.frustumCulled = false; olScene.add(q) }
+function drawOutlines() {
+  const saved = [];
+  for (const b of blocks.values()) { saved.push([b.mesh, b.mesh.material]); b.mesh.material = ID_BLOCK }
+  trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
+    t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
+    t.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = t.idMat } }) });
+  const shV = shadow.visible; shadow.visible = false; for (const p of parts) p.m.visible = false;
+  renderer.setRenderTarget(idRT); renderer.clear(); renderer.render(scene, cam); renderer.setRenderTarget(null);
+  for (const [o, m] of saved) o.material = m; shadow.visible = shV; for (const p of parts) p.m.visible = true;
+  renderer.autoClear = false; renderer.render(olScene, cam); renderer.autoClear = true;
 }
 
 /* ---------- цикл ---------- */
@@ -364,6 +429,7 @@ function frame(now) {
   for (const b of blocks.values()) b.mesh.visible = b.mesh.userData.z >= z0 && b.mesh.userData.z <= z1;
   placeCam();
   renderer.render(scene, cam);
+  if (trash.some(t => t.g.visible)) drawOutlines();
   document.getElementById('depth').textContent = '3D · ' + Math.min(cur(), DIG) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }
