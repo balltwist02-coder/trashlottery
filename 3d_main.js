@@ -140,6 +140,7 @@ function pipeMesh(g, len, seed) {                            // синевата
   const steel = M(0x5f7f9e), inner = M(0x24303c), r = .075;
   part(g, new THREE.CylinderGeometry(r, r, len, 10, 1, true), steel, 0, r, 0, 0, 0, Math.PI / 2);
   for (const s of [-1, 1]) part(g, new THREE.RingGeometry(r * .55, r, 10), inner, s * len / 2, r, 0, s * Math.PI / 2);
+  part(g, new THREE.CylinderGeometry(r * .56, r * .56, len - .002, 10, 1, true), new THREE.MeshLambertMaterial({ color: 0x1b232d, side: THREE.BackSide }), 0, r, 0, 0, 0, Math.PI / 2);   // тёмная внутренность трубы
   let q = seed;
   for (let k = 0; k < Math.round(len * 5); k++) { q = (q * 9301 + 49297) % 233280; const t = q / 233280;
     const w = .05 + (k % 3) * .03;
@@ -234,15 +235,31 @@ const shC = document.createElement('canvas'); shC.width = shC.height = 16;
 const shTex = new THREE.CanvasTexture(shC); shTex.magFilter = shTex.minFilter = THREE.NearestFilter; shTex.generateMipmaps = false;
 const shGeo = new THREE.PlaneGeometry(1, 1); shGeo.rotateX(-Math.PI / 2);
 const shadow = new THREE.Mesh(shGeo, new THREE.MeshBasicMaterial({ map: shTex, color: 0x000000, transparent: true, opacity: .38, depthWrite: false })); shadow.visible = false; scene.add(shadow);
-function placeShadow(t, pos, floor) {                        // след предмета на полу по его собственным осям
+// «след» предмета на полу: повёрнутый прямоугольник по его собственным осям (а не рамка вокруг него)
+function footprint(t, pos) {
   const q = new THREE.Quaternion(t.body.quaternion.x, t.body.quaternion.y, t.body.quaternion.z, t.body.quaternion.w);
   const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(q); ax.y = 0; if (ax.lengthSq() < 1e-3) ax.set(1, 0, 0); ax.normalize();
   const az = new THREE.Vector3(-ax.z, 0, ax.x), v = new THREE.Vector3();
   let a0 = 1e9, a1 = -1e9, b0 = 1e9, b1 = -1e9;
   for (const x of [t.local.min.x, t.local.max.x]) for (const y of [t.local.min.y, t.local.max.y]) for (const z of [t.local.min.z, t.local.max.z]) {
     v.set(x, y, z).applyQuaternion(q); const a = v.dot(ax), b = v.dot(az); a0 = Math.min(a0, a); a1 = Math.max(a1, a); b0 = Math.min(b0, b); b1 = Math.max(b1, b) }
-  shadow.visible = true; shadow.rotation.y = Math.atan2(-ax.z, ax.x); shadow.scale.set(a1 - a0, 1, b1 - b0);
-  shadow.position.copy(pos).addScaledVector(ax, (a0 + a1) / 2).addScaledVector(az, (b0 + b1) / 2); shadow.position.y = floor + .004;
+  const c = pos.clone().addScaledVector(ax, (a0 + a1) / 2).addScaledVector(az, (b0 + b1) / 2);
+  return { c, ax, az, ha: (a1 - a0) / 2, hb: (b1 - b0) / 2 };
+}
+const extX = f => Math.abs(f.ax.x) * f.ha + Math.abs(f.az.x) * f.hb, extZ = f => Math.abs(f.ax.z) * f.ha + Math.abs(f.az.z) * f.hb;
+function obbFloor(f, m = .03) {                            // самый высокий пол среди клеток, которые след реально задевает
+  let y = -Infinity;
+  for (let a = 0; a < 4; a++) { const [i, j] = ACT[a], dx = i + .5 - f.c.x, dz = j + .5 - f.c.z;
+    if (Math.abs(dx) >= .5 + extX(f) - m || Math.abs(dz) >= .5 + extZ(f) - m) continue;
+    if (Math.abs(dx * f.ax.x + dz * f.ax.z) >= f.ha + .5 * (Math.abs(f.ax.x) + Math.abs(f.ax.z)) - m) continue;
+    if (Math.abs(dx * f.az.x + dz * f.az.z) >= f.hb + .5 * (Math.abs(f.az.x) + Math.abs(f.az.z)) - m) continue;
+    y = Math.max(y, floorY(a)) }
+  if (y === -Infinity) { const a = ACT.findIndex(([i, j]) => f.c.x >= i && f.c.x < i + 1 && f.c.z >= j && f.c.z < j + 1); y = floorY(a < 0 ? 0 : a) }
+  return y;
+}
+function placeShadow(f, floor) {
+  shadow.visible = true; shadow.rotation.y = Math.atan2(-f.ax.z, f.ax.x); shadow.scale.set(f.ha * 2, 1, f.hb * 2);
+  shadow.position.set(f.c.x, floor + .004, f.c.z);
 }
 
 /* ---------- частицы ---------- */
@@ -322,7 +339,7 @@ function breakTrash(t) {
     const p = b.pointToWorldFrame(new CANNON.Vec3(s * .43, -.075, 0));   // от центра трубы к «дну» половинки
     const h = makeTrash(kind, p.x, p.y, p.z, 0, -1); h.g.quaternion.set(q.x, q.y, q.z, q.w); h.g.updateMatrixWorld(true);
     activate(h); const dir = q.vmult(new CANNON.Vec3(s, 0, 0));
-    h.body.velocity.set(dir.x * 1.6, 2.2, dir.z * 1.6);
+    h.body.velocity.set(dir.x * 1.1, 1.2, dir.z * 1.1);
   }
   const p = b.position; burst(p.x, p.y + .1, p.z, ['#8a4b2a', '#a35a2c', '#5f7f9e', '#c9d3dc'], 22, .8);
   shake = 6; haptic('heavy'); toast('Сломано: ' + TYPES[t.type].name);
@@ -345,20 +362,21 @@ function stepHeld(g) {
   const t = g.t, b = t.body, cur3 = new THREE.Vector3(b.position.x, b.position.y, b.position.z);
   const bq = new THREE.Quaternion(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w).slerp(g.q, .25);   // плавно доворачиваем
   b.quaternion.set(bq.x, bq.y, bq.z, bq.w); b.angularVelocity.set(0, 0, 0);
-  // плавно идём к пальцу, но не быстрее 0.25 клетки за кадр
-  const want = new THREE.Vector3(g.target.x - cur3.x, 0, g.target.z - cur3.z); if (want.length() > .25) want.setLength(.25);
+  // плавно идём к пальцу, но не быстрее 0.2 клетки за кадр
+  const want = new THREE.Vector3(g.target.x - cur3.x, 0, g.target.z - cur3.z); if (want.length() > .2) want.setLength(.2);
   const nx = cur3.clone().add(want);
-  // не даём выйти за края ямы
-  let bb = worldBox(t, nx);
-  if (bb.min.x < PIT0) nx.x += PIT0 - bb.min.x; if (bb.max.x > PIT1) nx.x -= bb.max.x - PIT1;
-  if (bb.min.z < PIT0) nx.z += PIT0 - bb.min.z; if (bb.max.z > PIT1) nx.z -= bb.max.z - PIT1;
-  bb = worldBox(t, nx);
-  // высота: чуть выше самого высокого блока под предметом — перед выступом предмет приподнимается сам
-  const floor = floorUnder(bb.min.x, bb.max.x, bb.min.z, bb.max.z), lift = .08;
-  const needY = floor + lift + (nx.y - bb.min.y);
-  nx.y = needY > cur3.y ? needY : cur3.y + (needY - cur3.y) * .3;   // вверх сразу, вниз — плавно
+  // не даём выйти за края ямы — по реальному следу предмета
+  let f = footprint(t, nx);
+  if (f.c.x - extX(f) < PIT0) nx.x += PIT0 - (f.c.x - extX(f)); if (f.c.x + extX(f) > PIT1) nx.x -= f.c.x + extX(f) - PIT1;
+  if (f.c.z - extZ(f) < PIT0) nx.z += PIT0 - (f.c.z - extZ(f)); if (f.c.z + extZ(f) > PIT1) nx.z -= f.c.z + extZ(f) - PIT1;
+  f = footprint(t, nx);
+  const lift = .03, need = obbFloor(f) + lift + (nx.y - worldBox(t, nx).min.y);
+  if (need > cur3.y + .005) {
+    // впереди выступ: сначала плавно поднимаемся на месте, и только потом едем дальше
+    nx.x = cur3.x; nx.z = cur3.z; nx.y = cur3.y + Math.min(.04, need - cur3.y);
+  } else nx.y = cur3.y + (need - cur3.y) * .25;                  // вниз — тоже плавно
   b.position.set(nx.x, nx.y, nx.z); b.velocity.set(0, 0, 0);
-  placeShadow(t, nx, floor);
+  const ff = footprint(t, nx); placeShadow(ff, obbFloor(ff));
 }
 /* страховка: если предмет всё же оказался внутри блока — аккуратно ставим его на пол без вращения */
 function depenetrate(t) {
