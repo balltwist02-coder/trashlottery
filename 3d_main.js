@@ -314,7 +314,7 @@ const grabs = new Map();   // перетаскивание пальцем «за
 /* невидимый джойстик: коснулся где угодно и повёл палец — персонаж идёт в ту сторону; короткий тап — применить инструмент */
 const joy = { x: 0, y: 0, id: null, ox: 0, oy: 0, t0: 0, moved: false }, keys = new Set();
 const JOY_R = 42;                                              // на сколько пикселей отвести палец для полной скорости
-cv.addEventListener('pointerdown', e => { if (joy.id !== null) return; cv.setPointerCapture(e.pointerId);
+cv.addEventListener('pointerdown', e => { if (joy.id !== null) return; try { cv.setPointerCapture(e.pointerId) } catch (_) { }
   Object.assign(joy, { id: e.pointerId, ox: e.clientX, oy: e.clientY, t0: performance.now(), moved: false, x: 0, y: 0 }) });
 cv.addEventListener('pointermove', e => { if (joy.id !== e.pointerId) return;
   let x = e.clientX - joy.ox, y = e.clientY - joy.oy; const l = Math.hypot(x, y);
@@ -445,11 +445,11 @@ function drawOutlines() {
    ходит джойстиком; у обрыва останавливается и смотрит вниз, у стенки — смотрит вверх;
    если продолжать держать джойстик в ту сторону — прыгает вниз или залезает */
 const CH = { held: null, x: PC + .5, z: PC + .5, y: 0, face: new THREE.Vector3(0, 0, 1), state: 'walk', t: 0, vy: 0, anim: null, walkT: 0, moving: false, land: 0, swing: 0, yaw: 0 };
-CH.y = floorY(cellAt(CH.x, CH.z));
 const R = .22, SPEED = 1.5;
 const G_UP = new THREE.Vector3(-1, 0, -1).normalize();          // «вверх по экрану» на полу
 const cellAt = (x, z) => ACT.findIndex(([i, j]) => x >= i && x < i + 1 && z >= j && z < j + 1);
 const charCell = () => cellAt(CH.x, CH.z);
+CH.y = floorY(cellAt(CH.x, CH.z));
 function reach(a) {                                            // можно ли копать блок клетки a, стоя там, где стоим
   const c = charCell(); if (c < 0) return false; if (a === c) return true;
   if (floorY(a) <= floorY(c) + .01) return false;              // соседняя клетка должна быть выше — это стенка перед нами
