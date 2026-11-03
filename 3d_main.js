@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { createKiryu } from './kiryu.js?v=1';
 
 /* ===== 3D-версия: яма 2×2 на 30 слоёв, кубы из ваших тайлов, физика мусора ===== */
 const PLOT = window.PLOT3D, TEX = window.TEX3D;
@@ -84,7 +85,7 @@ let camY = 0, camTarget = 0, follow = true, shake = 0;
 const maxCam = () => Math.min(cur() + 1, DIG - 1) * 32;
 const clampCam = v => Math.max(0, Math.min(maxCam(), v));
 function placeCam() {
-  const upPx = Math.round(0.2 * H);                        // верх ямы на ~30% высоты экрана
+  const upPx = Math.round(0.36 * H);                       // пол под персонажем — чуть выше середины экрана, рослому герою есть место
   const t = new THREE.Vector3(3, -(upPx / PX) / C30 - Math.round(camY) / 32 * BH, 3);
   if (shake > 0) { t.addScaledVector(SCR_R, (Math.random() < .5 ? -1 : 1) / PX).addScaledVector(SCR_U, (Math.random() < .5 ? -1 : 0) / PX); shake-- }
   cam.position.copy(t).addScaledVector(VIEW, 60); cam.lookAt(t);
@@ -446,7 +447,7 @@ function drawOutlines() {
    если продолжать держать джойстик в ту сторону — прыгает вниз или залезает */
 const CH = { x: 3.5, z: 3.5, y: 0, face: new THREE.Vector3(0, 0, 1), state: 'walk', t: 0, vy: 0, anim: null, walkT: 0, moving: false, land: 0, swing: 0, yaw: 0 };
 CH.y = floorY(3);
-const R = .15, SPEED = 1.5;
+const R = .2, SPEED = 1.5;
 const G_UP = new THREE.Vector3(-1, 0, -1).normalize();          // «вверх по экрану» на полу
 const cellAt = (x, z) => ACT.findIndex(([i, j]) => x >= i && x < i + 1 && z >= j && z < j + 1);
 const charCell = () => cellAt(CH.x, CH.z);
@@ -458,41 +459,10 @@ function reach(a) {                                            // можно л�
 }
 const chG = new THREE.Group(), chBody = new THREE.Group(); chG.add(chBody); scene.add(chG);
 const CH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(252 / 255, 0, 0) });
-{ // Кирью Нагасаки: чиби-пропорции, рабочая форма — белая рубашка, зелёные подтяжки и шорты, перчатки, сапоги, каска с фонарём.
-  // ростом ~0.9 (на 10% выше блока); формы — коробки, чтобы в низком разрешении силуэт был чётким
-  const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-  const green = M(0x8cc65a), greenD = M(0x4f8a3a), shirt = M(0xf2f2ea), skin = M(0xf3dcc6), boot = M(0x18302a),
-        hair = M(0x22202a), belt = M(0x1f2226), eye = M(0x2a2226), blush = M(0xeaa7a0), lamp = M(0xdfe8e4), lampD = M(0x7d8c86);
-  const pivot = (parent, x, y, z) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g };
-  CH.legs = [-1, 1].map(s => { const g = pivot(chBody, s * .055, .36, 0);
-    part(g, B(.1, .1, .12), green, 0, -.05, 0);                // штанина шорт
-    part(g, B(.065, .1, .07), skin, 0, -.15, 0);               // коленка
-    part(g, B(.09, .14, .13), boot, 0, -.29, .012);            // сапог
-    return g });
-  part(chBody, B(.22, .1, .15), green, 0, .38, 0);             // шорты
-  part(chBody, B(.07, .05, .01), greenD, .05, .37, .076);      // карман
-  part(chBody, B(.225, .025, .155), belt, 0, .44, 0);          // ремень
-  part(chBody, B(.2, .13, .14), shirt, 0, .515, 0);            // рубашка
-  for (const s of [-1, 1]) { part(chBody, B(.025, .14, .01), greenD, s * .055, .51, .072); part(chBody, B(.025, .14, .01), greenD, s * .055, .51, -.072) }   // подтяжки
-  for (const y of [.55, .51, .47]) part(chBody, B(.012, .012, .01), lampD, 0, y, .072);   // пуговицы
-  CH.arms = [-1, 1].map(s => { const g = pivot(chBody, s * .125, .565, 0);
-    part(g, B(.06, .06, .08), shirt, 0, -.03, 0);              // рукав
-    part(g, B(.045, .06, .05), skin, 0, -.09, 0);
-    part(g, B(.075, .075, .08), green, 0, -.15, 0);            // перчатка
-    return g });
-  CH.head = pivot(chBody, 0, .585, 0);
-  part(CH.head, B(.27, .22, .23), skin, 0, .11, .005);         // голова
-  part(CH.head, B(.29, .17, .07), hair, 0, .13, -.1);          // волосы сзади
-  for (const s of [-1, 1]) part(CH.head, B(.03, .14, .17), hair, s * .145, .13, -.02);   // виски
-  part(CH.head, B(.27, .04, .03), hair, 0, .215, .115);        // чёлка из-под каски
-  for (const s of [-1, 1]) { part(CH.head, B(.04, .06, .01), eye, s * .06, .11, .121); part(CH.head, B(.035, .02, .01), blush, s * .085, .07, .121) }
-  part(CH.head, B(.3, .1, .27), green, 0, .265, -.005);        // каска
-  part(CH.head, B(.24, .04, .23), green, 0, .325, -.005);      // верх каски
-  part(CH.head, B(.31, .025, .08), greenD, 0, .22, .16);       // козырёк
-  part(CH.head, new THREE.CylinderGeometry(.045, .045, .03, 8), lampD, 0, .275, .14, 0, Math.PI / 2);   // фонарь
-  part(CH.head, new THREE.CylinderGeometry(.034, .034, .012, 8), lamp, 0, .275, .158, 0, Math.PI / 2);
+const KIRYU = createKiryu(THREE);   // модель и позы — в kiryu.js
+{ chBody.add(KIRYU.root);
   chG.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }) }
-const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.14, .14, .9, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
+const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.2, .2, 1.3, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
 world.addBody(chP);
 
 /* джойстик и кнопка действия */
@@ -541,7 +511,7 @@ function stepChar(dt) {
   if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   if (keys.has('KeyW') || keys.has('ArrowUp')) iy -= 1; if (keys.has('KeyS') || keys.has('ArrowDown')) iy += 1;
   const dir = SCR_R.clone().multiplyScalar(ix).addScaledVector(G_UP, -iy); dir.y = 0;
-  const m = Math.min(1, dir.length()); if (m > 0) dir.normalize();
+  const m = Math.min(1, dir.length()); if (m > 0) dir.normalize(); CH.spd = m;
   const a = charCell(), fl = a < 0 ? CH.y : floorY(a);
   const p0x = CH.x, p0z = CH.z, p0y = CH.y;
   CH.moving = false;
@@ -582,27 +552,15 @@ function stepChar(dt) {
       } else if (CH.state !== 'walk') { CH.state = 'walk'; CH.t = 0 }
     }
   }
-  chP.position.set(CH.x, CH.y + .45, CH.z);                    // толкаем мусор телом
+  chP.position.set(CH.x, CH.y + .65, CH.z);                    // толкаем мусор телом
   chP.velocity.set((CH.x - p0x) / Math.max(dt, 1e-3), (CH.y - p0y) / Math.max(dt, 1e-3), (CH.z - p0z) / Math.max(dt, 1e-3));
 }
 const lerp = (a, b, k) => a + (b - a) * k;
 function drawChar(dt, now) {
   chG.position.set(CH.x, CH.y, CH.z);
-  let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 14); chG.rotation.y = CH.yaw;
-  if (CH.moving) CH.walkT += dt * 11;
-  const sw = CH.moving ? Math.sin(CH.walkT) : 0, st = CH.state, climb = st === 'jump' && CH.anim.kind === 'climb', down = st === 'jump' && CH.anim.kind === 'down';
-  const lean = st === 'edge' ? .42 : climb ? .25 : 0;           // у обрыва наклоняется вперёд
-  const headX = st === 'edge' ? .55 : st === 'wall' ? -.5 : climb ? -.3 : 0;   // смотрит вниз / вверх
-  const armX = st === 'wall' || climb ? -2.7 : down ? -1.2 : st === 'edge' ? .35 : -sw * .6;
-  CH.swing = Math.max(0, CH.swing - dt);
-  chBody.rotation.x = lerp(chBody.rotation.x, lean, Math.min(1, dt * 10));
-  CH.head.rotation.x = lerp(CH.head.rotation.x, headX, Math.min(1, dt * 10));
-  CH.arms[0].rotation.x = lerp(CH.arms[0].rotation.x, armX, Math.min(1, dt * 14));
-  CH.arms[1].rotation.x = CH.swing > 0 ? -2.6 + (1 - CH.swing / .3) * 3.4 : lerp(CH.arms[1].rotation.x, st === 'wall' || climb ? -2.7 : down ? -1.2 : st === 'edge' ? .35 : sw * .6, Math.min(1, dt * 14));
-  CH.legs[0].rotation.x = sw * .7; CH.legs[1].rotation.x = -sw * .7;
-  CH.land = Math.max(0, CH.land - dt);
-  chBody.position.y = CH.moving ? Math.abs(Math.sin(CH.walkT)) * .02 : 0;
-  chBody.scale.set(1 + CH.land * .9, 1 - CH.land * 1.4, 1 + CH.land * .9);   // приземление — сплющивается
+  let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 10); chG.rotation.y = CH.yaw;
+  CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
+  KIRYU.update(dt, { state: CH.state, moving: CH.moving, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land });
 }
 
 /* ---------- цикл ---------- */
