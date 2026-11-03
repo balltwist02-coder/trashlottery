@@ -441,12 +441,12 @@ function drawOutlines() {
   renderer.autoClear = false; renderer.render(olScene, cam); renderer.autoClear = true;
 }
 
-/* ---------- персонаж (заглушка: девочка в жёлтом дождевике) ----------
+/* ---------- персонаж (заглушка: Кирью Нагасаки в рабочей форме и каске) ----------
    ходит джойстиком; у обрыва останавливается и смотрит вниз, у стенки — смотрит вверх;
    если продолжать держать джойстик в ту сторону — прыгает вниз или залезает */
 const CH = { x: 3.5, z: 3.5, y: 0, face: new THREE.Vector3(0, 0, 1), state: 'walk', t: 0, vy: 0, anim: null, walkT: 0, moving: false, land: 0, swing: 0, yaw: 0 };
 CH.y = floorY(3);
-const R = .13, SPEED = 1.5;
+const R = .15, SPEED = 1.5;
 const G_UP = new THREE.Vector3(-1, 0, -1).normalize();          // «вверх по экрану» на полу
 const cellAt = (x, z) => ACT.findIndex(([i, j]) => x >= i && x < i + 1 && z >= j && z < j + 1);
 const charCell = () => cellAt(CH.x, CH.z);
@@ -458,18 +458,41 @@ function reach(a) {                                            // можно л�
 }
 const chG = new THREE.Group(), chBody = new THREE.Group(); chG.add(chBody); scene.add(chG);
 const CH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(252 / 255, 0, 0) });
-{ const coat = M(0xe8b830), coatD = M(0xc4921f), skin = M(0xefcfae), dark = M(0x1d1822), boot = M(0x3a2a26);
+{ // Кирью Нагасаки: чиби-пропорции, рабочая форма — белая рубашка, зелёные подтяжки и шорты, перчатки, сапоги, каска с фонарём.
+  // ростом ~0.9 (на 10% выше блока); формы — коробки, чтобы в низком разрешении силуэт был чётким
+  const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  const green = M(0x8cc65a), greenD = M(0x4f8a3a), shirt = M(0xf2f2ea), skin = M(0xf3dcc6), boot = M(0x18302a),
+        hair = M(0x22202a), belt = M(0x1f2226), eye = M(0x2a2226), blush = M(0xeaa7a0), lamp = M(0xdfe8e4), lampD = M(0x7d8c86);
   const pivot = (parent, x, y, z) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g };
-  CH.legs = [-1, 1].map(s => { const g = pivot(chBody, s * .04, .09, 0); part(g, new THREE.BoxGeometry(.05, .09, .06), boot, 0, -.045, 0); return g });
-  part(chBody, new THREE.CylinderGeometry(.07, .125, .25, 8), coat, 0, .205, 0);
-  CH.arms = [-1, 1].map(s => { const g = pivot(chBody, s * .1, .3, 0); part(g, new THREE.BoxGeometry(.045, .14, .05), coatD, 0, -.07, 0); return g });
-  CH.head = pivot(chBody, 0, .36, 0);
-  part(CH.head, new THREE.SphereGeometry(.08, 8, 6), skin, 0, 0, .02);
-  part(CH.head, new THREE.SphereGeometry(.1, 8, 6), coat, 0, .015, -.025);
-  part(CH.head, new THREE.ConeGeometry(.04, .09, 6), coat, 0, .11, -.04, 0, -.35);     // острый капюшон
-  for (const s of [-1, 1]) part(CH.head, new THREE.BoxGeometry(.018, .024, .01), dark, s * .03, 0, .1);
+  CH.legs = [-1, 1].map(s => { const g = pivot(chBody, s * .055, .36, 0);
+    part(g, B(.1, .1, .12), green, 0, -.05, 0);                // штанина шорт
+    part(g, B(.065, .1, .07), skin, 0, -.15, 0);               // коленка
+    part(g, B(.09, .14, .13), boot, 0, -.29, .012);            // сапог
+    return g });
+  part(chBody, B(.22, .1, .15), green, 0, .38, 0);             // шорты
+  part(chBody, B(.07, .05, .01), greenD, .05, .37, .076);      // карман
+  part(chBody, B(.225, .025, .155), belt, 0, .44, 0);          // ремень
+  part(chBody, B(.2, .13, .14), shirt, 0, .515, 0);            // рубашка
+  for (const s of [-1, 1]) { part(chBody, B(.025, .14, .01), greenD, s * .055, .51, .072); part(chBody, B(.025, .14, .01), greenD, s * .055, .51, -.072) }   // подтяжки
+  for (const y of [.55, .51, .47]) part(chBody, B(.012, .012, .01), lampD, 0, y, .072);   // пуговицы
+  CH.arms = [-1, 1].map(s => { const g = pivot(chBody, s * .125, .565, 0);
+    part(g, B(.06, .06, .08), shirt, 0, -.03, 0);              // рукав
+    part(g, B(.045, .06, .05), skin, 0, -.09, 0);
+    part(g, B(.075, .075, .08), green, 0, -.15, 0);            // перчатка
+    return g });
+  CH.head = pivot(chBody, 0, .585, 0);
+  part(CH.head, B(.27, .22, .23), skin, 0, .11, .005);         // голова
+  part(CH.head, B(.29, .17, .07), hair, 0, .13, -.1);          // волосы сзади
+  for (const s of [-1, 1]) part(CH.head, B(.03, .14, .17), hair, s * .145, .13, -.02);   // виски
+  part(CH.head, B(.27, .04, .03), hair, 0, .215, .115);        // чёлка из-под каски
+  for (const s of [-1, 1]) { part(CH.head, B(.04, .06, .01), eye, s * .06, .11, .121); part(CH.head, B(.035, .02, .01), blush, s * .085, .07, .121) }
+  part(CH.head, B(.3, .1, .27), green, 0, .265, -.005);        // каска
+  part(CH.head, B(.24, .04, .23), green, 0, .325, -.005);      // верх каски
+  part(CH.head, B(.31, .025, .08), greenD, 0, .22, .16);       // козырёк
+  part(CH.head, new THREE.CylinderGeometry(.045, .045, .03, 8), lampD, 0, .275, .14, 0, Math.PI / 2);   // фонарь
+  part(CH.head, new THREE.CylinderGeometry(.034, .034, .012, 8), lamp, 0, .275, .158, 0, Math.PI / 2);
   chG.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }) }
-const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.12, .12, .45, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
+const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.14, .14, .9, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
 world.addBody(chP);
 
 /* джойстик и кнопка действия */
@@ -559,7 +582,7 @@ function stepChar(dt) {
       } else if (CH.state !== 'walk') { CH.state = 'walk'; CH.t = 0 }
     }
   }
-  chP.position.set(CH.x, CH.y + .225, CH.z);                    // толкаем мусор телом
+  chP.position.set(CH.x, CH.y + .45, CH.z);                    // толкаем мусор телом
   chP.velocity.set((CH.x - p0x) / Math.max(dt, 1e-3), (CH.y - p0y) / Math.max(dt, 1e-3), (CH.z - p0z) / Math.max(dt, 1e-3));
 }
 const lerp = (a, b, k) => a + (b - a) * k;
