@@ -110,7 +110,7 @@ const MATS = {}, GLOW = {};
 function tex(src) { const t = loader.load(src); t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t }
 for (const k in TEX) {
   const [R, L, T] = TEX[k].map(tex);
-  const mk = () => [R, R, T, T, L, L].map((m, f) => { const mm = new THREE.MeshLambertMaterial({ map: m }); mm.userData.k = FACE_K[f]; mm.color.setScalar(FACE_K[f]); return mm });
+  const mk = () => [R, R, T, T, L, L].map((m, f) => { const mm = new THREE.MeshLambertMaterial({ map: m, vertexColors: true }); mm.userData.k = FACE_K[f]; mm.color.setScalar(FACE_K[f]); return mm });
   MATS[k] = mk(); GLOW[k] = mk();
 }
 const matKey = (i, j, z) => { const c = code(i, j, z); return c === '*' || c === 'З' ? ['З', 'З1', 'З2'][hash(i, j, z)] : c };
@@ -123,7 +123,8 @@ world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitu
 const G_BLOCK = 1, G_TRASH = 2, G_CHAR = 4;
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
 function addBlock(i, j, z) {
-  const k = matKey(i, j, z), mesh = new THREE.Mesh(boxGeo, MATS[k]);
+  const geo = boxGeo.clone(); geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(72).fill(1), 3));   // свой цвет вершин — под освещение по блокам
+  const k = matKey(i, j, z), mesh = new THREE.Mesh(geo, MATS[k]);
   mesh.position.set(i + .5, -(z + .5) * BH, j + .5); mesh.userData = { kind: 'b', i, j, z, k };
   mesh.matrixAutoUpdate = false; mesh.updateMatrix();       // блоки не двигаются никогда
   mesh.castShadow = mesh.receiveShadow = true;
@@ -145,7 +146,8 @@ for (const b of blocks.values()) { const u = b.mesh.userData; expose(u.i, u.j, u
   const hw = (PIT1 - PIT0) / 2 + 1;
   for (const [x, z, hx, hz] of [[PIT0 - .5, PC, .5, hw], [PIT1 + .5, PC, .5, hw], [PC, PIT0 - .5, hw, .5], [PC, PIT1 + .5, hw, .5]])
     world.addBody(new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3(hx, hh, hz)), position: new CANNON.Vec3(x, cy, z), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH })) }
-function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; scene.remove(b.mesh); if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z);
+let lightDirty = true;
+function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; scene.remove(b.mesh); b.mesh.geometry.dispose(); lightDirty = true; if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z);
   expose(i - 1, j, z); expose(i, j - 1, z); expose(i, j, z + 1) }
 
 /* ---------- свет только для мусора (блоки уже нарисованы с тенью) ---------- */
@@ -183,6 +185,15 @@ const TYPES = {
   pipe: { name: 'Ржавая труба', size: 2, mass: 2, breaks: 'pipeHalf',
     build(g) { pipeMesh(g, 1.7, 17) },
     shapes: () => [[new CANNON.Cylinder(.075, .075, 1.7, 10), [0, .075, 0], QZ90]] },
+  lantern: { name: 'Фонарь', size: 1, mass: .8, light: 15,
+    build(g) { const metal = M(0x2b2f36), glass = new THREE.MeshBasicMaterial({ color: 0xffd27a }); glass.userData.glow = true;
+      part(g, new THREE.BoxGeometry(.2, .04, .2), metal, 0, .02, 0);
+      part(g, new THREE.BoxGeometry(.14, .17, .14), glass, 0, .125, 0);
+      for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) part(g, new THREE.BoxGeometry(.03, .19, .03), metal, x * .075, .125, z * .075);
+      part(g, new THREE.BoxGeometry(.2, .04, .2), metal, 0, .23, 0);
+      part(g, new THREE.ConeGeometry(.1, .07, 4), metal, 0, .285, 0, Math.PI / 4);
+      part(g, new THREE.TorusGeometry(.055, .012, 4, 8, Math.PI), metal, 0, .31, 0) },
+    shapes: () => [[new CANNON.Box(new CANNON.Vec3(.1, .16, .1)), [0, .16, 0]]] },
   pipeHalf: { name: 'Половина трубы', size: 1, mass: 1,
     build(g) { pipeMesh(g, .82, 5) },
     shapes: () => [[new CANNON.Cylinder(.075, .075, .82, 10), [0, .075, 0], QZ90]] },
@@ -214,7 +225,7 @@ function genTrash() {
     t.cells = [...cells];
   }
 }
-function setGrey(t, on) { t.g.traverse(o => { if (o.isMesh) o.material = on ? GREY : t.colors.get(o) }) }
+function setGrey(t, on) { if (!t.grey) t.grey = GREY.clone(); t.g.traverse(o => { if (o.isMesh) o.material = on ? t.grey : t.colors.get(o) }) }
 function updateTrash() {
   for (const t of trash) {
     if (t.active) continue;
@@ -241,6 +252,85 @@ function activate(t) {
   body.quaternion.set(t.g.quaternion.x, t.g.quaternion.y, t.g.quaternion.z, t.g.quaternion.w);
   body.sleepSpeedLimit = .12; body.sleepTimeLimit = .5;
   world.addBody(body); t.body = body;
+}
+/* ---------- освещение по блокам (как в Minecraft) ----------
+   в каждой клетке мира хранится уровень света 0..15. Небо светит сверху и слабеет с глубиной — ниже SKY_D слоёв полный мрак.
+   фонарь — источник 15, свет теряет LA за клетку воздуха, а в толщу земли уходит с потерей LS за блок.
+   грани блоков красятся по вершинам: каждая вершина берёт среднее из четырёх клеток перед гранью — получаются мягкие переходы */
+const SKY_D = 7, LA = 4, LS = 4, NL = DIG + 3;            // слои -1..DIG+1
+const LG = new Float32Array(N * N * NL);
+const li = (i, j, z) => (z + 1) * N * N + j * N + i;
+const solidAt = (i, j, z) => z >= 0 && (z > DIG || hasB(i, j, z));
+const skyAt = z => 15 * Math.max(0, Math.min(1, 1 - (z + 1) / SKY_D));
+function Lget(i, j, z) {
+  if (z < 0) return 15; if (z > DIG + 1) return 0;
+  if (i < 0 || j < 0) return 0;                               // за задними стенками ничего не видно
+  if (i >= N || j >= N) return Math.max(skyAt(z), LG[li(Math.min(i, N - 1), Math.min(j, N - 1), z)]);   // открытый срез участка
+  return LG[li(i, j, z)];
+}
+const brOf = l => Math.pow(Math.max(0, Math.min(15, l)) / 15, 2);   // уровень -> яркость (в линейном цвете)
+function lightSources() {
+  const out = [];
+  for (const t of trash) { const L = TYPES[t.type].light; if (!L || !t.active || !t.body) continue;
+    const p = t.body.position; out.push([Math.floor(p.x), Math.floor(p.z), Math.floor(-(p.y + .05) / BH), L]) }
+  return out;
+}
+function computeLight(src) {
+  LG.fill(0); const q = [];
+  const push = (i, j, z, v) => { const k = li(i, j, z); if (v > LG[k] + .01) { LG[k] = v; q.push(i, j, z) } };
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let z = -1; z <= DIG + 1 && !solidAt(i, j, z); z++) push(i, j, z, skyAt(z));   // небо в открытых колодцах
+  for (const [i, j, z0, L] of src) { let z = Math.max(-1, Math.min(DIG, z0)); if (i < 0 || j < 0 || i >= N || j >= N) continue; while (z > -1 && solidAt(i, j, z)) z--; push(i, j, z, L) }
+  for (let h = 0; h < q.length; h += 3) {
+    const i = q[h], j = q[h + 1], z = q[h + 2], v = LG[li(i, j, z)], sol = solidAt(i, j, z);
+    for (const [a, b, c] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+      const ni = i + a, nj = j + b, nz = z + c; if (ni < 0 || nj < 0 || ni >= N || nj >= N || nz < -1 || nz > DIG + 1) continue;
+      const ns = solidAt(ni, nj, nz);
+      if (sol && !ns) continue;                               // свет не выходит из земли обратно в воздух
+      push(ni, nj, nz, v - (sol ? LS : ns ? 0 : LA)) }        // грань блока освещена воздухом перед ней
+  }
+}
+// грани BoxGeometry: +x, -x, +y, -y, +z, -z; ось y мира — это слои наоборот
+const FACE_AX = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+function shadeBlock(b) {
+  const u = b.mesh.userData, g = b.mesh.geometry, pos = g.attributes.position.array, col = g.attributes.color.array;
+  let changed = false;
+  for (let f = 0; f < 6; f++) { const [ax, sg] = FACE_AX[f];
+    const c = [u.i, u.j, u.z]; const dl = [0, 0, 0]; dl[ax === 0 ? 0 : ax === 2 ? 1 : 2] = ax === 1 ? -sg : sg;
+    const fi = c[0] + dl[0], fj = c[1] + dl[1], fz = c[2] + dl[2];
+    for (let v = 4 * f; v < 4 * f + 4; v++) {
+      const px = pos[v * 3], py = pos[v * 3 + 1], pz = pos[v * 3 + 2];
+      const su = [px > 0 ? 1 : -1, pz > 0 ? 1 : -1, py > 0 ? -1 : 1];   // шаг к углу по i, j, слою
+      const s0 = ax === 0 ? [0, su[1], su[2]] : ax === 1 ? [su[0], su[1], 0] : [su[0], 0, su[2]];
+      const A = [s0[0], 0, 0], B = [0, s0[1], 0], C = [0, 0, s0[2]];
+      const t1 = ax === 0 ? B : A, t2 = ax === 1 ? B : C;
+      const l = (Lget(fi, fj, fz) + Lget(fi + t1[0], fj + t1[1], fz + t1[2]) + Lget(fi + t2[0], fj + t2[1], fz + t2[2]) + Lget(fi + t1[0] + t2[0], fj + t1[1] + t2[1], fz + t1[2] + t2[2])) / 4;
+      const br = brOf(l);
+      if (Math.abs(col[v * 3] - br) > .002) { col[v * 3] = col[v * 3 + 1] = col[v * 3 + 2] = br; changed = true } } }
+  if (changed) g.attributes.color.needsUpdate = true;
+}
+function lightAt(x, y, z) {                                  // плавная яркость в точке мира (для мусора, персонажа, частиц)
+  const gi = x - .5, gj = z - .5, gz = -y / BH - .5, i0 = Math.floor(gi), j0 = Math.floor(gj), z0 = Math.floor(gz), fx = gi - i0, fy = gj - j0, fz = gz - z0;
+  let l = 0;
+  for (const [a, wa] of [[0, 1 - fx], [1, fx]]) for (const [b, wb] of [[0, 1 - fy], [1, fy]]) for (const [c, wc] of [[0, 1 - fz], [1, fz]]) {
+    const ii = i0 + a, jj = j0 + b, zz = z0 + c;
+    l += wa * wb * wc * (solidAt(ii, jj, zz) && ii >= 0 && jj >= 0 && ii < N && jj < N ? Lget(ii, jj, zz) * .7 : Lget(ii, jj, zz)) }
+  return brOf(l);
+}
+function dimGroup(o, br, store) {                            // умножаем цвета материалов на яркость (светящиеся части не трогаем)
+  o.traverse(m => { if (!m.isMesh) return; for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+    if (!mat || !mat.color || mat.userData.glow) continue;
+    if (!store.has(mat)) store.set(mat, mat.color.clone());
+    mat.color.copy(store.get(mat)).multiplyScalar(br) } });
+}
+let lightKey = '';
+const chBase = new Map();
+function updateLight() {
+  const src = lightSources(), key = JSON.stringify(src);
+  if (lightDirty || key !== lightKey) { lightDirty = false; lightKey = key; computeLight(src); for (const b of blocks.values()) if (b.exp) shadeBlock(b) }
+  for (const t of trash) if (t.g.visible) { const p = t.g.position, br = lightAt(p.x, p.y + .15, p.z);
+    if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
+  const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z));    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
+  if (CH.br === undefined || Math.abs(CH.br - cb) > .004) { CH.br = cb; dimGroup(chG, cb, chBase) }
 }
 function removeTrash(t) { scene.remove(t.g); if (t.body) world.removeBody(t.body); trash.splice(trash.indexOf(t), 1) }
 
@@ -294,7 +384,7 @@ function placeShadow(f, floor) { return;   // настоящая тень от �
 
 /* ---------- частицы ---------- */
 const parts = []; const pGeo = new THREE.BoxGeometry(.045, .045, .045);
-function burst(x, y, z, cols, n, up = 1) { for (let k = 0; k < n; k++) { const m = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({ color: cols[k % cols.length] }));
+function burst(x, y, z, cols, n, up = 1) { const lb = Math.max(.02, lightAt(x, y + .1, z)); for (let k = 0; k < n; k++) { const m = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({ color: cols[k % cols.length] })); m.material.color.multiplyScalar(lb);
   m.position.set(x + rnd(-.3, .3), y + rnd(-.05, .1), z + rnd(-.3, .3)); scene.add(m); parts.push({ m, v: new THREE.Vector3(rnd(-1.5, 1.5), rnd(1, 3.5) * up, rnd(-1.5, 1.5)), l: rnd(.4, .7) }) } }
 function stepParts(dt) { for (let k = parts.length - 1; k >= 0; k--) { const p = parts[k]; p.v.y -= 12 * dt; p.m.position.addScaledVector(p.v, dt); p.l -= dt; if (p.l <= 0) { scene.remove(p.m); p.m.material.dispose(); parts.splice(k, 1) } } }
 const CRUMB = { 'Т': ['#46823a', '#25562e', '#4d2b32', '#7a4836'], 'З': ['#ad7757', '#7a4841', '#4d2b32', '#341c27'], 'П': ['#8a5a44', '#5e3a33', '#3d2329', '#2a1820'], 'Г': ['#c06a4a', '#9a4a3a', '#6e3030', '#4a2026'], 'Б': ['#9aa3a8', '#6c757c', '#474e55', '#2c3136'], 'К': ['#a7b0b6', '#7d878e', '#565f66', '#363c42'], 'Р': ['#5fa04a', '#ad7757', '#7a4841', '#3d2329'], 'В': ['#6fb552', '#3f7a35', '#9a4a3a', '#4a2026'], 'Я': ['#5fa04a', '#4d2b32', '#7a4836', '#2a1820'] };
@@ -456,7 +546,7 @@ function reach(a) {                                            // можно л�
 const chG = new THREE.Group(), chBody = new THREE.Group(); chG.add(chBody); scene.add(chG);
 const CH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(252 / 255, 0, 0) });
 const KIRYU = createKiryu(THREE);   // модель и позы — в kiryu.js
-{ chBody.add(KIRYU.root);
+{ chBody.add(KIRYU.root); KIRYU.root.traverse(o => { if (o.isMesh && o.material.color && o.material.color.getHex() === 0xf4f9e8) o.material.userData.glow = true });
   chG.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }) }
 const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.22, .22, 1.45, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
 world.addBody(chP);
@@ -645,7 +735,8 @@ function frame(now) {
   for (const k in GLOW) for (const m of GLOW[k]) m.color.setScalar(m.userData.k * pulse);
   for (let a = 0; a < ACT.length; a++) for (const z of [d[a] - 1, d[a]]) { const b = blocks.get(ACT[a][0] + ',' + ACT[a][1] + ',' + z); if (b) { const u = b.mesh.userData; b.mesh.material = tool === 'pick' && diggable(a, u.z) && reach(a) ? GLOW[u.k] : MATS[u.k] } }
   // рисуем только открытые блоки в слоях рядом с камерой
-  const cl = -camF.y / BH, z0 = Math.floor(cl - 9), z1 = Math.ceil(cl + 12);
+  updateLight();
+  const cl = -camF.y / BH, z0 = Math.floor(cl - 9), z1 = Math.ceil(cl + 14);
   for (const b of blocks.values()) b.mesh.visible = b.exp && b.mesh.userData.z >= z0 && b.mesh.userData.z <= z1;
   placeCam(dt);
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
@@ -657,6 +748,8 @@ function frame(now) {
   document.getElementById('depth').textContent = 'слой ' + Math.max(0, Math.round(-CH.y / BH)) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }
-genTrash(); resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
-window.__dbg = { grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
+genTrash();
+{ const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
+resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
+window.__dbg = { LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
