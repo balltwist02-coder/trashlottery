@@ -69,7 +69,7 @@ const SCR_U = new THREE.Vector3(-0.5 * Math.SQRT1_2, C30, -0.5 * Math.SQRT1_2);
 let W = 200, H = 300, SCALE = 2;
 function resize() {
   const r = stage.getBoundingClientRect();
-  SCALE = Math.max(1, Math.floor(r.width / 300));   // в кадр помещается вся яма 4×4 со стенками W = Math.ceil(r.width / SCALE); H = Math.ceil(r.height / SCALE);
+  SCALE = Math.max(1, Math.floor(r.width / 300)); W = Math.ceil(r.width / SCALE); H = Math.ceil(r.height / SCALE);   // в кадр помещается вся яма 4×4 со стенками
   renderer.setSize(W, H, false);
   for (const c of [cv, bgc]) { c.style.width = W * SCALE + 'px'; c.style.height = H * SCALE + 'px' }
   cam.left = -W / 2 / PX; cam.right = W / 2 / PX; cam.top = H / 2 / PX; cam.bottom = -H / 2 / PX; cam.updateProjectionMatrix();
