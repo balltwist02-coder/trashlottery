@@ -534,7 +534,7 @@ function stepChar(dt) {
     if (k >= 1) { CH.y = A.y1; CH.state = 'walk'; CH.land = .14; haptic(A.kind === 'down' ? 'medium' : 'light') }
   } else if (CH.y > fl + .005) {                               // под ногами выкопали блок — падаем
     CH.state = 'fall'; CH.vy -= 22 * dt; CH.y = Math.max(fl, CH.y + CH.vy * dt);
-    if (CH.y <= fl) { if (CH.vy < -4) haptic('medium') CH.vy = 0; CH.land = .16; CH.state = 'walk' }
+    if (CH.y <= fl) { if (CH.vy < -4) haptic('medium'); CH.vy = 0; CH.land = .16; CH.state = 'walk' }
   } else {
     CH.y = fl; CH.vy = 0; if (CH.state === 'fall') CH.state = 'walk';
     if (m < .15) { if (CH.state !== 'walk') CH.state = 'walk'; CH.t = 0 }
