@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu.js?v=1';
+import { createKiryu } from './kiryu.js?v=2';
 
 /* ===== 3D-версия: яма 2×2 на 30 слоёв, кубы из ваших тайлов, физика мусора ===== */
 const PLOT = window.PLOT3D, TEX = window.TEX3D;
@@ -447,7 +447,7 @@ function drawOutlines() {
    если продолжать держать джойстик в ту сторону — прыгает вниз или залезает */
 const CH = { x: 3.5, z: 3.5, y: 0, face: new THREE.Vector3(0, 0, 1), state: 'walk', t: 0, vy: 0, anim: null, walkT: 0, moving: false, land: 0, swing: 0, yaw: 0 };
 CH.y = floorY(3);
-const R = .2, SPEED = 1.5;
+const R = .22, SPEED = 1.5;
 const G_UP = new THREE.Vector3(-1, 0, -1).normalize();          // «вверх по экрану» на полу
 const cellAt = (x, z) => ACT.findIndex(([i, j]) => x >= i && x < i + 1 && z >= j && z < j + 1);
 const charCell = () => cellAt(CH.x, CH.z);
@@ -462,7 +462,7 @@ const CH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(252 / 255, 0,
 const KIRYU = createKiryu(THREE);   // модель и позы — в kiryu.js
 { chBody.add(KIRYU.root);
   chG.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }) }
-const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.2, .2, 1.3, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
+const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.22, .22, 1.45, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
 world.addBody(chP);
 
 /* джойстик и кнопка действия */
@@ -552,7 +552,7 @@ function stepChar(dt) {
       } else if (CH.state !== 'walk') { CH.state = 'walk'; CH.t = 0 }
     }
   }
-  chP.position.set(CH.x, CH.y + .65, CH.z);                    // толкаем мусор телом
+  chP.position.set(CH.x, CH.y + .72, CH.z);                    // толкаем мусор телом
   chP.velocity.set((CH.x - p0x) / Math.max(dt, 1e-3), (CH.y - p0y) / Math.max(dt, 1e-3), (CH.z - p0z) / Math.max(dt, 1e-3));
 }
 const lerp = (a, b, k) => a + (b - a) * k;
