@@ -163,6 +163,10 @@ export function createKiryu(THREE) {
       p.hipRy = .1 * look; p.spRy = .18 * look; p.chRy = .3 * look; p.hdRy = .5 * look; p.hdRz = tilt;
       p.hipX = -.03 * look; p.th0 += .08 * look; p.th1 -= .08 * look;
     }
+    if (st.carry && S !== 'jump' && S !== 'fall') {                 // несёт предмет перед грудью обеими руками
+      const c = -(p.spRx + p.chRx);
+      for (const i of [0, 1]) { const s = i ? 1 : -1; p['ux' + i] = c - 1.05; p['uy' + i] = 0; p['uz' + i] = .28 * s; p['fx' + i] = -.75; p['fz' + i] = -.35 * s }
+    }
     if (st.swing > 0) {                                              // удар правой рукой сверху вниз
       const k = 1 - st.swing / .3;
       p.ux0 = k < .25 ? -3 : -3 + 3.4 * Math.min(1, (k - .25) / .4); p.uy0 = 0; p.uz0 = -.15; p.fx0 = -.2; p.fz0 = 0; p.chRx += .3 * k; p.hdRx = -.1;

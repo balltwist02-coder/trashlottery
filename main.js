@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { createKiryu } from './kiryu.js?v=3';
 
-/* ===== 3D-версия: яма 2×2 на 30 слоёв, кубы из ваших тайлов, физика мусора ===== */
+/* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
 const PLOT = window.PLOT3D, TEX = window.TEX3D;
-const N = 4, DIG = PLOT.length;                 // сетка 4×4: два ряда декораций сзади и сбоку, яма — передний угол 2×2
-const ACT = [[2, 2], [3, 2], [2, 3], [3, 3]];
-const PIT0 = 2, PIT1 = 4;                        // яма занимает x,z от 2 до 4
+const N = 6, DIG = PLOT.length - 10;            // сетка 6×6: две декоративные стенки сзади и сбоку, яма — передние 4×4; нижние 10 слоёв срезаны
+const PIT0 = 2, PIT1 = 6, PC = (PIT0 + PIT1) / 2; // яма занимает x,z от 2 до 6
+const ACT = []; for (let j = PIT0; j < PIT1; j++) for (let i = PIT0; i < PIT1; i++) ACT.push([i, j]);
 const BH = 0.8165;                               // высота блока: кубы выглядят ровно как изометрические спрайты
 const PX = 64 / Math.SQRT2;                      // пикселей на единицу мира (ромб верха = 64 px)
 
@@ -17,30 +18,37 @@ const haptic = k => { try { tg && tg.HapticFeedback && (k === 'warn' ? tg.Haptic
 /* ---------- иконки ---------- */
 function icon(rows, pal, host) { const c = document.createElement('canvas'); c.width = c.height = rows.length; const x = c.getContext('2d');
   rows.forEach((r, y) => [...r].forEach((ch, i) => { if (pal[ch]) { x.fillStyle = pal[ch]; x.fillRect(i, y, 1, 1) } })); if (host) host.appendChild(c); return c }
-const PICK = ["................", ".....kkkkkk.....", "...kksssssSkk...", "..ksSSkkkkSSsk..", ".ksSk.kwWk.kSsk.", ".kSk..kwWk..kSk.", ".kk...kwWk...kk.", "......kwWk......", "......kwWk......", "......kwWk......", "......kwWk......", "......kwWk......", "......kwWk......", "......kWWk......", ".......kk.......", "................"];
-const BAR = ["................", "..........kkk...", ".........krrRk..", "........krRkkk..", ".......krRk.....", "......krRk......", ".....krRk.......", "....krRk........", "...krRk.........", "..krRk..........", ".krRk...........", ".kRk............", ".kRk............", ".kkRkk..........", "..kkk...........", "................"];
-const pickBtn = document.getElementById('pick');
-const barBtn = document.querySelectorAll('.slot')[1];
-barBtn.disabled = false; barBtn.id = 'bar'; barBtn.setAttribute('aria-label', 'Лом'); barBtn.setAttribute('aria-pressed', 'false');
-icon(PICK, { k: '#10141f', s: '#c9d3dc', S: '#7d8c9c', w: '#a8683c', W: '#6b3f28' }, pickBtn);
-icon(BAR, { k: '#10141f', r: '#c8423a', R: '#7a2420' }, barBtn);
 const MAPI = ["................", "................", ".kkkkkkkkkkkkkk.", ".kppppPPPPppppk.", ".kpggpPPPPpppbk.", ".kpggpPPPbpprpk.", ".kpppbPPbPprrpk.", ".kpppbPPPPpprpk.", ".kppbpPPPPppppk.", ".kpbppPPPPpgggk.", ".kbpppPPPPpgggk.", ".kppppPPPPppppk.", ".kkkkkkkkkkkkkk.", "................", "................", "................"];
 icon(MAPI, { k: '#10141f', p: '#e7d7a4', P: '#c4ad74', g: '#5f9c4f', b: '#7a4836', r: '#c8423a' }, document.getElementById('mapbtn'));
 const XI = ["................", ".kk..........kk.", ".kxk........kxk.", "..kxk......kxk..", "...kxk....kxk...", "....kxk..kxk....", ".....kxkkxk.....", "......kxxk......", "......kxxk......", ".....kxkkxk.....", "....kxk..kxk....", "...kxk....kxk...", "..kxk......kxk..", ".kxk........kxk.", ".kk..........kk.", "................"];
 
-/* ---------- инструменты: кирка копает, лом ломает мусор ---------- */
-let tool = 'pick';
-function setTool(t) { tool = tool === t ? null : t; pickBtn.setAttribute('aria-pressed', tool === 'pick'); barBtn.setAttribute('aria-pressed', tool === 'bar'); haptic('light'); abIcon() }
-pickBtn.setAttribute('aria-pressed', 'true');
-pickBtn.addEventListener('click', () => setTool('pick'));
-barBtn.addEventListener('click', () => setTool('bar'));
-const nudge = b => { b.classList.remove('nudge'); void b.offsetWidth; b.classList.add('nudge'); haptic('warn') };
+/* ---------- инструменты в кожаном мешочке: телефон (пока неактивен), кирка, лом, перчатка ---------- */
+const TOOLS = ['phone', 'pick', 'bar', 'glove', null, null];
+const TOOL_NAME = { phone: 'Телефон', pick: 'Кирка', bar: 'Лом', glove: 'Перчатка' };
+const toolBtns = [...document.querySelectorAll('.tool')];
+let tool = null;
+const iconFx = {};                                         // тряска и подъём 3D-иконок
+for (const t of TOOLS) if (t) iconFx[t] = { shake: 0, lift: 0 };
+function shakeTool(t) { if (iconFx[t]) iconFx[t].shake = .4; haptic('warn') }
+function setTool(t) {
+  if (t === 'phone') { shakeTool('phone'); toast('Телефон пока молчит'); return }
+  tool = tool === t ? null : t; haptic('light');
+  toolBtns.forEach((b, k) => b.setAttribute('aria-pressed', TOOLS[k] && TOOLS[k] === tool ? 'true' : 'false'));
+}
+toolBtns.forEach((b, k) => { const t = TOOLS[k];
+  if (!t) { b.disabled = true; b.setAttribute('aria-label', 'Пустой карман'); return }
+  b.setAttribute('aria-label', TOOL_NAME[t]); if (t === 'phone') b.classList.add('off');
+  b.addEventListener('click', () => setTool(t)) });
+setTool('pick');
 
 /* ---------- состояние раскопа ---------- */
-const d = [0, 0, 0, 0];
-// план из редактора — 3×3 (индексы 0..2); новый задний ряд (i=0 или j=0) — просто земля
-const code = (i, j, z) => (z >= DIG || i === 0 || j === 0) ? '*' : PLOT[z][j - 1][i - 1];
-function settle() { for (let a = 0; a < 4; a++) while (d[a] < DIG && code(ACT[a][0], ACT[a][1], d[a]) === '.') d[a]++ }
+const d = ACT.map(() => 0);
+// план из редактора — 3×3: кольцо декора (индекс 0) + яма 2×2 (индексы 1..2).
+// яму 4×4 собираем из него зеркально, ближняя к яме декоративная стенка берёт кольцо плана, дальняя — просто земля
+const MIR = [1, 2, 2, 1];
+const pm = v => v >= PIT0 ? MIR[v - PIT0] : 0;
+const code = (i, j, z) => (z >= DIG || i === 0 || j === 0) ? '*' : PLOT[z][pm(j)][pm(i)];
+function settle() { for (let a = 0; a < ACT.length; a++) while (d[a] < DIG && code(ACT[a][0], ACT[a][1], d[a]) === '.') d[a]++ }
 settle();
 const cur = () => Math.min(...d);
 const isAct = (i, j) => ACT.findIndex(a => a[0] === i && a[1] === j);
@@ -79,14 +87,16 @@ function makeBg() {
       for (let wy = y + 3; wy < H - 2; wy += 4) for (let wx = xx + 2; wx < xx + w - 2; wx += 3) { const q = ((Math.sin(wx * 3.1 + wy * 7.7 + seed) * 9999) % 1 + 1) % 1; if (q < p) x.fillRect(wx, wy, 1, 2) }
       xx += w + 1 } });
 }
-/* камера двигается только на целые пиксели — иначе пиксельные текстуры «дрожат» при прокрутке */
-let camY = 0, camTarget = 0, follow = true, shake = 0;
-const maxCam = () => Math.min(cur() + 1, DIG - 1) * 32;
-const clampCam = v => Math.max(0, Math.min(maxCam(), v));
-function placeCam() {
-  const upPx = Math.round(0.2 * H);                        // верх ямы на ~30% высоты экрана
-  const t = new THREE.Vector3(3, -(upPx / PX) / C30 - Math.round(camY) / 32 * BH, 3);
-  if (shake > 0) { t.addScaledVector(SCR_R, (Math.random() < .5 ? -1 : 1) / PX).addScaledVector(SCR_U, (Math.random() < .5 ? -1 : 0) / PX); shake-- }
+/* камера следует за персонажем и двигается только на целые пиксели — иначе пиксельные текстуры «дрожат» */
+let shake = 0;
+const camF = new THREE.Vector3(PC, 0, PC);                   // точка, за которой следит камера (сглаженная)
+function placeCam(dt) {
+  const tx = Math.max(PIT0 + .9, Math.min(PIT1 - .9, CH.x)), tz = Math.max(PIT0 + .9, Math.min(PIT1 - .9, CH.z));
+  const k = 1 - Math.exp(-dt * 6);
+  camF.x += (tx - camF.x) * k; camF.z += (tz - camF.z) * k; camF.y += (CH.y + .55 - camF.y) * k;
+  let sx = Math.round(camF.dot(SCR_R) * PX), sy = Math.round(camF.dot(SCR_U) * PX);
+  if (shake > 0) { sx += Math.random() < .5 ? -1 : 1; sy += Math.random() < .5 ? -1 : 0; shake-- }
+  const t = SCR_R.clone().multiplyScalar(sx / PX).addScaledVector(SCR_U, sy / PX);
   cam.position.copy(t).addScaledVector(VIEW, 60); cam.lookAt(t);
 }
 
@@ -94,8 +104,8 @@ function placeCam() {
 /* свет: солнце почти сверху (чуть со стороны задней стенки) даёт настоящие тени, мягкий свет спереди — объём мусору.
    у блоков яркость каждой грани заранее выровнена, чтобы нарисованные тайлы выглядели как раньше,
    а темнело только то, что попало в тень */
-const SUN_DIR = new THREE.Vector3(-.15, 1, -.22).normalize(), FILL_DIR = new THREE.Vector3(.19, .875, .45).normalize();
-const AMB = .5, SUN = .55, FILL = .3;
+const SUN_DIR = new THREE.Vector3(-.3, 1, -.42).normalize(), FILL_DIR = new THREE.Vector3(.19, .875, .45).normalize();
+const AMB = .4, SUN = .72, FILL = .26;
 const FACE_K = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(a => { const n = new THREE.Vector3(...a);
   return 1 / (AMB + SUN * Math.max(0, n.dot(SUN_DIR)) + FILL * Math.max(0, n.dot(FILL_DIR))) });
 const loader = new THREE.TextureLoader();
@@ -126,21 +136,27 @@ function addBlock(i, j, z) {
     body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: blockShape, position: new CANNON.Vec3(i + .5, -(z + .5) * BH, j + .5), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });
     world.addBody(body);
   }
-  blocks.set(i + ',' + j + ',' + z, { mesh, body });
+  blocks.set(i + ',' + j + ',' + z, { mesh, body, exp: true });
 }
 for (let z = 0; z <= DIG; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') addBlock(i, j, z);
+// рисуем только блоки, у которых видна хоть одна грань (сверху, справа или спереди) — остальные скрыты землёй
+const hasB = (i, j, z) => blocks.has(i + ',' + j + ',' + z);
+function expose(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (b) b.exp = z === 0 || i === N - 1 || j === N - 1 || !hasB(i, j, z - 1) || !hasB(i + 1, j, z) || !hasB(i, j + 1, z) }
+for (const b of blocks.values()) { const u = b.mesh.userData; expose(u.i, u.j, u.z) }
 // невидимые стенки по краю ямы от неба до дна: мусор не вылетит из участка
 { const top = 3, bot = -(DIG + 1) * BH, hh = (top - bot) / 2, cy = (top + bot) / 2;
-  for (const [x, z, hx, hz] of [[PIT0 - .5, 3, .5, 1.5], [PIT1 + .5, 3, .5, 1.5], [3, PIT0 - .5, 1.5, .5], [3, PIT1 + .5, 1.5, .5]])
+  const hw = (PIT1 - PIT0) / 2 + 1;
+  for (const [x, z, hx, hz] of [[PIT0 - .5, PC, .5, hw], [PIT1 + .5, PC, .5, hw], [PC, PIT0 - .5, hw, .5], [PC, PIT1 + .5, hw, .5]])
     world.addBody(new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3(hx, hh, hz)), position: new CANNON.Vec3(x, cy, z), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH })) }
-function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; scene.remove(b.mesh); if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z) }
+function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; scene.remove(b.mesh); if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z);
+  expose(i - 1, j, z); expose(i, j - 1, z); expose(i, j, z + 1) }
 
 /* ---------- свет только для мусора (блоки уже нарисованы с тенью) ---------- */
 scene.add(new THREE.AmbientLight(0xffffff, AMB * Math.PI));
 const fill = new THREE.DirectionalLight(0xffffff, FILL * Math.PI); fill.position.copy(FILL_DIR); scene.add(fill);
 const sun = new THREE.DirectionalLight(0xffffff, SUN * Math.PI); sun.castShadow = true;
-sun.shadow.mapSize.set(256, 256);                           // крупные «пиксели» тени — в стиле игры и дёшево
-Object.assign(sun.shadow.camera, { left: -3.2, right: 3.2, top: 3.2, bottom: -3.2, near: 1, far: 40 }); sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.mapSize.set(512, 512);                           // крупные «пиксели» тени — в стиле игры и дёшево
+Object.assign(sun.shadow.camera, { left: -5.5, right: 5.5, top: 5.5, bottom: -5.5, near: 1, far: 45 }); sun.shadow.camera.updateProjectionMatrix();
 sun.shadow.bias = -.002; sun.shadow.normalBias = .02;
 scene.add(sun, sun.target);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.BasicShadowMap; renderer.shadowMap.autoUpdate = false;
@@ -185,17 +201,19 @@ function makeTrash(type, x, y, z, ry, layer) {
   trash.push(t); return t;
 }
 function genTrash() {
-  for (let z = 1; z < DIG; z++) {
-    if (ACT.some(([i, j]) => code(i, j, z) === '.')) continue;   // только в слоях из 4 заполненных блоков
-    if (Math.random() >= .6) continue;                           // мусор в слое с шансом 60%
+  const cellOk = (i, j, z) => code(i, j, z) !== '.';
+  for (let z = 1; z < DIG; z++) for (let n = 0; n < 2; n++) {    // на слой — до двух предметов, каждый с шансом 60%
+    if (Math.random() >= .6) continue;
     const type = Math.random() < 70 / 110 ? 'coffee' : 'pipe';
     let x, zz, ry;
-    if (type === 'coffee') { const [i, j] = ACT[Math.random() * 4 | 0]; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
-    else { const along = Math.random() < .5, row = PIT0 + (Math.random() * 2 | 0); if (along) { x = 3; zz = row + .5; ry = 0 } else { x = row + .5; zz = 3; ry = Math.PI / 2 } }
+    if (type === 'coffee') { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) continue; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
+    else { const along = Math.random() < .5, a = PIT0 + (Math.random() * (PIT1 - PIT0 - 1) | 0), b = PIT0 + (Math.random() * (PIT1 - PIT0) | 0);
+      if (along) { if (!cellOk(a, b, z) || !cellOk(a + 1, b, z)) continue; x = a + 1; zz = b + .5; ry = 0 }
+      else { if (!cellOk(b, a, z) || !cellOk(b, a + 1, z)) continue; x = b + .5; zz = a + 1; ry = Math.PI / 2 } }
     const t = makeTrash(type, x, -(z + 1) * BH + .01, zz, ry, z); t.g.visible = false;
     const cells = new Set();                                     // какие клетки ямы задевает предмет
     t.g.traverse(o => { if (!o.isMesh) return; const bb = new THREE.Box3().setFromObject(o);
-      for (let a = 0; a < 4; a++) { const [i, j] = ACT[a]; if (bb.max.x > i + .03 && bb.min.x < i + .97 && bb.max.z > j + .03 && bb.min.z < j + .97) cells.add(a) } });
+      for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a]; if (bb.max.x > i + .03 && bb.min.x < i + .97 && bb.max.z > j + .03 && bb.min.z < j + .97) cells.add(a) } });
     t.cells = [...cells];
   }
 }
@@ -239,7 +257,7 @@ function worldBox(t, pos) {                                  // AABB предм�
 }
 function floorUnder(minX, maxX, minZ, maxZ) {               // самый высокий верх блока под прямоугольником
   let y = -Infinity;
-  for (let a = 0; a < 4; a++) { const [i, j] = ACT[a]; if (maxX > i + .001 && minX < i + .999 && maxZ > j + .001 && minZ < j + .999) y = Math.max(y, floorY(a)) }
+  for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a]; if (maxX > i + .001 && minX < i + .999 && maxZ > j + .001 && minZ < j + .999) y = Math.max(y, floorY(a)) }
   return y === -Infinity ? floorY(0) : y;
 }
 
@@ -264,7 +282,7 @@ function footprint(t, pos) {
 const extX = f => Math.abs(f.ax.x) * f.ha + Math.abs(f.az.x) * f.hb, extZ = f => Math.abs(f.ax.z) * f.ha + Math.abs(f.az.z) * f.hb;
 function obbFloor(f, m = .03) {                            // самый высокий пол среди клеток, которые след реально задевает
   let y = -Infinity;
-  for (let a = 0; a < 4; a++) { const [i, j] = ACT[a], dx = i + .5 - f.c.x, dz = j + .5 - f.c.z;
+  for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a], dx = i + .5 - f.c.x, dz = j + .5 - f.c.z;
     if (Math.abs(dx) >= .5 + extX(f) - m || Math.abs(dz) >= .5 + extZ(f) - m) continue;
     if (Math.abs(dx * f.ax.x + dz * f.ax.z) >= f.ha + .5 * (Math.abs(f.ax.x) + Math.abs(f.ax.z)) - m) continue;
     if (Math.abs(dx * f.az.x + dz * f.az.z) >= f.hb + .5 * (Math.abs(f.az.x) + Math.abs(f.az.z)) - m) continue;
@@ -292,61 +310,43 @@ function pick(e) {
   const objs = [...[...blocks.values()].map(b => b.mesh), ...trash.filter(t => t.g.visible).map(t => t.g)];
   return ray.intersectObjects(objs, true)[0] || null;
 }
-let drag = null, vel = 0, rotP = null; const grabs = new Map();
-// вращение предмета в руке: второй палец водит по экрану (или колесо мыши)
-function rotateHeld(dx, dy) {
-  const len = Math.hypot(dx, dy); if (!len) return;
-  const axis = SCR_U.clone().multiplyScalar(dx).addScaledVector(SCR_R, dy).normalize();
-  const dq = new THREE.Quaternion().setFromAxisAngle(axis, len / SCALE * .045);
-  for (const g of grabs.values()) g.q.premultiply(dq);
-}
-cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId);
-  if (grabs.size && !rotP) { rotP = { id: e.pointerId, x: e.clientX, y: e.clientY }; return }
-  const h = pick(e);
-  if (h && h.object.userData.t && tool !== 'bar') { const t = h.object.userData.t;
-    if (!t.active) { haptic('warn'); return }
-    if (t.held) return;
-    // зажали: предмет становится «в руке» — двигается только по полу (вбок, от себя, на себя), высоту набирает сам
-    const b = t.body; t.held = true;
-    b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
-    const p0 = new THREE.Vector3(b.position.x, b.position.y, b.position.z);
-    grabs.set(e.pointerId, { t, plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -h.point.y), off: p0.clone().sub(h.point), target: p0.clone(), q: new THREE.Quaternion(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w) });
-    haptic('light'); return }
-  if (drag) return;
-  drag = { id: e.pointerId, h, y: e.clientY, cam: camTarget, moved: false, lastY: e.clientY, lastT: performance.now() }; vel = 0 });
-cv.addEventListener('pointermove', e => {
-  if (rotP && rotP.id === e.pointerId) { rotateHeld(e.clientX - rotP.x, e.clientY - rotP.y); rotP.x = e.clientX; rotP.y = e.clientY; return }
-  const g = grabs.get(e.pointerId);
-  if (g) { ray.setFromCamera(ndc(e), cam); const p = new THREE.Vector3(); if (ray.ray.intersectPlane(g.plane, p)) g.target.set(p.x + g.off.x, 0, p.z + g.off.z); return }
-  if (!drag || drag.id !== e.pointerId) return;
-  if (!drag.moved && Math.abs(e.clientY - drag.y) / SCALE > 4) { drag.moved = true; drag.y = e.clientY; drag.cam = camTarget }
-  if (!drag.moved) return;
-  camTarget = clampCam(drag.cam - (e.clientY - drag.y) / SCALE); follow = camTarget >= maxCam();
-  const now = performance.now(), dt = Math.max(1, now - drag.lastT); vel = -(e.clientY - drag.lastY) / SCALE / dt * 16; drag.lastY = e.clientY; drag.lastT = now });
-function release(g) { const b = g.t.body; g.t.held = false; b.type = CANNON.Body.DYNAMIC; b.updateMassProperties(); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.wakeUp(); shadow.visible = false }
-const endDrag = (e, cancel) => {
-  if (rotP && rotP.id === e.pointerId) { rotP = null; return }
-  const g = grabs.get(e.pointerId); if (g) { grabs.delete(e.pointerId); release(g); if (!grabs.size) rotP = null; return }
-  if (!drag || drag.id !== e.pointerId) return; const dr = drag, still = performance.now() - dr.lastT > 80; drag = null;
-  if (cancel) { vel = 0; return }
-  if (!dr.moved) { vel = 0; tap(e) } else if (still) vel = 0 };
-cv.addEventListener('pointerup', e => endDrag(e, false));
-cv.addEventListener('pointercancel', e => endDrag(e, true));
-cv.addEventListener('wheel', e => { e.preventDefault();
-  if (grabs.size) { const dq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.sign(e.deltaY) * Math.PI / 12); for (const g of grabs.values()) g.q.premultiply(dq); return }
-  vel = 0; camTarget = clampCam(camTarget + e.deltaY / SCALE * .6); follow = camTarget >= maxCam() }, { passive: false });
+const grabs = new Map();   // перетаскивание пальцем «за шкирку» пока выключено — вернём как особую механику
+/* невидимый джойстик: коснулся где угодно и повёл палец — персонаж идёт в ту сторону; короткий тап — применить инструмент */
+const joy = { x: 0, y: 0, id: null, ox: 0, oy: 0, t0: 0, moved: false }, keys = new Set();
+const JOY_R = 42;                                              // на сколько пикселей отвести палец для полной скорости
+cv.addEventListener('pointerdown', e => { if (joy.id !== null) return; cv.setPointerCapture(e.pointerId);
+  Object.assign(joy, { id: e.pointerId, ox: e.clientX, oy: e.clientY, t0: performance.now(), moved: false, x: 0, y: 0 }) });
+cv.addEventListener('pointermove', e => { if (joy.id !== e.pointerId) return;
+  let x = e.clientX - joy.ox, y = e.clientY - joy.oy; const l = Math.hypot(x, y);
+  if (!joy.moved && l < 10) return; joy.moved = true;
+  if (l > JOY_R) { joy.ox = e.clientX - x / l * JOY_R; joy.oy = e.clientY - y / l * JOY_R; x = x / l * JOY_R; y = y / l * JOY_R }   // центр «едет» за пальцем
+  joy.x = x / JOY_R; joy.y = y / JOY_R });
+const joyEnd = (e, cancel) => { if (joy.id !== e.pointerId) return;
+  const tapLike = !joy.moved && performance.now() - joy.t0 < 400; joy.id = null; joy.x = joy.y = 0;
+  if (tapLike && !cancel) tap(e) };
+cv.addEventListener('pointerup', e => joyEnd(e, false));
+cv.addEventListener('pointercancel', e => joyEnd(e, true));
+addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space' || e.code === 'KeyE') { e.preventDefault(); if (!e.repeat) act() } if (/Arrow|Key[WASD]/.test(e.code)) e.preventDefault();
+  const n = '123456'.indexOf(e.key); if (n >= 0 && TOOLS[n]) setTool(TOOLS[n]) });
+addEventListener('keyup', e => keys.delete(e.code));
+const faceTo = (x, z) => { const v = new THREE.Vector3(x - CH.x, 0, z - CH.z); if (v.lengthSq() > 1e-4) CH.face.copy(v.normalize()) };
 function tap(e) {
-  const h = pick(e); if (!h) return;
-  const t = h.object.userData.t;
-  if (t) {                                                   // лом: ломаем предмет в заранее заданной точке
-    if (tool !== 'bar') return;
-    if (!t.active || !TYPES[t.type].breaks) { nudge(barBtn); return }
-    breakTrash(t); return }
-  const { i, j, z } = h.object.userData, a = isAct(i, j); if (a < 0 || !diggable(a, z)) return;
-  if (tool !== 'pick') { nudge(pickBtn); return }
-  if (!reach(a)) { haptic('warn'); return }                    // копает персонаж: только блок под ногами или стенку рядом
-  if (a !== charCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
-  digCell(a);
+  const h = pick(e);
+  const t = h && h.object.userData.t;
+  if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
+    const p = t.body.position;
+    if (Math.hypot(p.x - CH.x, p.z - CH.z) < 1.1 && Math.abs(p.y - CH.y) < 1) {
+      if (tool === 'glove' && !CH.held) { faceTo(p.x, p.z); grabItem(t); return }
+      if (tool === 'bar') { if (!TYPES[t.type].breaks) { shakeTool('bar'); return } faceTo(p.x, p.z); CH.swing = .3; breakTrash(t); return }
+    }
+  }
+  if (h && !t && tool === 'pick') {                            // тап по блоку, до которого достаём, — копаем его
+    const { i, j, z } = h.object.userData, a = isAct(i, j);
+    if (a >= 0 && diggable(a, z) && reach(a)) {
+      if (a !== charCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
+      digCell(a); return }
+  }
+  act();                                                       // иначе — инструмент в ту сторону, куда смотрит персонаж
 }
 function breakTrash(t) {
   const b = t.body, kind = TYPES[t.type].breaks, q = b.quaternion, ry = t.g.rotation.y;
@@ -441,12 +441,12 @@ function drawOutlines() {
   renderer.autoClear = false; renderer.render(olScene, cam); renderer.autoClear = true;
 }
 
-/* ---------- персонаж (заглушка: девочка в жёлтом дождевике) ----------
+/* ---------- персонаж (заглушка: Кирью Нагасаки в рабочей форме и каске) ----------
    ходит джойстиком; у обрыва останавливается и смотрит вниз, у стенки — смотрит вверх;
    если продолжать держать джойстик в ту сторону — прыгает вниз или залезает */
-const CH = { x: 3.5, z: 3.5, y: 0, face: new THREE.Vector3(0, 0, 1), state: 'walk', t: 0, vy: 0, anim: null, walkT: 0, moving: false, land: 0, swing: 0, yaw: 0 };
-CH.y = floorY(3);
-const R = .13, SPEED = 1.5;
+const CH = { held: null, x: PC + .5, z: PC + .5, y: 0, face: new THREE.Vector3(0, 0, 1), state: 'walk', t: 0, vy: 0, anim: null, walkT: 0, moving: false, land: 0, swing: 0, yaw: 0 };
+CH.y = floorY(cellAt(CH.x, CH.z));
+const R = .22, SPEED = 1.5;
 const G_UP = new THREE.Vector3(-1, 0, -1).normalize();          // «вверх по экрану» на полу
 const cellAt = (x, z) => ACT.findIndex(([i, j]) => x >= i && x < i + 1 && z >= j && z < j + 1);
 const charCell = () => cellAt(CH.x, CH.z);
@@ -458,42 +458,12 @@ function reach(a) {                                            // можно л�
 }
 const chG = new THREE.Group(), chBody = new THREE.Group(); chG.add(chBody); scene.add(chG);
 const CH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(252 / 255, 0, 0) });
-{ const coat = M(0xe8b830), coatD = M(0xc4921f), skin = M(0xefcfae), dark = M(0x1d1822), boot = M(0x3a2a26);
-  const pivot = (parent, x, y, z) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g };
-  CH.legs = [-1, 1].map(s => { const g = pivot(chBody, s * .04, .09, 0); part(g, new THREE.BoxGeometry(.05, .09, .06), boot, 0, -.045, 0); return g });
-  part(chBody, new THREE.CylinderGeometry(.07, .125, .25, 8), coat, 0, .205, 0);
-  CH.arms = [-1, 1].map(s => { const g = pivot(chBody, s * .1, .3, 0); part(g, new THREE.BoxGeometry(.045, .14, .05), coatD, 0, -.07, 0); return g });
-  CH.head = pivot(chBody, 0, .36, 0);
-  part(CH.head, new THREE.SphereGeometry(.08, 8, 6), skin, 0, 0, .02);
-  part(CH.head, new THREE.SphereGeometry(.1, 8, 6), coat, 0, .015, -.025);
-  part(CH.head, new THREE.ConeGeometry(.04, .09, 6), coat, 0, .11, -.04, 0, -.35);     // острый капюшон
-  for (const s of [-1, 1]) part(CH.head, new THREE.BoxGeometry(.018, .024, .01), dark, s * .03, 0, .1);
+const KIRYU = createKiryu(THREE);   // модель и позы — в kiryu.js
+{ chBody.add(KIRYU.root);
   chG.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }) }
-const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.12, .12, .45, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
+const chP = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Cylinder(.22, .22, 1.45, 8), collisionFilterGroup: G_CHAR, collisionFilterMask: G_TRASH });
 world.addBody(chP);
 
-/* джойстик и кнопка действия */
-const joy = { x: 0, y: 0, id: null }, keys = new Set();
-const jb = document.createElement('div'), jk = document.createElement('div');
-jb.style.cssText = 'position:absolute;left:16px;bottom:16px;width:104px;height:104px;border-radius:50%;background:rgba(10,14,22,.35);border:2px solid rgba(233,240,238,.35);touch-action:none;z-index:5';
-jk.style.cssText = 'position:absolute;left:30px;top:30px;width:40px;height:40px;border-radius:50%;background:rgba(233,240,238,.8);pointer-events:none';
-jb.setAttribute('aria-label', 'Джойстик'); jb.appendChild(jk); stage.appendChild(jb);
-function joyMove(e) { const r = jb.getBoundingClientRect(); let x = (e.clientX - r.left - r.width / 2) / (r.width / 2 - 20), y = (e.clientY - r.top - r.height / 2) / (r.height / 2 - 20);
-  const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l } joy.x = x; joy.y = y; jk.style.transform = `translate(${x * 32}px,${y * 32}px)`; follow = true }
-jb.addEventListener('pointerdown', e => { e.preventDefault(); jb.setPointerCapture(e.pointerId); joy.id = e.pointerId; joyMove(e) });
-jb.addEventListener('pointermove', e => { if (joy.id === e.pointerId) joyMove(e) });
-const joyEnd = e => { if (joy.id !== e.pointerId) return; joy.id = null; joy.x = joy.y = 0; jk.style.transform = '' };
-jb.addEventListener('pointerup', joyEnd); jb.addEventListener('pointercancel', joyEnd);
-const ab = document.createElement('button');
-ab.style.cssText = 'position:absolute;right:16px;bottom:26px;width:76px;height:76px;border-radius:50%;background:rgba(10,14,22,.45);border:2px solid rgba(233,240,238,.45);z-index:5;display:grid;place-items:center;touch-action:none;padding:0';
-ab.setAttribute('aria-label', 'Применить инструмент'); stage.appendChild(ab);
-function abIcon() { ab.innerHTML = ''; if (!tool) return;
-  const c = tool === 'pick' ? icon(PICK, { k: '#10141f', s: '#c9d3dc', S: '#7d8c9c', w: '#a8683c', W: '#6b3f28' }) : icon(BAR, { k: '#10141f', r: '#c8423a', R: '#7a2420' });
-  c.style.cssText = 'width:44px;height:44px;image-rendering:pixelated'; ab.appendChild(c) }
-abIcon();
-ab.addEventListener('pointerdown', e => { e.preventDefault(); act() });
-addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space' || e.code === 'KeyE') { e.preventDefault(); if (!e.repeat) act() } if (/Arrow|Key[WASD]/.test(e.code)) { e.preventDefault(); follow = true } });
-addEventListener('keyup', e => keys.delete(e.code));
 
 function digCell(a) {
   const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.mesh.userData.k : 'З';
@@ -503,22 +473,47 @@ function digCell(a) {
 function act() {
   if (!tool) { haptic('warn'); return }
   if (CH.state === 'jump' || CH.state === 'fall') return;
+  if (tool === 'glove') {                                      // перчатка: поднять предмет перед собой или поставить тот, что в руках
+    if (CH.held) { dropItem(); return }
+    const t = nearItem(t => true); if (t) grabItem(t); else shakeTool('glove'); return }
   if (tool === 'bar') {                                        // лом: ближайший ломаемый предмет перед персонажем
-    let best = null, bd = .95;
-    for (const t of trash) { if (!t.active || !TYPES[t.type].breaks) continue; const p = t.body.position, dx = p.x - CH.x, dz = p.z - CH.z, dist = Math.hypot(dx, dz);
-      if (Math.abs(p.y - CH.y) < .7 && dist < bd && dx * CH.face.x + dz * CH.face.z > -.05) { bd = dist; best = t } }
-    if (best) { CH.swing = .3; breakTrash(best) } else haptic('warn'); return }
+    const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
+  if (CH.held) { shakeTool(tool); return }                     // руки заняты
   const a = charCell(), nb = cellAt(CH.x + CH.face.x * (R + .25), CH.z + CH.face.z * (R + .25));
-  if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else haptic('warn'); return }   // стенка перед нами
+  if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else shakeTool('pick'); return }   // стенка перед нами
   if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
-  haptic('warn');
+  shakeTool('pick');
+}
+function nearItem(ok) {                                        // ближайший найденный предмет перед персонажем, до которого достаём
+  let best = null, bd = 1.05;
+  for (const t of trash) { if (!t.active || t.held || !ok(t)) continue; const p = t.body.position, dx = p.x - CH.x, dz = p.z - CH.z, dist = Math.hypot(dx, dz);
+    if (Math.abs(p.y - CH.y) < .9 && dist < bd && dx * CH.face.x + dz * CH.face.z > -.1) { bd = dist; best = t } }
+  return best;
+}
+/* перчатка: предмет поднимается к груди и едет вместе с персонажем; повторное действие ставит его перед собой */
+function grabItem(t) {
+  const b = t.body; t.held = true; CH.held = t;
+  b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
+  CH.swing = 0; haptic('medium'); toast('В руках: ' + TYPES[t.type].name);
+}
+function carryPose(t) {
+  const b = t.body, up = t.local.max.y - t.local.min.y;
+  b.position.set(CH.x + CH.face.x * .42, CH.y + .95 + up * .3, CH.z + CH.face.z * .42);
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw + Math.PI / 2, 0));   // длинные вещи держит поперёк
+  b.quaternion.set(q.x, q.y, q.z, q.w); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+}
+function dropItem() {
+  const t = CH.held; if (!t) return; const b = t.body;
+  b.position.set(CH.x + CH.face.x * .6, b.position.y, CH.z + CH.face.z * .6);
+  b.type = CANNON.Body.DYNAMIC; b.updateMassProperties(); b.velocity.set(CH.face.x * .4, 0, CH.face.z * .4); b.angularVelocity.set(0, 0, 0); b.wakeUp();
+  t.held = false; CH.held = null; haptic('light');
 }
 function stepChar(dt) {
   let ix = joy.x, iy = joy.y;
   if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   if (keys.has('KeyW') || keys.has('ArrowUp')) iy -= 1; if (keys.has('KeyS') || keys.has('ArrowDown')) iy += 1;
   const dir = SCR_R.clone().multiplyScalar(ix).addScaledVector(G_UP, -iy); dir.y = 0;
-  const m = Math.min(1, dir.length()); if (m > 0) dir.normalize();
+  const m = Math.min(1, dir.length()); if (m > 0) dir.normalize(); CH.spd = m;
   const a = charCell(), fl = a < 0 ? CH.y : floorY(a);
   const p0x = CH.x, p0z = CH.z, p0y = CH.y;
   CH.moving = false;
@@ -537,7 +532,7 @@ function stepChar(dt) {
     if (m < .15) { if (CH.state !== 'walk') CH.state = 'walk'; CH.t = 0 }
     else {
       CH.face.copy(dir);
-      const step = SPEED * m * dt; let blocked = null;
+      const step = SPEED * m * dt * (CH.held ? (TYPES[CH.held.type].mass > 1 ? .65 : .85) : 1); let blocked = null;
       for (const ax of ['x', 'z']) {                           // по осям отдельно — вдоль стенки можно скользить
         const dv = dir[ax] * step; if (Math.abs(dv) < 1e-6) continue;
         const nx = ax === 'x' ? CH.x + dv : CH.x, nz = ax === 'z' ? CH.z + dv : CH.z;
@@ -552,34 +547,75 @@ function stepChar(dt) {
         if (CH.state !== kind) { CH.state = kind; CH.t = 0 }
         CH.t += dt; CH.face.copy(blocked.ad);
         if (CH.t > (kind === 'edge' ? .55 : .6)) {              // всё ещё держим джойстик к краю — прыгаем
-          const ad = blocked.ad, x1 = CH.x + ad.x * (2 * R + .12), z1 = CH.z + ad.z * (2 * R + .12);
+          const ad = blocked.ad, x1 = CH.x + ad.x * (2 * R + .2), z1 = CH.z + ad.z * (2 * R + .2);
           CH.anim = { kind: kind === 'edge' ? 'down' : 'climb', t: 0, dur: kind === 'edge' ? .35 + .07 * Math.min(4, (fl - blocked.h) / BH) : .62, x0: CH.x, z0: CH.z, y0: CH.y, x1, z1, y1: blocked.h };
           CH.state = 'jump';
         }
       } else if (CH.state !== 'walk') { CH.state = 'walk'; CH.t = 0 }
     }
   }
-  chP.position.set(CH.x, CH.y + .225, CH.z);                    // толкаем мусор телом
+  chP.position.set(CH.x, CH.y + .72, CH.z);                    // толкаем мусор телом
   chP.velocity.set((CH.x - p0x) / Math.max(dt, 1e-3), (CH.y - p0y) / Math.max(dt, 1e-3), (CH.z - p0z) / Math.max(dt, 1e-3));
 }
 const lerp = (a, b, k) => a + (b - a) * k;
 function drawChar(dt, now) {
   chG.position.set(CH.x, CH.y, CH.z);
-  let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 14); chG.rotation.y = CH.yaw;
-  if (CH.moving) CH.walkT += dt * 11;
-  const sw = CH.moving ? Math.sin(CH.walkT) : 0, st = CH.state, climb = st === 'jump' && CH.anim.kind === 'climb', down = st === 'jump' && CH.anim.kind === 'down';
-  const lean = st === 'edge' ? .42 : climb ? .25 : 0;           // у обрыва наклоняется вперёд
-  const headX = st === 'edge' ? .55 : st === 'wall' ? -.5 : climb ? -.3 : 0;   // смотрит вниз / вверх
-  const armX = st === 'wall' || climb ? -2.7 : down ? -1.2 : st === 'edge' ? .35 : -sw * .6;
-  CH.swing = Math.max(0, CH.swing - dt);
-  chBody.rotation.x = lerp(chBody.rotation.x, lean, Math.min(1, dt * 10));
-  CH.head.rotation.x = lerp(CH.head.rotation.x, headX, Math.min(1, dt * 10));
-  CH.arms[0].rotation.x = lerp(CH.arms[0].rotation.x, armX, Math.min(1, dt * 14));
-  CH.arms[1].rotation.x = CH.swing > 0 ? -2.6 + (1 - CH.swing / .3) * 3.4 : lerp(CH.arms[1].rotation.x, st === 'wall' || climb ? -2.7 : down ? -1.2 : st === 'edge' ? .35 : sw * .6, Math.min(1, dt * 14));
-  CH.legs[0].rotation.x = sw * .7; CH.legs[1].rotation.x = -sw * .7;
-  CH.land = Math.max(0, CH.land - dt);
-  chBody.position.y = CH.moving ? Math.abs(Math.sin(CH.walkT)) * .02 : 0;
-  chBody.scale.set(1 + CH.land * .9, 1 - CH.land * 1.4, 1 + CH.land * .9);   // приземление — сплющивается
+  let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 10); chG.rotation.y = CH.yaw;
+  CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
+  KIRYU.update(dt, { state: CH.state, moving: CH.moving, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held });
+}
+
+/* ---------- 3D-иконки инструментов: маленькие лоуполи-модели, рисуются отдельной камерой в пиксельный холст ----------
+   трясётся и подпрыгивает сама модель, а не рамка (потом так же будет звонить телефон) */
+const ICO = 24;
+const icR = new THREE.WebGLRenderer({ antialias: false, alpha: true }); icR.setPixelRatio(1); icR.setSize(ICO, ICO, false);
+const icScene = new THREE.Scene();
+icScene.add(new THREE.AmbientLight(0xffffff, .55 * Math.PI));
+{ const l = new THREE.DirectionalLight(0xffffff, .8 * Math.PI); l.position.set(.6, 1, .9); icScene.add(l) }
+const icCam = new THREE.OrthographicCamera(-.62, .62, .62, -.62, .1, 10); icCam.position.set(0, 0, 5); icCam.lookAt(0, 0, 0);
+const IB = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+function icPart(g, geo, c, x, y, z, rz = 0, rx = 0, ry = 0) { const m = new THREE.Mesh(geo, M(c)); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); g.add(m); return m }
+const ICON3D = {
+  phone() { const g = new THREE.Group();
+    icPart(g, IB(.52, .92, .09), 0x1d2128, 0, 0, 0);
+    icPart(g, IB(.44, .74, .02), 0x2c5a6a, 0, .02, .05);                 // экран
+    icPart(g, IB(.3, .12, .021), 0x5fb3c4, -.03, .22, .052);              // блик на экране
+    icPart(g, IB(.12, .03, .02), 0x0d0f12, 0, .4, .05);                   // динамик
+    g.rotation.set(-.2, .45, .1); return g },
+  pick() { const g = new THREE.Group();
+    icPart(g, IB(.09, 1.05, .09), 0xa8683c, 0, -.08, 0);                  // рукоять
+    icPart(g, IB(.11, .1, .11), 0x6b3f28, 0, -.56, 0);
+    const h = new THREE.Group(); h.position.set(0, .38, 0); g.add(h);
+    icPart(h, IB(.5, .12, .12), 0xc9d3dc, -.22, -.02, 0, .25);            // клюв влево
+    icPart(h, IB(.4, .12, .12), 0xc9d3dc, .19, -.02, 0, -.3);            // и вправо
+    icPart(h, IB(.16, .16, .15), 0x7d8c9c, 0, 0, 0);
+    g.rotation.set(.15, .5, -.55); return g },
+  bar() { const g = new THREE.Group();
+    icPart(g, IB(.09, 1.0, .09), 0xc8423a, 0, -.05, 0);
+    icPart(g, IB(.09, .26, .09), 0xc8423a, .1, .5, 0, -.9);               // загиб
+    icPart(g, IB(.09, .14, .09), 0x7a2420, .23, .48, 0, -2.2);            // раздвоенный носик
+    icPart(g, IB(.12, .1, .1), 0x7a2420, -.02, -.55, 0, .4);
+    g.rotation.set(.2, .5, -.6); return g },
+  glove() { const g = new THREE.Group();
+    icPart(g, IB(.46, .42, .2), 0xf0c232, 0, -.02, 0);                    // ладонь
+    for (let k = 0; k < 4; k++) icPart(g, IB(.1, .3, .17), 0xf0c232, -.17 + k * .113, .32 - (k === 0 || k === 3 ? .04 : 0), 0);
+    icPart(g, IB(.12, .26, .16), 0xe0b02a, .3, .02, 0, -.7);             // большой палец
+    icPart(g, IB(.5, .16, .23), 0xc89a1c, 0, -.3, 0);                     // раструб
+    g.rotation.set(-.25, .4, .15); return g },
+};
+const icObj = {};
+for (const t of TOOLS) if (t) { icObj[t] = ICON3D[t](); icObj[t].userData.base = icObj[t].rotation.clone(); }
+const icCtx = toolBtns.map((b, k) => { if (!TOOLS[k]) return null; const c = document.createElement('canvas'); c.width = c.height = ICO; b.appendChild(c); return c.getContext('2d') });
+let icTime = 0;
+function drawIcons(dt) {
+  icTime += dt;
+  TOOLS.forEach((t, k) => { if (!t) return;
+    const o = icObj[t], fx = iconFx[t], sel = t === tool, base = o.userData.base;
+    fx.shake = Math.max(0, fx.shake - dt); fx.lift += ((sel ? 1 : 0) - fx.lift) * Math.min(1, dt * 10);
+    o.position.set(0, fx.lift * .08 + (sel ? Math.sin(icTime * 3) * .03 : 0), 0);
+    o.rotation.set(base.x, base.y + (sel ? Math.sin(icTime * 1.6) * .35 : 0), base.z + (fx.shake > 0 ? Math.sin(icTime * 70) * .35 * fx.shake / .4 : 0));
+    icScene.add(o); icR.render(icScene, icCam); icScene.remove(o);
+    const x = icCtx[k]; x.clearRect(0, 0, ICO, ICO); x.drawImage(icR.domElement, 0, 0) });
 }
 
 /* ---------- цикл ---------- */
@@ -587,7 +623,7 @@ let last = performance.now(), acc = 0;
 function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   for (const g of grabs.values()) stepHeld(g);
-  stepChar(dt); world.step(1 / 120, dt, 8); drawChar(dt, now);
+  stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held); world.step(1 / 120, dt, 8);
   for (const t of trash) if (t.body) {
     if (!t.held) depenetrate(t);
     t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
@@ -599,22 +635,20 @@ function frame(now) {
   // подсветка блоков, которые можно копать
   const pulse = 1 + (.12 + .1 * Math.sin(now / 260)) * (tool === 'pick' ? 1 : 0);
   for (const k in GLOW) for (const m of GLOW[k]) m.color.setScalar(m.userData.k * pulse);
-  for (let a = 0; a < 4; a++) for (const z of [d[a] - 1, d[a]]) { const b = blocks.get(ACT[a][0] + ',' + ACT[a][1] + ',' + z); if (b) { const u = b.mesh.userData; b.mesh.material = tool === 'pick' && diggable(a, u.z) && reach(a) ? GLOW[u.k] : MATS[u.k] } }
-  if (follow) camTarget = clampCam(-CH.y / BH * 32);
-  if (!drag && Math.abs(vel) > .05) { camTarget = clampCam(camTarget + vel); vel *= .92; if (camTarget >= maxCam()) follow = true }
-  if (drag) camY = camTarget; else { camY += (camTarget - camY) * .18; if (Math.abs(camTarget - camY) < .3) camY = camTarget }
-  // рисуем только слои рядом с камерой
-  const cl = Math.round(camY) / 32, z0 = Math.floor(cl - 8), z1 = Math.ceil(cl + 14);
-  for (const b of blocks.values()) b.mesh.visible = b.mesh.userData.z >= z0 && b.mesh.userData.z <= z1;
-  placeCam();
+  for (let a = 0; a < ACT.length; a++) for (const z of [d[a] - 1, d[a]]) { const b = blocks.get(ACT[a][0] + ',' + ACT[a][1] + ',' + z); if (b) { const u = b.mesh.userData; b.mesh.material = tool === 'pick' && diggable(a, u.z) && reach(a) ? GLOW[u.k] : MATS[u.k] } }
+  // рисуем только открытые блоки в слоях рядом с камерой
+  const cl = -camF.y / BH, z0 = Math.floor(cl - 9), z1 = Math.ceil(cl + 12);
+  for (const b of blocks.values()) b.mesh.visible = b.exp && b.mesh.userData.z >= z0 && b.mesh.userData.z <= z1;
+  placeCam(dt);
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
-  const ty = -Math.round(camY / 32) * BH; sun.target.position.set(3, ty, 3); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
+  const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, cam);
   drawOutlines();
-  document.getElementById('depth').textContent = '3D · ' + Math.round(-CH.y / BH) + ' / ' + DIG;
+  drawIcons(dt);
+  document.getElementById('depth').textContent = 'слой ' + Math.max(0, Math.round(-CH.y / BH)) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }
 genTrash(); resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
-window.__dbg = { CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
+window.__dbg = { grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
