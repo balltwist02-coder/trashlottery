@@ -85,7 +85,7 @@ let camY = 0, camTarget = 0, follow = true, shake = 0;
 const maxCam = () => Math.min(cur() + 1, DIG - 1) * 32;
 const clampCam = v => Math.max(0, Math.min(maxCam(), v));
 function placeCam() {
-  const upPx = Math.round(0.36 * H);                       // пол под персонажем — чуть выше середины экрана, рослому герою есть место
+  const upPx = Math.round(0.06 * H);                       // пол под персонажем — чуть выше середины экрана, рослому герою есть место
   const t = new THREE.Vector3(3, -(upPx / PX) / C30 - Math.round(camY) / 32 * BH, 3);
   if (shake > 0) { t.addScaledVector(SCR_R, (Math.random() < .5 ? -1 : 1) / PX).addScaledVector(SCR_U, (Math.random() < .5 ? -1 : 0) / PX); shake-- }
   cam.position.copy(t).addScaledVector(VIEW, 60); cam.lookAt(t);
