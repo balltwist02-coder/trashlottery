@@ -69,7 +69,7 @@ const SCR_U = new THREE.Vector3(-0.5 * Math.SQRT1_2, C30, -0.5 * Math.SQRT1_2);
 let W = 200, H = 300, SCALE = 2;
 function resize() {
   const r = stage.getBoundingClientRect();
-  SCALE = Math.max(1, Math.floor(r.width / 176)); W = Math.ceil(r.width / SCALE); H = Math.ceil(r.height / SCALE);
+  SCALE = Math.max(1, Math.floor(r.width / 300));   // в кадр помещается вся яма 4×4 со стенками W = Math.ceil(r.width / SCALE); H = Math.ceil(r.height / SCALE);
   renderer.setSize(W, H, false);
   for (const c of [cv, bgc]) { c.style.width = W * SCALE + 'px'; c.style.height = H * SCALE + 'px' }
   cam.left = -W / 2 / PX; cam.right = W / 2 / PX; cam.top = H / 2 / PX; cam.bottom = -H / 2 / PX; cam.updateProjectionMatrix();
@@ -88,14 +88,11 @@ function makeBg() {
       xx += w + 1 } });
 }
 /* камера следует за персонажем и двигается только на целые пиксели — иначе пиксельные текстуры «дрожат» */
-let shake = 0;
 const camF = new THREE.Vector3(PC, 0, PC);                   // точка, за которой следит камера (сглаженная)
 function placeCam(dt) {
-  const tx = Math.max(PIT0 + .9, Math.min(PIT1 - .9, CH.x)), tz = Math.max(PIT0 + .9, Math.min(PIT1 - .9, CH.z));
-  const k = 1 - Math.exp(-dt * 6);
-  camF.x += (tx - camF.x) * k; camF.z += (tz - camF.z) * k; camF.y += (CH.y + .55 - camF.y) * k;
+  const k = 1 - Math.exp(-dt * 4);                           // по горизонтали камера стоит на центре ямы, по глубине плавно идёт за персонажем
+  camF.x = PC; camF.z = PC; camF.y += (CH.y + .3 - camF.y) * k;
   let sx = Math.round(camF.dot(SCR_R) * PX), sy = Math.round(camF.dot(SCR_U) * PX);
-  if (shake > 0) { sx += Math.random() < .5 ? -1 : 1; sy += Math.random() < .5 ? -1 : 0; shake-- }
   const t = SCR_R.clone().multiplyScalar(sx / PX).addScaledVector(SCR_U, sy / PX);
   cam.position.copy(t).addScaledVector(VIEW, 60); cam.lookAt(t);
 }
@@ -358,7 +355,7 @@ function breakTrash(t) {
     h.body.velocity.set(dir.x * 1.1, 1.2, dir.z * 1.1);
   }
   const p = b.position; burst(p.x, p.y + .1, p.z, ['#8a4b2a', '#a35a2c', '#5f7f9e', '#c9d3dc'], 22, .8);
-  shake = 6; haptic('heavy'); toast('Сломано: ' + TYPES[t.type].name);
+  haptic('heavy'); toast('Сломано: ' + TYPES[t.type].name);
 }
 
 /* ---------- тост и карта ---------- */
@@ -468,7 +465,7 @@ world.addBody(chP);
 function digCell(a) {
   const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.mesh.userData.k : 'З';
   removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
-  d[a]++; settle(); updateTrash(); shake = 5; haptic('light'); CH.swing = .3;
+  d[a]++; settle(); updateTrash(); haptic('light'); CH.swing = .3;
 }
 function act() {
   if (!tool) { haptic('warn'); return }
@@ -502,9 +499,20 @@ function carryPose(t) {
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw + Math.PI / 2, 0));   // длинные вещи держит поперёк
   b.quaternion.set(q.x, q.y, q.z, q.w); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
 }
+/* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
+function lostItem(t) {
+  const p = t.body.position, out = p.x < PIT0 - .2 || p.x > PIT1 + .2 || p.z < PIT0 - .2 || p.z > PIT1 + .2;
+  return (out && p.y < -.5) || p.y < CH.y - 4;
+}
+function returnItem(t) {
+  const b = t.body; b.position.set(CH.x, Math.min(1.5, CH.y + 9), CH.z);
+  b.velocity.set(0, 0, 0); b.angularVelocity.set((Math.random() - .5) * 4, 0, (Math.random() - .5) * 4); b.wakeUp(); t.falling = false; t.fallV = 0;
+  toast('Сверху что-то летит!');
+}
 function dropItem() {
   const t = CH.held; if (!t) return; const b = t.body;
-  b.position.set(CH.x + CH.face.x * .6, b.position.y, CH.z + CH.face.z * .6);
+  const cl = v => Math.max(PIT0 + .3, Math.min(PIT1 - .3, v));
+  b.position.set(cl(CH.x + CH.face.x * .6), b.position.y, cl(CH.z + CH.face.z * .6));
   b.type = CANNON.Body.DYNAMIC; b.updateMassProperties(); b.velocity.set(CH.face.x * .4, 0, CH.face.z * .4); b.angularVelocity.set(0, 0, 0); b.wakeUp();
   t.held = false; CH.held = null; haptic('light');
 }
@@ -526,7 +534,7 @@ function stepChar(dt) {
     if (k >= 1) { CH.y = A.y1; CH.state = 'walk'; CH.land = .14; haptic(A.kind === 'down' ? 'medium' : 'light') }
   } else if (CH.y > fl + .005) {                               // под ногами выкопали блок — падаем
     CH.state = 'fall'; CH.vy -= 22 * dt; CH.y = Math.max(fl, CH.y + CH.vy * dt);
-    if (CH.y <= fl) { if (CH.vy < -4) { shake = Math.max(shake, 3); haptic('medium') } CH.vy = 0; CH.land = .16; CH.state = 'walk' }
+    if (CH.y <= fl) { if (CH.vy < -4) haptic('medium') CH.vy = 0; CH.land = .16; CH.state = 'walk' }
   } else {
     CH.y = fl; CH.vy = 0; if (CH.state === 'fall') CH.state = 'walk';
     if (m < .15) { if (CH.state !== 'walk') CH.state = 'walk'; CH.t = 0 }
@@ -625,10 +633,10 @@ function frame(now) {
   for (const g of grabs.values()) stepHeld(g);
   stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held); world.step(1 / 120, dt, 8);
   for (const t of trash) if (t.body) {
-    if (!t.held) depenetrate(t);
+    if (!t.held) { depenetrate(t); if (lostItem(t)) returnItem(t) }
     t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
     const vy = t.body.velocity.y;                             // удар об пол: тряска и пыль — один раз за падение
-    if (!t.held && t.falling && vy > -1) { t.falling = false; if (t.fallV < -5) { shake = Math.max(shake, 3); haptic('medium'); const p = t.g.position; burst(p.x, p.y + .05, p.z, ['#8c7a6a', '#5e4c42', '#b8a48c'], 10, .5) } }
+    if (!t.held && t.falling && vy > -1) { t.falling = false; if (t.fallV < -5) { haptic('medium'); const p = t.g.position; burst(p.x, p.y + .05, p.z, ['#8c7a6a', '#5e4c42', '#b8a48c'], 10, .5) } }
     if (!t.held && vy < -3) { t.falling = true; t.fallV = Math.min(t.fallV || 0, vy) } else if (!t.falling) t.fallV = 0;
   }
   stepParts(dt);
