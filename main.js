@@ -326,7 +326,7 @@ let lightKey = '';
 const chBase = new Map();
 function updateLight() {
   const src = lightSources(), key = JSON.stringify(src);
-  if (lightDirty || key !== lightKey) { lightDirty = false; lightKey = key; computeLight(src); for (const b of blocks.values()) if (b.exp) shadeBlock(b) }
+  if (lightDirty || key !== lightKey) { lightDirty = false; lightKey = key; perf.lightN++; computeLight(src); for (const b of blocks.values()) if (b.exp) shadeBlock(b) }
   for (const t of trash) if (t.g.visible) { const p = t.g.position, br = lightAt(p.x, p.y + .15, p.z);
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
   const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z));    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
@@ -424,10 +424,11 @@ function tap(e) {
     const p = t.body.position;
     if (Math.hypot(p.x - CH.x, p.z - CH.z) < 1.1 && Math.abs(p.y - CH.y) < 1) {
       if (tool === 'glove' && !CH.held) { faceTo(p.x, p.z); grabItem(t); return }
-      if (tool === 'bar') { if (!TYPES[t.type].breaks) { shakeTool('bar'); return } faceTo(p.x, p.z); CH.swing = .3; breakTrash(t); return }
+      if (tool === 'bar') { if (CH.held) { busy(); return } if (!TYPES[t.type].breaks) { shakeTool('bar'); return } faceTo(p.x, p.z); CH.swing = .3; breakTrash(t); return }
     }
   }
   if (h && !t && tool === 'pick') {                            // тап по блоку, до которого достаём, — копаем его
+    if (CH.held) { busy(); return }
     const { i, j, z } = h.object.userData, a = isAct(i, j);
     if (a >= 0 && diggable(a, z) && reach(a)) {
       if (a !== charCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
@@ -557,15 +558,16 @@ function digCell(a) {
   removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
   d[a]++; settle(); updateTrash(); haptic('light'); CH.swing = .3;
 }
+function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
   if (!tool) { haptic('warn'); return }
   if (CH.state === 'jump' || CH.state === 'fall') return;
   if (tool === 'glove') {                                      // перчатка: поднять предмет перед собой или поставить тот, что в руках
     if (CH.held) { dropItem(); return }
     const t = nearItem(t => true); if (t) grabItem(t); else shakeTool('glove'); return }
+  if (CH.held) { busy(); return }                              // руки заняты: ни копать, ни ломать
   if (tool === 'bar') {                                        // лом: ближайший ломаемый предмет перед персонажем
     const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
-  if (CH.held) { shakeTool(tool); return }                     // руки заняты
   const a = charCell(), nb = cellAt(CH.x + CH.face.x * (R + .25), CH.z + CH.face.z * (R + .25));
   if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else shakeTool('pick'); return }   // стенка перед нами
   if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
@@ -717,8 +719,33 @@ function drawIcons(dt) {
 }
 
 /* ---------- цикл ---------- */
+/* ---------- замер производительности: тройной тап по счётчику слоя включает/выключает табличку ----------
+   время ЦП по частям кадра + FPS + рывки. Если FPS низкий, а ЦП на кадр маленький — упираемся в видеокарту */
+const perf = { on: false, el: null, acc: {}, n: 0, t0: performance.now(), long: 0, total: 0, maxDt: 0, lightN: 0, calls: 0, tris: 0 };
+try { perf.on = localStorage.getItem('perf') === '1' } catch (_) { }
+function perfEl() { if (perf.el) return perf.el; const e = document.createElement('div');
+  e.style.cssText = 'position:absolute;left:10px;top:60px;z-index:6;max-width:calc(100% - 20px);font:600 11px ui-monospace,Menlo,Consolas,monospace;color:#e9f0ee;background:rgba(10,16,24,.75);padding:6px 8px;border-radius:4px;white-space:pre-wrap;pointer-events:none;line-height:1.4';
+  e.textContent = 'замер…'; stage.appendChild(e); perf.el = e; return e }
+let gpuName = '?'; try { const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info'); gpuName = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER) } catch (_) { }
+{ const dep = document.getElementById('depth'); dep.style.pointerEvents = 'auto'; dep.style.cursor = 'pointer'; let taps = [];
+  dep.addEventListener('pointerdown', e => { e.stopPropagation(); const t = performance.now(); taps = taps.filter(x => t - x < 700); taps.push(t);
+    if (taps.length < 3) return; taps = []; perf.on = !perf.on; try { localStorage.setItem('perf', perf.on ? '1' : '0') } catch (_) { }
+    perfEl().hidden = !perf.on; Object.assign(perf, { acc: {}, n: 0, t0: performance.now(), long: 0, total: 0, maxDt: 0, lightN: 0 }) }) }
+if (perf.on) perfEl();
+function perfFrame(raw, parts) {
+  perf.n++; perf.maxDt = Math.max(perf.maxDt, raw); if (raw > 50) { perf.long++; perf.total++ }
+  for (const k in parts) perf.acc[k] = (perf.acc[k] || 0) + parts[k];
+  const now = performance.now(); if (now - perf.t0 < 1000) return;
+  const s = (now - perf.t0) / 1000, n = perf.n, cpu = Object.values(perf.acc).reduce((x, y) => x + y, 0) / n;
+  perfEl().textContent = 'FPS ' + (n / s).toFixed(0) + ' · худший кадр ' + perf.maxDt.toFixed(0) + ' мс · рывков ' + perf.long + ' (всего ' + perf.total + ')\n' +
+    'ЦП на кадр ' + cpu.toFixed(1) + ' мс: ' + Object.keys(perf.acc).map(k => k + ' ' + (perf.acc[k] / n).toFixed(1)).join(' · ') + '\n' +
+    'пересчёт света ' + (perf.lightN / s).toFixed(1) + '/с · отрисовок ' + perf.calls + ' · треугольников ' + (perf.tris / 1000).toFixed(1) + 'k\n' +
+    'кадр ' + W + '×' + H + ' ×' + SCALE + ' · экран ' + innerWidth + '×' + innerHeight + ' · dpr ' + (devicePixelRatio || 1).toFixed(2) + '\n' + 'GPU: ' + gpuName;
+  Object.assign(perf, { acc: {}, n: 0, t0: now, long: 0, maxDt: 0, lightN: 0 });
+}
 let last = performance.now(), acc = 0;
 function frame(now) {
+  const raw = now - last, T0 = performance.now();
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   for (const g of grabs.values()) stepHeld(g);
   stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held); world.step(1 / 120, dt, 8);
@@ -734,6 +761,7 @@ function frame(now) {
   const pulse = 1 + (.12 + .1 * Math.sin(now / 260)) * (tool === 'pick' ? 1 : 0);
   for (const k in GLOW) for (const m of GLOW[k]) m.color.setScalar(m.userData.k * pulse);
   for (let a = 0; a < ACT.length; a++) for (const z of [d[a] - 1, d[a]]) { const b = blocks.get(ACT[a][0] + ',' + ACT[a][1] + ',' + z); if (b) { const u = b.mesh.userData; b.mesh.material = tool === 'pick' && diggable(a, u.z) && reach(a) ? GLOW[u.k] : MATS[u.k] } }
+  const T1 = performance.now();
   // рисуем только открытые блоки в слоях рядом с камерой
   updateLight();
   const cl = -camF.y / BH, z0 = Math.floor(cl - 9), z1 = Math.ceil(cl + 14);
@@ -742,9 +770,13 @@ function frame(now) {
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
   const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
-  renderer.render(scene, cam);
+  const T2 = performance.now();
+  renderer.render(scene, cam); perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
+  const T3 = performance.now();
   drawOutlines();
+  const T4 = performance.now();
   drawIcons(dt);
+  if (perf.on) { const T5 = performance.now(); perfFrame(raw, { логика: T1 - T0, свет: T2 - T1, рендер: T3 - T2, обводка: T4 - T3, иконки: T5 - T4 }) }
   document.getElementById('depth').textContent = 'слой ' + Math.max(0, Math.round(-CH.y / BH)) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }
