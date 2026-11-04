@@ -4,7 +4,7 @@ import { createKiryu } from './kiryu.js?v=4';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
 const PLOT = window.PLOT3D, TEX = window.TEX3D;
-const N = 6, DIG = PLOT.length - 10;            // сетка 6×6: две декоративные стенки сзади и сбоку, яма — передние 4×4; нижние 10 слоёв срезаны
+const N = 6, DIG = PLOT.length - 10, BOT = DIG + 10;   // ниже дна ямы — ещё 10 слоёв цельного камня, чтобы мир не обрывался            // сетка 6×6: две декоративные стенки сзади и сбоку, яма — передние 4×4; нижние 10 слоёв срезаны
 const PIT0 = 2, PIT1 = 6, PC = (PIT0 + PIT1) / 2; // яма занимает x,z от 2 до 6
 const ACT = []; for (let j = PIT0; j < PIT1; j++) for (let i = PIT0; i < PIT1; i++) ACT.push([i, j]);
 const BH = 0.8165;                               // высота блока: кубы выглядят ровно как изометрические спрайты
@@ -47,7 +47,7 @@ const d = ACT.map(() => 0);
 // яму 4×4 собираем из него зеркально, ближняя к яме декоративная стенка берёт кольцо плана, дальняя — просто земля
 const MIR = [1, 2, 2, 1];
 const pm = v => v >= PIT0 ? MIR[v - PIT0] : 0;
-const code = (i, j, z) => (z >= DIG || i === 0 || j === 0) ? '*' : PLOT[z][pm(j)][pm(i)];
+const code = (i, j, z) => z >= DIG ? 'К' : (i === 0 || j === 0) ? '*' : PLOT[z][pm(j)][pm(i)];
 function settle() { for (let a = 0; a < ACT.length; a++) while (d[a] < DIG && code(ACT[a][0], ACT[a][1], d[a]) === '.') d[a]++ }
 settle();
 const cur = () => Math.min(...d);
@@ -133,7 +133,7 @@ world.solver.iterations = 15;
 world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitution = 0;   // без отскоков
 const G_BLOCK = 1, G_TRASH = 2, G_CHAR = 4;
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
-for (let z = 0; z <= DIG; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') blocks.set(i + ',' + j + ',' + z, { k: matKey(i, j, z), body: null });
+for (let z = 0; z <= BOT; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') blocks.set(i + ',' + j + ',' + z, { k: matKey(i, j, z), body: null });
 const hasB = (i, j, z) => blocks.has(i + ',' + j + ',' + z);
 // физика нужна только верхним блокам ямы (на них лежит мусор); глубже тела добавляются по мере раскопок
 function ensureBodies() {
@@ -167,7 +167,7 @@ function buildChunk(z) {
 let lightDirty = true;
 const chunkDirty = new Set();
 function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; lightDirty = true; if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z);
-  chunkDirty.add(z); if (z + 1 <= DIG) chunkDirty.add(z + 1) }
+  chunkDirty.add(z); if (z + 1 <= BOT) chunkDirty.add(z + 1) }
 // невидимые стенки по краю ямы от неба до дна: мусор не вылетит из участка
 { const top = 3, bot = -(DIG + 1) * BH, hh = (top - bot) / 2, cy = (top + bot) / 2;
   const hw = (PIT1 - PIT0) / 2 + 1;
@@ -200,6 +200,8 @@ function pipeMesh(g, len, seed) {                            // синевата
     const w = .05 + (k % 3) * .03;
     part(g, new THREE.CylinderGeometry(r * 1.02, r * 1.02, w, 10, 1, true, t * 6.28, 1.6 + (k % 2)), M(RUST[k % 3]), -len / 2 + .06 + (len - .12) * ((k * .37 + t) % 1), r, 0, 0, 0, Math.PI / 2) }
 }
+// труба для физики — цепочка шариков вдоль оси X: шар со всем остальным сталкивается очень дёшево, а катится как цилиндр
+const rod = len => { const n = Math.max(3, Math.ceil(len / .2) + 1); return Array.from({ length: n }, (_, k) => [new CANNON.Sphere(.075), [-len / 2 + .075 + k * (len - .15) / (n - 1), .075, 0]]) };
 const TYPES = {
   coffee: { name: 'Банка кофе', size: 1, mass: 1,
     build(g) { const red = M(0xa8383a), band = M(0xe8d3a0), lid = M(0xc9d3dc);
@@ -208,7 +210,7 @@ const TYPES = {
     shapes: () => [[new CANNON.Cylinder(.15, .15, .3, 10), [0, .15, 0]]] },
   pipe: { name: 'Ржавая труба', size: 2, mass: 2, breaks: 'pipeHalf',
     build(g) { pipeMesh(g, 1.7, 17) },
-    shapes: () => [[new CANNON.Cylinder(.075, .075, 1.7, 10), [0, .075, 0], QZ90]] },
+    shapes: () => rod(1.7) },
   lantern: { name: 'Фонарь', size: 1, mass: .8, light: 15,
     build(g) { const metal = M(0x2b2f36), glass = new THREE.MeshBasicMaterial({ color: 0xffd27a }); glass.userData.glow = true;
       part(g, new THREE.BoxGeometry(.2, .04, .2), metal, 0, .02, 0);
@@ -220,7 +222,7 @@ const TYPES = {
     shapes: () => [[new CANNON.Box(new CANNON.Vec3(.1, .16, .1)), [0, .16, 0]]] },
   pipeHalf: { name: 'Половина трубы', size: 1, mass: 1,
     build(g) { pipeMesh(g, .82, 5) },
-    shapes: () => [[new CANNON.Cylinder(.075, .075, .82, 10), [0, .075, 0], QZ90]] },
+    shapes: () => rod(.82) },
 };
 const trash = [];
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -297,13 +299,13 @@ function activate(t) {
    в каждой клетке мира хранится уровень света 0..15. Небо светит сверху и слабеет с глубиной — ниже SKY_D слоёв полный мрак.
    фонарь — источник 15, свет теряет LA за клетку воздуха, а в толщу земли уходит с потерей LS за блок.
    грани блоков красятся по вершинам: каждая вершина берёт среднее из четырёх клеток перед гранью — получаются мягкие переходы */
-const SKY_D = 7, LA = 4, LS = 4, NL = DIG + 3;            // слои -1..DIG+1
+const SKY_D = 7, LA = 4, LS = 4, NL = BOT + 3;            // слои -1..BOT+1
 const LG = new Float32Array(N * N * NL);
 const li = (i, j, z) => (z + 1) * N * N + j * N + i;
-const solidAt = (i, j, z) => z >= 0 && (z > DIG || hasB(i, j, z));
+const solidAt = (i, j, z) => z >= 0 && (z > BOT || hasB(i, j, z));
 const skyAt = z => 15 * Math.max(0, Math.min(1, 1 - (z + 1) / SKY_D));
 function Lget(i, j, z) {
-  if (z < 0) return 15; if (z > DIG + 1) return 0;
+  if (z < 0) return 15; if (z > BOT + 1) return 0;
   if (i < 0 || j < 0) return 0;                               // за задними стенками ничего не видно
   if (i >= N || j >= N) return Math.max(skyAt(z), LG[li(Math.min(i, N - 1), Math.min(j, N - 1), z)]);   // открытый срез участка
   return LG[li(i, j, z)];
@@ -318,12 +320,12 @@ function lightSources() {
 function computeLight(src) {
   LG.fill(0); const q = [];
   const push = (i, j, z, v) => { const k = li(i, j, z); if (v > LG[k] + .01) { LG[k] = v; q.push(i, j, z) } };
-  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let z = -1; z <= DIG + 1 && !solidAt(i, j, z); z++) push(i, j, z, skyAt(z));   // небо в открытых колодцах
-  for (const [i, j, z0, L] of src) { let z = Math.max(-1, Math.min(DIG, z0)); if (i < 0 || j < 0 || i >= N || j >= N) continue; while (z > -1 && solidAt(i, j, z)) z--; push(i, j, z, L) }
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let z = -1; z <= BOT + 1 && !solidAt(i, j, z); z++) push(i, j, z, skyAt(z));   // небо в открытых колодцах
+  for (const [i, j, z0, L] of src) { let z = Math.max(-1, Math.min(BOT, z0)); if (i < 0 || j < 0 || i >= N || j >= N) continue; while (z > -1 && solidAt(i, j, z)) z--; push(i, j, z, L) }
   for (let h = 0; h < q.length; h += 3) {
     const i = q[h], j = q[h + 1], z = q[h + 2], v = LG[li(i, j, z)], sol = solidAt(i, j, z);
     for (const [a, b, c] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
-      const ni = i + a, nj = j + b, nz = z + c; if (ni < 0 || nj < 0 || ni >= N || nj >= N || nz < -1 || nz > DIG + 1) continue;
+      const ni = i + a, nj = j + b, nz = z + c; if (ni < 0 || nj < 0 || ni >= N || nj >= N || nz < -1 || nz > BOT + 1) continue;
       const ns = solidAt(ni, nj, nz);
       if (sol && !ns) continue;                               // свет не выходит из земли обратно в воздух
       push(ni, nj, nz, v - (sol ? LS : ns ? 0 : LA)) }        // грань блока освещена воздухом перед ней
@@ -822,7 +824,7 @@ function frame(now) {
   // рисуем только открытые блоки в слоях рядом с камерой
   updateLight();
   let maxD = 0; for (const v of d) maxD = Math.max(maxD, v);
-  const cl = -camF.y / BH, z0 = Math.floor(cl - 10), z1 = Math.min(Math.ceil(cl + 10), Math.max(SKY_D, maxD + 5));
+  const cl = -camF.y / BH, z0 = Math.floor(cl - 10), z1 = Math.min(BOT, Math.ceil(cl + 10), Math.max(SKY_D, maxD + 5));
   under.position.y = -(z1 + 1) * BH;
   for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
   placeCam(dt);
@@ -839,7 +841,7 @@ function frame(now) {
   document.getElementById('depth').textContent = 'слой ' + Math.max(0, Math.round(-CH.y / BH)) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }
-for (let z = 0; z <= DIG; z++) buildChunk(z);
+for (let z = 0; z <= BOT; z++) buildChunk(z);
 ensureBodies();
 genTrash();
 { const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
