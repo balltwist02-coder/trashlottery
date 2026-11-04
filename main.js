@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu.js?v=3';
+import { createKiryu } from './kiryu.js?v=4';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
 const PLOT = window.PLOT3D, TEX = window.TEX3D;
@@ -67,9 +67,11 @@ const VIEW = new THREE.Vector3(C30 * Math.SQRT1_2, 0.5, C30 * Math.SQRT1_2);   /
 const SCR_R = new THREE.Vector3(Math.SQRT1_2, 0, -Math.SQRT1_2);               // единичные векторы экрана в мире
 const SCR_U = new THREE.Vector3(-0.5 * Math.SQRT1_2, C30, -0.5 * Math.SQRT1_2);
 let W = 200, H = 300, SCALE = 2;
+const VIEW_W = 300;
 function resize() {
   const r = stage.getBoundingClientRect();
-  SCALE = Math.max(1, Math.floor(r.width / 300)); W = Math.ceil(r.width / SCALE); H = Math.ceil(r.height / SCALE);   // в кадр помещается вся яма 4×4 со стенками
+  const sc = r.width / VIEW_W; SCALE = sc >= 2 ? Math.floor(sc) : Math.max(1, sc);   // ширина кадра ≈ VIEW_W «пикселей игры»: яма 4×4 целиком и немного запаса
+  W = Math.ceil(r.width / SCALE); H = Math.ceil(r.height / SCALE);
   renderer.setSize(W, H, false);
   for (const c of [cv, bgc]) { c.style.width = W * SCALE + 'px'; c.style.height = H * SCALE + 'px' }
   cam.left = -W / 2 / PX; cam.right = W / 2 / PX; cam.top = H / 2 / PX; cam.bottom = -H / 2 / PX; cam.updateProjectionMatrix();
@@ -222,8 +224,24 @@ const TYPES = {
 };
 const trash = [];
 const rnd = (a, b) => a + Math.random() * (b - a);
+/* все обычные детали предмета — в один меш с цветами вершин (светящиеся и двусторонние детали остаются отдельными) */
+function mergeParts(g) {
+  g.updateMatrixWorld(true); const pos = [], nrm = [], col = [], parts = [];
+  g.traverse(o => { if (!o.isMesh) return; const ms = Array.isArray(o.material) ? o.material : [o.material];
+    if (ms.some(m => m.userData.glow || m.side !== THREE.FrontSide || !m.isMeshLambertMaterial)) return; parts.push(o) });
+  if (parts.length < 2) return;
+  for (const o of parts) { const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); geo.applyMatrix4(o.matrixWorld);
+    const p = geo.attributes.position.array, n = geo.attributes.normal.array, ms = Array.isArray(o.material) ? o.material : [o.material];
+    const grp = geo.groups.length ? geo.groups : [{ start: 0, count: p.length / 3, materialIndex: 0 }];
+    for (const gr of grp) { const c = (Array.isArray(o.material) ? ms[gr.materialIndex || 0] : ms[0]).color;
+      for (let v = gr.start; v < gr.start + gr.count; v++) { pos.push(p[v * 3], p[v * 3 + 1], p[v * 3 + 2]); nrm.push(n[v * 3], n[v * 3 + 1], n[v * 3 + 2]); col.push(c.r, c.g, c.b) } }
+    o.parent.remove(o) }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })));
+}
 function makeTrash(type, x, y, z, ry, layer) {
-  const g = new THREE.Group(); TYPES[type].build(g);
+  const g = new THREE.Group(); TYPES[type].build(g); mergeParts(g);
   g.position.set(x, y, z); g.rotation.y = ry; scene.add(g); g.updateMatrixWorld(true);
   const colors = new Map(); g.traverse(o => { if (o.isMesh) colors.set(o, o.material) });
   const t = { type, layer, g, colors, cells: [], active: false, body: null, held: false };
@@ -549,14 +567,17 @@ const olMat = new THREE.ShaderMaterial({
 const olScene = new THREE.Scene(); { const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), olMat); q.frustumCulled = false; olScene.add(q) }
 function drawOutlines() {
   const saved = [];
-  for (const c of chunks) if (c) { saved.push([c.mesh, c.mesh.material]); c.mesh.material = ID_BLOCK }
+  let lo = 1e9, hi = 0; for (const v of d) { lo = Math.min(lo, v); hi = Math.max(hi, v) }
+  const vis = [];
+  for (const c of chunks) if (c) { saved.push([c.mesh, c.mesh.material]); c.mesh.material = ID_BLOCK; const z = c.mesh.userData.chunk; if (c.mesh.visible && (z < lo - 1 || z > hi + 1)) { c.mesh.visible = false; vis.push(c.mesh) } }
+  const uv = under.visible; under.visible = false;
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
     t.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = t.idMat } }) });
   chG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = CH_ID } });
   const shV = shadow.visible; shadow.visible = false; for (const p of parts) p.m.visible = false;
   renderer.setRenderTarget(idRT); renderer.clear(); renderer.render(scene, cam); renderer.setRenderTarget(null);
-  for (const [o, m] of saved) o.material = m; shadow.visible = shV; for (const p of parts) p.m.visible = true;
+  for (const [o, m] of saved) o.material = m; for (const m of vis) m.visible = true; under.visible = uv; shadow.visible = shV; for (const p of parts) p.m.visible = true;
   renderer.autoClear = false; renderer.render(olScene, cam); renderer.autoClear = true;
 }
 
@@ -750,6 +771,9 @@ function drawIcons(dt) {
     const x = icCtx[k]; x.clearRect(0, 0, ICO, ICO); x.drawImage(icR.domElement, 0, 0) });
 }
 
+/* ---------- чёрная толща под видимыми слоями: дальше свет всё равно не доходит ---------- */
+const under = new THREE.Mesh(new THREE.BoxGeometry(N, 60, N).translate(N / 2, -30, N / 2), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+under.matrixAutoUpdate = true; scene.add(under);
 /* ---------- цикл ---------- */
 /* ---------- замер производительности: тройной тап по счётчику слоя включает/выключает табличку ----------
    время ЦП по частям кадра + FPS + рывки. Если FPS низкий, а ЦП на кадр маленький — упираемся в видеокарту */
@@ -780,7 +804,8 @@ function frame(now) {
   const raw = now - last, T0 = performance.now();
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   for (const g of grabs.values()) stepHeld(g);
-  stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held); world.step(1 / 120, dt, 8);
+  stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held);
+  const Tp = performance.now(); world.step(1 / 60, dt, 3); const Tq = performance.now();
   for (const t of trash) if (t.body) {
     if (!t.held) { depenetrate(t); if (lostItem(t)) returnItem(t) }
     t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
@@ -796,7 +821,9 @@ function frame(now) {
   const T1 = performance.now();
   // рисуем только открытые блоки в слоях рядом с камерой
   updateLight();
-  const cl = -camF.y / BH, z0 = Math.floor(cl - 9), z1 = Math.ceil(cl + 14);
+  let maxD = 0; for (const v of d) maxD = Math.max(maxD, v);
+  const cl = -camF.y / BH, z0 = Math.floor(cl - 10), z1 = Math.min(Math.ceil(cl + 10), Math.max(SKY_D, maxD + 5));
+  under.position.y = -(z1 + 1) * BH;
   for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
   placeCam(dt);
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
@@ -808,7 +835,7 @@ function frame(now) {
   drawOutlines();
   const T4 = performance.now();
   drawIcons(dt);
-  if (perf.on) { const T5 = performance.now(); perfFrame(raw, { логика: T1 - T0, свет: T2 - T1, рендер: T3 - T2, обводка: T4 - T3, иконки: T5 - T4 }) }
+  if (perf.on) { const T5 = performance.now(); perfFrame(raw, { логика: T1 - T0 - (Tq - Tp), физика: Tq - Tp, свет: T2 - T1, рендер: T3 - T2, обводка: T4 - T3, иконки: T5 - T4 }) }
   document.getElementById('depth').textContent = 'слой ' + Math.max(0, Math.round(-CH.y / BH)) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }

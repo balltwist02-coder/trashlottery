@@ -190,5 +190,24 @@ export function createKiryu(THREE) {
     for (const e of eyes) e.scale.y = bl ? .15 : 1;
   }
   root.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true });
+  // ---------- склейка: все детали, которые не двигаются друг относительно друга, — один меш на сустав ----------
+  // так Кирью рисуется ~18 командами видеокарте вместо ~120; цвета деталей переезжают в цвета вершин
+  const animated = new Set([root, hips, spine, chest, head, ...eyes, ...legs.flatMap(l => [l.th, l.kn, l.an]), ...arms.flatMap(a => [a.sh, a.el, a.hd])]);
+  const VC = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  root.updateMatrixWorld(true);
+  const buckets = new Map(), meshes = [];
+  root.traverse(o => { if (o.isMesh && o.material !== C.lamp) meshes.push(o) });
+  for (const m of meshes) {
+    let A = m.parent; while (!animated.has(A)) A = A.parent;
+    const rel = A.matrixWorld.clone().invert().multiply(m.matrixWorld);
+    const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone(); g.applyMatrix4(rel);
+    if (!buckets.has(A)) buckets.set(A, { pos: [], nrm: [], col: [] });
+    const b = buckets.get(A), p = g.attributes.position.array, n = g.attributes.normal.array, c = m.material.color;
+    for (let i = 0; i < p.length; i += 3) { b.pos.push(p[i], p[i + 1], p[i + 2]); b.nrm.push(n[i], n[i + 1], n[i + 2]); b.col.push(c.r, c.g, c.b) }
+    m.parent.remove(m);
+  }
+  for (const [A, b] of buckets) { const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nrm, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
+    A.add(new THREE.Mesh(g, VC)) }
   return { root, update, height: 1.5 };
 }
