@@ -105,50 +105,72 @@ const SUN_DIR = new THREE.Vector3(-.3, 1, -.42).normalize(), FILL_DIR = new THRE
 const AMB = .4, SUN = .72, FILL = .26;
 const FACE_K = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(a => { const n = new THREE.Vector3(...a);
   return 1 / (AMB + SUN * Math.max(0, n.dot(SUN_DIR)) + FILL * Math.max(0, n.dot(FILL_DIR))) });
-const loader = new THREE.TextureLoader();
-const MATS = {}, GLOW = {};
-function tex(src) { const t = loader.load(src); t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t }
-for (const k in TEX) {
-  const [R, L, T] = TEX[k].map(tex);
-  const mk = () => [R, R, T, T, L, L].map((m, f) => { const mm = new THREE.MeshLambertMaterial({ map: m, vertexColors: true }); mm.userData.k = FACE_K[f]; mm.color.setScalar(FACE_K[f]); return mm });
-  MATS[k] = mk(); GLOW[k] = mk();
-}
+/* все тайлы блоков — в одном атласе: тогда весь слой земли рисуется одной командой видеокарте */
+const ATL_T = 32, ATL_C = 8, TKEYS = Object.keys(TEX), ATL_R = Math.ceil(TKEYS.length * 3 / ATL_C);
+const atlC = document.createElement('canvas'); atlC.width = ATL_C * ATL_T; atlC.height = ATL_R * ATL_T;
+const atlas = new THREE.CanvasTexture(atlC); atlas.magFilter = atlas.minFilter = THREE.NearestFilter; atlas.generateMipmaps = false; atlas.colorSpace = THREE.SRGBColorSpace;
+const TILE = {};                                             // ключ блока -> номера тайлов [бок R, бок L, верх T]
+TKEYS.forEach((k, n) => { TILE[k] = [n * 3, n * 3 + 1, n * 3 + 2];
+  TEX[k].forEach((src, q) => { const im = new Image(), t = n * 3 + q;
+    im.onload = () => { atlC.getContext('2d').drawImage(im, (t % ATL_C) * ATL_T, (t / ATL_C | 0) * ATL_T, ATL_T, ATL_T); atlas.needsUpdate = true }; im.src = src }) });
+// подсветка блоков, которые можно копать: атрибут hl у вершин + общий пульс
+const pulseU = { value: 0 };
+const chunkMat = new THREE.MeshLambertMaterial({ map: atlas, vertexColors: true });
+chunkMat.onBeforeCompile = sh => { sh.uniforms.uPulse = pulseU;
+  sh.vertexShader = 'attribute float hl;\nvarying float vHl;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvHl = hl;');
+  sh.fragmentShader = 'uniform float uPulse;\nvarying float vHl;\n' + sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= 1.0 + vHl * uPulse;') };
 const matKey = (i, j, z) => { const c = code(i, j, z); return c === '*' || c === 'З' ? ['З', 'З1', 'З2'][hash(i, j, z)] : c };
 const boxGeo = new THREE.BoxGeometry(1, BH, 1);
-const blocks = new Map();                                   // "i,j,z" -> {mesh, body}
+// камера смотрит с +x +y +z, поэтому у блока бывают видны только три грани: +x (бок R), +y (верх T), +z (бок L)
+const FT = [[0, 0], [2, 2], [4, 1]].map(([f, tx]) => { const g = boxGeo.groups[f], ix = Array.from(boxGeo.index.array.slice(g.start, g.start + g.count)), v0 = Math.min(...ix);
+  return { f, tx, pos: Array.from(boxGeo.attributes.position.array.slice(v0 * 3, v0 * 3 + 12)), uv: Array.from(boxGeo.attributes.uv.array.slice(v0 * 2, v0 * 2 + 8)), nrm: Array.from(boxGeo.attributes.normal.array.slice(v0 * 3, v0 * 3 + 12)), idx: ix.map(x => x - v0) } });
+const blocks = new Map();                                   // "i,j,z" -> {k, body}
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -24, 0) });
 world.broadphase = new CANNON.SAPBroadphase(world); world.allowSleep = true;
 world.solver.iterations = 15;
 world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitution = 0;   // без отскоков
 const G_BLOCK = 1, G_TRASH = 2, G_CHAR = 4;
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
-function addBlock(i, j, z) {
-  const geo = boxGeo.clone(); geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(72).fill(1), 3));   // свой цвет вершин — под освещение по блокам
-  const k = matKey(i, j, z), mesh = new THREE.Mesh(geo, MATS[k]);
-  mesh.position.set(i + .5, -(z + .5) * BH, j + .5); mesh.userData = { kind: 'b', i, j, z, k };
-  mesh.matrixAutoUpdate = false; mesh.updateMatrix();       // блоки не двигаются никогда
-  mesh.castShadow = mesh.receiveShadow = true;
-  scene.add(mesh);
-  let body = null;
-  if (isAct(i, j) >= 0) {                                    // физика нужна только блокам ямы; декорации отгорожены стенками
-    body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: blockShape, position: new CANNON.Vec3(i + .5, -(z + .5) * BH, j + .5), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });
-    world.addBody(body);
-  }
-  blocks.set(i + ',' + j + ',' + z, { mesh, body, exp: true });
-}
-for (let z = 0; z <= DIG; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') addBlock(i, j, z);
-// рисуем только блоки, у которых видна хоть одна грань (сверху, справа или спереди) — остальные скрыты землёй
+for (let z = 0; z <= DIG; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') blocks.set(i + ',' + j + ',' + z, { k: matKey(i, j, z), body: null });
 const hasB = (i, j, z) => blocks.has(i + ',' + j + ',' + z);
-function expose(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (b) b.exp = z === 0 || i === N - 1 || j === N - 1 || !hasB(i, j, z - 1) || !hasB(i + 1, j, z) || !hasB(i, j + 1, z) }
-for (const b of blocks.values()) { const u = b.mesh.userData; expose(u.i, u.j, u.z) }
+// физика нужна только верхним блокам ямы (на них лежит мусор); глубже тела добавляются по мере раскопок
+function ensureBodies() {
+  let lo = Infinity, hi = -1; for (let a = 0; a < ACT.length; a++) { lo = Math.min(lo, d[a]); hi = Math.max(hi, d[a]) }
+  for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a];
+    for (let z = lo; z <= Math.min(DIG, hi + 2); z++) { const b = blocks.get(i + ',' + j + ',' + z); if (!b || b.body) continue;
+      b.body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: blockShape, position: new CANNON.Vec3(i + .5, -(z + .5) * BH, j + .5), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });
+      world.addBody(b.body) } }
+}
+/* слой земли = один меш из видимых граней. Перестраивается, только когда в нём или над ним выкопали блок */
+const chunks = [];                                          // z -> {mesh, faces, hlKey}
+function buildChunk(z) {
+  let ch = chunks[z]; if (ch) { scene.remove(ch.mesh); ch.mesh.geometry.dispose() }
+  const pos = [], nrm = [], uv = [], idx = [], faces = [];
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) continue;
+    const open = [!hasB(i + 1, j, z) || i === N - 1, z === 0 || !hasB(i, j, z - 1), !hasB(i, j + 1, z) || j === N - 1];
+    FT.forEach((ft, q) => { if (!open[q]) return;
+      const v0 = pos.length / 3, t = TILE[b.k][ft.tx], tu = (t % ATL_C) * ATL_T, tv = (t / ATL_C | 0) * ATL_T;
+      for (let v = 0; v < 4; v++) {
+        pos.push(ft.pos[v * 3] + i + .5, ft.pos[v * 3 + 1] - (z + .5) * BH, ft.pos[v * 3 + 2] + j + .5); nrm.push(ft.nrm[v * 3], ft.nrm[v * 3 + 1], ft.nrm[v * 3 + 2]);
+        uv.push((tu + .01 + ft.uv[v * 2] * (ATL_T - .02)) / atlC.width, 1 - (tv + .01 + (1 - ft.uv[v * 2 + 1]) * (ATL_T - .02)) / atlC.height) }
+      for (const x of ft.idx) idx.push(v0 + x);
+      faces.push({ i, j, z, f: ft.f, key: i + ',' + j + ',' + z, p: ft.pos }) }) }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pos.length).fill(1), 3));
+  g.setAttribute('hl', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1)); g.setIndex(idx); g.computeBoundingSphere();
+  const mesh = new THREE.Mesh(g, chunkMat); mesh.userData.chunk = z; mesh.castShadow = mesh.receiveShadow = true; mesh.matrixAutoUpdate = false; mesh.visible = faces.length > 0;
+  scene.add(mesh); chunks[z] = { mesh, faces, hlKey: '' }; return chunks[z];
+}
+let lightDirty = true;
+const chunkDirty = new Set();
+function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; lightDirty = true; if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z);
+  chunkDirty.add(z); if (z + 1 <= DIG) chunkDirty.add(z + 1) }
 // невидимые стенки по краю ямы от неба до дна: мусор не вылетит из участка
 { const top = 3, bot = -(DIG + 1) * BH, hh = (top - bot) / 2, cy = (top + bot) / 2;
   const hw = (PIT1 - PIT0) / 2 + 1;
   for (const [x, z, hx, hz] of [[PIT0 - .5, PC, .5, hw], [PIT1 + .5, PC, .5, hw], [PC, PIT0 - .5, hw, .5], [PC, PIT1 + .5, hw, .5]])
     world.addBody(new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3(hx, hh, hz)), position: new CANNON.Vec3(x, cy, z), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH })) }
-let lightDirty = true;
-function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; scene.remove(b.mesh); b.mesh.geometry.dispose(); lightDirty = true; if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z);
-  expose(i - 1, j, z); expose(i, j - 1, z); expose(i, j, z + 1) }
 
 /* ---------- свет только для мусора (блоки уже нарисованы с тенью) ---------- */
 scene.add(new THREE.AmbientLight(0xffffff, AMB * Math.PI));
@@ -291,22 +313,26 @@ function computeLight(src) {
 }
 // грани BoxGeometry: +x, -x, +y, -y, +z, -z; ось y мира — это слои наоборот
 const FACE_AX = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
-function shadeBlock(b) {
-  const u = b.mesh.userData, g = b.mesh.geometry, pos = g.attributes.position.array, col = g.attributes.color.array;
-  let changed = false;
-  for (let f = 0; f < 6; f++) { const [ax, sg] = FACE_AX[f];
-    const c = [u.i, u.j, u.z]; const dl = [0, 0, 0]; dl[ax === 0 ? 0 : ax === 2 ? 1 : 2] = ax === 1 ? -sg : sg;
-    const fi = c[0] + dl[0], fj = c[1] + dl[1], fz = c[2] + dl[2];
-    for (let v = 4 * f; v < 4 * f + 4; v++) {
-      const px = pos[v * 3], py = pos[v * 3 + 1], pz = pos[v * 3 + 2];
-      const su = [px > 0 ? 1 : -1, pz > 0 ? 1 : -1, py > 0 ? -1 : 1];   // шаг к углу по i, j, слою
+function shadeChunk(ch) {                                   // цвет вершины = свет перед гранью (среднее 4 клеток) × поправка грани
+  const col = ch.mesh.geometry.attributes.color, arr = col.array; let changed = false;
+  ch.faces.forEach((fc, n) => { const [ax, sg] = FACE_AX[fc.f];
+    const dl = [0, 0, 0]; dl[ax === 0 ? 0 : ax === 2 ? 1 : 2] = ax === 1 ? -sg : sg;
+    const fi = fc.i + dl[0], fj = fc.j + dl[1], fz = fc.z + dl[2];
+    for (let q = 0; q < 4; q++) { const v = n * 4 + q, px = fc.p[q * 3], py = fc.p[q * 3 + 1], pz = fc.p[q * 3 + 2];
+      const su = [px > 0 ? 1 : -1, pz > 0 ? 1 : -1, py > 0 ? -1 : 1];
       const s0 = ax === 0 ? [0, su[1], su[2]] : ax === 1 ? [su[0], su[1], 0] : [su[0], 0, su[2]];
       const A = [s0[0], 0, 0], B = [0, s0[1], 0], C = [0, 0, s0[2]];
       const t1 = ax === 0 ? B : A, t2 = ax === 1 ? B : C;
       const l = (Lget(fi, fj, fz) + Lget(fi + t1[0], fj + t1[1], fz + t1[2]) + Lget(fi + t2[0], fj + t2[1], fz + t2[2]) + Lget(fi + t1[0] + t2[0], fj + t1[1] + t2[1], fz + t1[2] + t2[2])) / 4;
-      const br = brOf(l);
-      if (Math.abs(col[v * 3] - br) > .002) { col[v * 3] = col[v * 3 + 1] = col[v * 3 + 2] = br; changed = true } } }
-  if (changed) g.attributes.color.needsUpdate = true;
+      const br = brOf(l) * FACE_K[fc.f];
+      if (Math.abs(arr[v * 3] - br) > .002) { arr[v * 3] = arr[v * 3 + 1] = arr[v * 3 + 2] = br; changed = true } } });
+  if (changed) col.needsUpdate = true;
+}
+function setHighlight(set) {                                 // подсветить блоки из набора "i,j,z"
+  const key = [...set].sort().join(';');
+  for (const ch of chunks) { if (!ch) continue; const mine = ch.faces.some(f => set.has(f.key));
+    if (!mine && !ch.hlKey) continue; const k = mine ? key : ''; if (k === ch.hlKey) continue; ch.hlKey = k;
+    const at = ch.mesh.geometry.attributes.hl; ch.faces.forEach((f, n) => at.array.fill(set.has(f.key) ? 1 : 0, n * 4, n * 4 + 4)); at.needsUpdate = true }
 }
 function lightAt(x, y, z) {                                  // плавная яркость в точке мира (для мусора, персонажа, частиц)
   const gi = x - .5, gj = z - .5, gz = -y / BH - .5, i0 = Math.floor(gi), j0 = Math.floor(gj), z0 = Math.floor(gz), fx = gi - i0, fy = gj - j0, fz = gz - z0;
@@ -326,7 +352,9 @@ let lightKey = '';
 const chBase = new Map();
 function updateLight() {
   const src = lightSources(), key = JSON.stringify(src);
-  if (lightDirty || key !== lightKey) { lightDirty = false; lightKey = key; perf.lightN++; computeLight(src); for (const b of blocks.values()) if (b.exp) shadeBlock(b) }
+  for (const z of chunkDirty) buildChunk(z);
+  if (lightDirty || key !== lightKey || chunkDirty.size) { lightDirty = false; lightKey = key; perf.lightN++; computeLight(src); for (const ch of chunks) if (ch) shadeChunk(ch) }
+  chunkDirty.clear();
   for (const t of trash) if (t.g.visible) { const p = t.g.position, br = lightAt(p.x, p.y + .15, p.z);
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
   const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z));    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
@@ -394,8 +422,11 @@ const ray = new THREE.Raycaster();
 const ndc = e => { const r = cv.getBoundingClientRect(); return new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1) };
 function pick(e) {
   ray.setFromCamera(ndc(e), cam);
-  const objs = [...[...blocks.values()].map(b => b.mesh), ...trash.filter(t => t.g.visible).map(t => t.g)];
-  return ray.intersectObjects(objs, true)[0] || null;
+  const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g)];
+  const h = ray.intersectObjects(objs, true)[0]; if (!h) return null;
+  if (h.object.userData.chunk === undefined) return h;
+  const p = h.point.clone().addScaledVector(h.face.normal, -.02), i = Math.floor(p.x), j = Math.floor(p.z), z = Math.floor(-p.y / BH), b = blocks.get(i + ',' + j + ',' + z);
+  return b ? { point: h.point, object: { userData: { kind: 'b', i, j, z, k: b.k } } } : null;
 }
 const grabs = new Map();   // перетаскивание пальцем «за шкирку» пока выключено — вернём как особую механику
 /* невидимый джойстик: коснулся где угодно и повёл палец — персонаж идёт в ту сторону; короткий тап — применить инструмент */
@@ -518,7 +549,7 @@ const olMat = new THREE.ShaderMaterial({
 const olScene = new THREE.Scene(); { const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), olMat); q.frustumCulled = false; olScene.add(q) }
 function drawOutlines() {
   const saved = [];
-  for (const b of blocks.values()) { saved.push([b.mesh, b.mesh.material]); b.mesh.material = ID_BLOCK }
+  for (const c of chunks) if (c) { saved.push([c.mesh, c.mesh.material]); c.mesh.material = ID_BLOCK }
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
     t.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = t.idMat } }) });
@@ -554,9 +585,9 @@ world.addBody(chP);
 
 
 function digCell(a) {
-  const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.mesh.userData.k : 'З';
+  const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.k : 'З';
   removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
-  d[a]++; settle(); updateTrash(); haptic('light'); CH.swing = .3;
+  d[a]++; ensureBodies(); settle(); updateTrash(); haptic('light'); CH.swing = .3;
 }
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
@@ -711,7 +742,8 @@ function drawIcons(dt) {
   icTime += dt;
   TOOLS.forEach((t, k) => { if (!t) return;
     const o = icObj[t], fx = iconFx[t], sel = t === tool, base = o.userData.base;
-    fx.shake = Math.max(0, fx.shake - dt); fx.lift += ((sel ? 1 : 0) - fx.lift) * Math.min(1, dt * 10);
+    const still = !sel && fx.shake <= 0 && fx.lift < .001 && fx.drawn;   // неподвижную иконку не перерисовываем
+    fx.shake = Math.max(0, fx.shake - dt); fx.lift += ((sel ? 1 : 0) - fx.lift) * Math.min(1, dt * 10); if (still) return; fx.drawn = true;
     o.position.set(0, fx.lift * .08 + (sel ? Math.sin(icTime * 3) * .03 : 0), 0);
     o.rotation.set(base.x, base.y + (sel ? Math.sin(icTime * 1.6) * .35 : 0), base.z + (fx.shake > 0 ? Math.sin(icTime * 70) * .35 * fx.shake / .4 : 0));
     icScene.add(o); icR.render(icScene, icCam); icScene.remove(o);
@@ -758,14 +790,14 @@ function frame(now) {
   }
   stepParts(dt);
   // подсветка блоков, которые можно копать
-  const pulse = 1 + (.12 + .1 * Math.sin(now / 260)) * (tool === 'pick' ? 1 : 0);
-  for (const k in GLOW) for (const m of GLOW[k]) m.color.setScalar(m.userData.k * pulse);
-  for (let a = 0; a < ACT.length; a++) for (const z of [d[a] - 1, d[a]]) { const b = blocks.get(ACT[a][0] + ',' + ACT[a][1] + ',' + z); if (b) { const u = b.mesh.userData; b.mesh.material = tool === 'pick' && diggable(a, u.z) && reach(a) ? GLOW[u.k] : MATS[u.k] } }
+  pulseU.value = tool === 'pick' ? .12 + .1 * Math.sin(now / 260) : 0;
+  const hl = new Set(); if (tool === 'pick' && !CH.held) for (let a = 0; a < ACT.length; a++) if (diggable(a, d[a]) && reach(a)) hl.add(ACT[a][0] + ',' + ACT[a][1] + ',' + d[a]);
+  setHighlight(hl);
   const T1 = performance.now();
   // рисуем только открытые блоки в слоях рядом с камерой
   updateLight();
   const cl = -camF.y / BH, z0 = Math.floor(cl - 9), z1 = Math.ceil(cl + 14);
-  for (const b of blocks.values()) b.mesh.visible = b.exp && b.mesh.userData.z >= z0 && b.mesh.userData.z <= z1;
+  for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
   placeCam(dt);
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
   const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
@@ -780,6 +812,8 @@ function frame(now) {
   document.getElementById('depth').textContent = 'слой ' + Math.max(0, Math.round(-CH.y / BH)) + ' / ' + DIG;
   requestAnimationFrame(frame);
 }
+for (let z = 0; z <= DIG; z++) buildChunk(z);
+ensureBodies();
 genTrash();
 { const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
