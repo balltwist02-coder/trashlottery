@@ -20,7 +20,29 @@ body{background:var(--bg);color:var(--fg);font:14px system-ui,-apple-system,"Seg
 .app{position:fixed;inset:0;display:flex;flex-direction:column}
 .stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#2f4f7a}
 canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none}
-.depth{position:absolute;right:max(10px,env(safe-area-inset-right,0px));top:10px;font:600 12px ui-monospace,Menlo,Consolas,monospace;color:var(--fg);background:rgba(10,16,24,.55);padding:3px 7px;border-radius:4px;pointer-events:none;font-variant-numeric:tabular-nums}
+.depth{position:absolute;right:max(10px,env(safe-area-inset-right,0px));top:44px;font:600 12px ui-monospace,Menlo,Consolas,monospace;color:var(--fg);background:rgba(10,16,24,.55);padding:3px 7px;border-radius:4px;pointer-events:none;font-variant-numeric:tabular-nums}
+/* монеты: справа сверху */
+.coins{position:absolute;right:max(10px,env(safe-area-inset-right,0px));top:10px;display:flex;align-items:center;gap:6px;font:800 15px ui-monospace,Menlo,Consolas,monospace;color:#ffe08a;background:rgba(10,16,24,.62);padding:3px 9px 3px 6px;border-radius:4px;pointer-events:none;font-variant-numeric:tabular-nums;text-shadow:0 1px 0 #5a3a10}
+.coins .ci canvas{display:block;position:static;transform:none;width:18px;height:18px;image-rendering:pixelated}
+.coins.bump{animation:bump .35s ease-out}
+@keyframes bump{40%{transform:scale(1.18)}100%{transform:scale(1)}}
+.plus{position:absolute;z-index:5;font:800 16px ui-monospace,Menlo,Consolas,monospace;color:#ffe08a;text-shadow:0 2px 0 #5a3a10,0 0 6px rgba(0,0,0,.6);pointer-events:none;transform:translate(-50%,-50%);animation:rise .95s ease-out forwards}
+@keyframes rise{to{transform:translate(-50%,-190%);opacity:0}}
+/* окно лавки */
+.shop .shopsay{margin:-4px 0 12px;color:var(--muted);font:italic 13px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.ware{display:flex;align-items:center;gap:10px;padding:8px;background:#1a1612;border-radius:2px;box-shadow:inset 0 0 0 2px #2a221b,inset 0 -3px 0 0 #0c0a08}
+.ware+.ware{margin-top:6px}
+.wic{flex:none;width:48px;height:48px;display:grid;place-items:center;background:#0e0b09;border-radius:2px}
+.wic canvas{position:static;transform:none;width:48px;height:48px;image-rendering:pixelated}
+.wtx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.wtx b{font:600 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
+.wtx span{font:12px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--muted)}
+.buy{flex:none;display:flex;align-items:center;gap:5px;padding:7px 10px;font:800 15px ui-monospace,Menlo,Consolas,monospace;color:#ffe08a;background:#2a2014;border:0;border-radius:2px;cursor:pointer;box-shadow:inset 0 0 0 2px var(--active),0 3px 0 #8a6a1e}
+.buy i canvas{display:block;position:static;transform:none;width:16px;height:16px;image-rendering:pixelated}
+.buy.poor{color:#8a7f66;box-shadow:inset 0 0 0 2px #5a5040,0 3px 0 #2e2820}
+.buy.no{animation:no .3s}
+@keyframes no{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.buy:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 /* кожаный мешочек с инструментами */
 .pouch{position:absolute;left:max(10px,env(safe-area-inset-left,0px));bottom:max(10px,env(safe-area-inset-bottom,0px));z-index:4;
   padding:15px 9px 10px;border-radius:16px 16px 30px 30px / 12px 12px 34px 34px;
@@ -61,6 +83,7 @@ canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-renderi
   <div class="stage" id="stage">
     <canvas id="bg" aria-hidden="true" style="pointer-events:none"></canvas>
     <canvas id="cv" aria-label="Участок"></canvas>
+    <div class="coins" id="coins" aria-label="Монеты"><span class="ci" aria-hidden="true"></span><b id="coinN">0</b></div>
     <div class="depth" id="depth">0 / 30</div>
     <div class="toast" id="toast" role="status" hidden></div>
     <button class="mapbtn" id="mapbtn" aria-label="Карта участков" aria-haspopup="dialog"></button>
@@ -72,6 +95,14 @@ canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-renderi
       </div>
     </div>
   </div>
+  <div class="mapwrap" id="shopwrap" hidden>
+    <div class="map shop" role="dialog" aria-modal="true" aria-labelledby="shoptitle">
+      <h2 id="shoptitle">Лавка под землёй</h2>
+      <button class="close" id="shopclose" aria-label="Закрыть лавку"></button>
+      <p class="shopsay" id="shopsay"></p>
+      <div id="shoplist"></div>
+    </div>
+  </div>
   <div class="mapwrap" id="mapwrap" hidden>
     <div class="map" role="dialog" aria-modal="true" aria-labelledby="maptitle">
       <h2 id="maptitle">Участки</h2>
@@ -81,6 +112,6 @@ canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-renderi
   </div>
 </div>
 
-<script type="module" src="3d_main.js?v=22"></script>
+<script type="module" src="3d_main.js?v=23"></script>
 </body>
 </html>

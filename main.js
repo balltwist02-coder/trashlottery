@@ -8,6 +8,13 @@ const N = 6, DIG = PLOT.length - 10, BOT = DIG + 10;   // ниже дна ямы
 const PIT0 = 2, PIT1 = 6, PC = (PIT0 + PIT1) / 2; // яма занимает x,z от 2 до 6
 const ACT = []; for (let j = PIT0; j < PIT1; j++) for (let i = PIT0; i < PIT1; i++) ACT.push([i, j]);
 const BH = 0.8165;                               // высота блока: кубы выглядят ровно как изометрические спрайты
+/* лавка подземного торговца — ниша в правой декоративной стенке (ряд j=1): клетки i0..i1-1, слои z0..z1 (2 блока высотой) */
+const SHOP = { i0: 2, i1: 5, j: 1, z0: 3, z1: 4, revealed: false };
+SHOP.floor = -(SHOP.z1 + 1) * BH; SHOP.ceil = -SHOP.z0 * BH;
+const BASKET = { x: 4.45, z: 1.5, r: .45, h: .62 };          // большая корзина справа от торговца
+const WIN = { x0: BASKET.x - .55, x1: BASKET.x + .55 };      // «окно» в невидимой стенке — только над корзиной
+const MERCH = { x: 3.3, z: 1.42 };                          // где сидит торговец
+const inShop = (i, j, z) => j === SHOP.j && i >= SHOP.i0 && i < SHOP.i1 && z >= SHOP.z0 && z <= SHOP.z1;
 const PX = 64 / Math.SQRT2;                      // пикселей на единицу мира (ромб верха = 64 px)
 
 /* ---------- Telegram ---------- */
@@ -47,7 +54,7 @@ const d = ACT.map(() => 0);
 // яму 4×4 собираем из него зеркально, ближняя к яме декоративная стенка берёт кольцо плана, дальняя — просто земля
 const MIR = [1, 2, 2, 1];
 const pm = v => v >= PIT0 ? MIR[v - PIT0] : 0;
-const code = (i, j, z) => z >= DIG ? 'К' : (i === 0 || j === 0) ? '*' : PLOT[z][pm(j)][pm(i)];
+const code = (i, j, z) => z >= DIG ? 'К' : inShop(i, j, z) ? '.' : (i === 0 || j === 0) ? '*' : PLOT[z][pm(j)][pm(i)];
 function settle() { for (let a = 0; a < ACT.length; a++) while (d[a] < DIG && code(ACT[a][0], ACT[a][1], d[a]) === '.') d[a]++ }
 settle();
 const cur = () => Math.min(...d);
@@ -169,10 +176,13 @@ const chunkDirty = new Set();
 function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) return; lightDirty = true; if (b.body) world.removeBody(b.body); blocks.delete(i + ',' + j + ',' + z);
   chunkDirty.add(z); if (z + 1 <= BOT) chunkDirty.add(z + 1) }
 // невидимые стенки по краю ямы от неба до дна: мусор не вылетит из участка
-{ const top = 3, bot = -(DIG + 1) * BH, hh = (top - bot) / 2, cy = (top + bot) / 2;
-  const hw = (PIT1 - PIT0) / 2 + 1;
-  for (const [x, z, hx, hz] of [[PIT0 - .5, PC, .5, hw], [PIT1 + .5, PC, .5, hw], [PC, PIT0 - .5, hw, .5], [PC, PIT1 + .5, hw, .5]])
-    world.addBody(new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3(hx, hh, hz)), position: new CANNON.Vec3(x, cy, z), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH })) }
+{ const top = 3, bot = -(DIG + 1) * BH, hw = (PIT1 - PIT0) / 2 + 1;
+  const wall = (x0, x1, y0, y1, z0, z1) => world.addBody(new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2)),
+    position: new CANNON.Vec3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH }));
+  wall(PIT0 - 1, PIT0, bot, top, PC - hw, PC + hw); wall(PIT1, PIT1 + 1, bot, top, PC - hw, PC + hw); wall(PC - hw, PC + hw, bot, top, PIT1, PIT1 + 1);
+  // сторона лавки: на высоте ниши над корзиной стенки нет — туда можно опустить мусор
+  wall(PC - hw, WIN.x0, bot, top, PIT0 - 1, PIT0); wall(WIN.x1, PC + hw, bot, top, PIT0 - 1, PIT0);
+  wall(WIN.x0, WIN.x1, SHOP.ceil, top, PIT0 - 1, PIT0); wall(WIN.x0, WIN.x1, bot, SHOP.floor, PIT0 - 1, PIT0) }
 
 /* ---------- свет только для мусора (блоки уже нарисованы с тенью) ---------- */
 scene.add(new THREE.AmbientLight(0xffffff, AMB * Math.PI));
@@ -232,7 +242,8 @@ function mergeParts(g) {
   g.traverse(o => { if (!o.isMesh) return; const ms = Array.isArray(o.material) ? o.material : [o.material];
     if (ms.some(m => m.userData.glow || m.side !== THREE.FrontSide || !m.isMeshLambertMaterial)) return; parts.push(o) });
   if (parts.length < 2) return;
-  for (const o of parts) { const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); geo.applyMatrix4(o.matrixWorld);
+  const inv = g.matrixWorld.clone().invert();                 // координаты деталей — относительно самой группы
+  for (const o of parts) { const geo = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); geo.applyMatrix4(inv.clone().multiply(o.matrixWorld));
     const p = geo.attributes.position.array, n = geo.attributes.normal.array, ms = Array.isArray(o.material) ? o.material : [o.material];
     const grp = geo.groups.length ? geo.groups : [{ start: 0, count: p.length / 3, materialIndex: 0 }];
     for (const gr of grp) { const c = (Array.isArray(o.material) ? ms[gr.materialIndex || 0] : ms[0]).color;
@@ -314,14 +325,20 @@ const brOf = l => Math.pow(Math.max(0, Math.min(15, l)) / 15, 2);   // уров�
 function lightSources() {
   const out = [];
   for (const t of trash) { const L = TYPES[t.type].light; if (!L || !t.active || !t.body) continue;
+    if (t.held) { out.push([Math.floor(CH.x), Math.floor(CH.z), Math.floor(-(CH.y + .9) / BH), L]); continue }   // в руках — светит там, где стоит Кирью
     const p = t.body.position; out.push([Math.floor(p.x), Math.floor(p.z), Math.floor(-(p.y + .05) / BH), L]) }
+  if (SHOP.revealed) out.push([Math.floor(SHOP.lamp.x), SHOP.j, Math.floor(-SHOP.lamp.y / BH), 15]);   // фонарь в лавке
   return out;
 }
 function computeLight(src) {
   LG.fill(0); const q = [];
   const push = (i, j, z, v) => { const k = li(i, j, z); if (v > LG[k] + .01) { LG[k] = v; q.push(i, j, z) } };
   for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let z = -1; z <= BOT + 1 && !solidAt(i, j, z); z++) push(i, j, z, skyAt(z));   // небо в открытых колодцах
-  for (const [i, j, z0, L] of src) { let z = Math.max(-1, Math.min(BOT, z0)); if (i < 0 || j < 0 || i >= N || j >= N) continue; while (z > -1 && solidAt(i, j, z)) z--; push(i, j, z, L) }
+  for (const [i0, j0, z0, L] of src) {                      // источник не должен «гаснуть» в стене или за краем: ищем ближайший воздух
+    let i = Math.max(0, Math.min(N - 1, i0)), j = Math.max(0, Math.min(N - 1, j0)), z = Math.max(-1, Math.min(BOT, z0));
+    if (solidAt(i, j, z)) { const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => [i + a, j + b]).find(([a, b]) => a >= 0 && b >= 0 && a < N && b < N && !solidAt(a, b, z));
+      if (nb) [i, j] = nb; else while (z > -1 && solidAt(i, j, z)) z-- }
+    push(i, j, z, L) }
   for (let h = 0; h < q.length; h += 3) {
     const i = q[h], j = q[h + 1], z = q[h + 2], v = LG[li(i, j, z)], sol = solidAt(i, j, z);
     for (const [a, b, c] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
@@ -377,6 +394,8 @@ function updateLight() {
   chunkDirty.clear();
   for (const t of trash) if (t.g.visible) { const p = t.g.position, br = lightAt(p.x, p.y + .15, p.z);
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
+  if (shopG.visible) { const sb = Math.min(2.2, 2.6 * lightAt(MERCH.x + .4, SHOP.floor + .7, 1.6));
+    if (shopG.br === undefined || Math.abs(shopG.br - sb) > .004) { shopG.br = sb; dimGroup(shopG, sb, shopBase) } }
   const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z));    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
   if (CH.br === undefined || Math.abs(CH.br - cb) > .004) { CH.br = cb; dimGroup(chG, cb, chBase) }
 }
@@ -442,7 +461,7 @@ const ray = new THREE.Raycaster();
 const ndc = e => { const r = cv.getBoundingClientRect(); return new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1) };
 function pick(e) {
   ray.setFromCamera(ndc(e), cam);
-  const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g)];
+  const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g), ...(shopG.visible ? [shopG] : [])];
   const h = ray.intersectObjects(objs, true)[0]; if (!h) return null;
   if (h.object.userData.chunk === undefined) return h;
   const p = h.point.clone().addScaledVector(h.face.normal, -.02), i = Math.floor(p.x), j = Math.floor(p.z), z = Math.floor(-p.y / BH), b = blocks.get(i + ',' + j + ',' + z);
@@ -470,6 +489,8 @@ addEventListener('keyup', e => keys.delete(e.code));
 const faceTo = (x, z) => { const v = new THREE.Vector3(x - CH.x, 0, z - CH.z); if (v.lengthSq() > 1e-4) CH.face.copy(v.normalize()) };
 function tap(e) {
   const h = pick(e);
+  if (h && h.object.userData.merchant) { if (nearShop()) openShop(); else toast('Надо подойти к лавке поближе'); return }
+  if (h && h.object.userData.basket) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
   const t = h && h.object.userData.t;
   if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
     const p = t.body.position;
@@ -596,7 +617,7 @@ function reach(a) {                                            // можно л�
   const c = charCell(); if (c < 0) return false; if (a === c) return true;
   if (floorY(a) <= floorY(c) + .01) return false;              // соседняя клетка должна быть выше — это стенка перед нами
   const [i, j] = ACT[a], dx = Math.max(i - CH.x, 0, CH.x - (i + 1)), dz = Math.max(j - CH.z, 0, CH.z - (j + 1));
-  return Math.hypot(dx, dz) < R + .3;
+  return Math.hypot(dx, dz) < R + .5;                          // до стенки — до половины блока
 }
 const chG = new THREE.Group(), chBody = new THREE.Group(); chG.add(chBody); scene.add(chG);
 const CH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(252 / 255, 0, 0) });
@@ -611,6 +632,7 @@ function digCell(a) {
   const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.k : 'З';
   removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
   d[a]++; ensureBodies(); settle(); updateTrash(); haptic('light'); CH.swing = .3;
+  if (!SHOP.revealed && ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) revealShop();
 }
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
@@ -622,7 +644,7 @@ function act() {
   if (CH.held) { busy(); return }                              // руки заняты: ни копать, ни ломать
   if (tool === 'bar') {                                        // лом: ближайший ломаемый предмет перед персонажем
     const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
-  const a = charCell(), nb = cellAt(CH.x + CH.face.x * (R + .25), CH.z + CH.face.z * (R + .25));
+  const a = charCell(), nb = cellAt(CH.x + CH.face.x * (R + .48), CH.z + CH.face.z * (R + .48));
   if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else shakeTool('pick'); return }   // стенка перед нами
   if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
   shakeTool('pick');
@@ -635,14 +657,23 @@ function nearItem(ok) {                                        // ближайш
 }
 /* перчатка: предмет поднимается к груди и едет вместе с персонажем; повторное действие ставит его перед собой */
 function grabItem(t) {
-  const b = t.body; t.held = true; CH.held = t;
+  const b = t.body; t.held = true; CH.held = t; t.hinted = false;
   b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
   CH.swing = 0; haptic('medium'); toast('В руках: ' + TYPES[t.type].name);
 }
+const PRICE = { coffee: 2, pipeHalf: 4 };                     // сколько монет даёт торговец за кусочек мусора
+function heldFree(x, y, z, sell) {                             // можно ли держать предмет в этой точке
+  const inPit = x > PIT0 + .12 && x < PIT1 - .12 && z > PIT0 + .12 && z < PIT1 - .12;
+  const inWin = sell && SHOP.revealed && x > WIN.x0 + .08 && x < WIN.x1 - .08 && z > SHOP.j + .12 && z <= PIT0 + .06 && y > SHOP.floor + .12 && y < SHOP.ceil - .12;
+  return (inPit || inWin) && !solidAt(Math.floor(x), Math.floor(z), Math.floor(-y / BH));
+}
 function carryPose(t) {
-  const b = t.body, up = t.local.max.y - t.local.min.y;
-  b.position.set(CH.x + CH.face.x * .42, CH.y + .95 + up * .3, CH.z + CH.face.z * .42);
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw + Math.PI / 2, 0));   // длинные вещи держит поперёк
+  const b = t.body, up = t.local.max.y - t.local.min.y, y = CH.y + .95 + up * .3, sell = !!PRICE[t.type];
+  let k = 1; for (; k > 0; k -= .125) if (heldFree(CH.x + CH.face.x * .42 * k, y, CH.z + CH.face.z * .42 * k, sell)) break;   // упёрлись — подтягиваем к себе
+  if (k < 1 && !sell && !t.hinted && heldFree(CH.x + CH.face.x * .42, y, CH.z + CH.face.z * .42, true)) {   // несёт к корзине то, что не продаётся
+    t.hinted = true; toast(t.type === 'pipe' ? 'Целиком не влезет — сначала разломай ломом' : TYPES[t.type].light ? 'Фонарь лучше оставить себе' : 'Это торговцу не нужно') }
+  b.position.set(CH.x + CH.face.x * .42 * Math.max(0, k), y, CH.z + CH.face.z * .42 * Math.max(0, k));
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw, 0));   // длинные вещи держит поперёк себя
   b.quaternion.set(q.x, q.y, q.z, q.w); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
 }
 /* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
@@ -655,10 +686,16 @@ function returnItem(t) {
   b.velocity.set(0, 0, 0); b.angularVelocity.set((Math.random() - .5) * 4, 0, (Math.random() - .5) * 4); b.wakeUp(); t.falling = false; t.fallV = 0;
   toast('Сверху что-то летит!');
 }
+const winZone = p => p.x > WIN.x0 && p.x < WIN.x1 && p.z < PIT0 - .02 && p.z > SHOP.j - .3 && p.y > SHOP.floor - 1.2 && p.y < SHOP.ceil + .3;   // за окном над корзиной
+function basketTake(t) {                                       // корзина торговца: мусор — в монеты, остальное выкидывает обратно
+  const price = PRICE[t.type], p = t.body.position;
+  if (!price) { t.body.position.set(BASKET.x, SHOP.floor + 1, PIT0 + .35); t.body.velocity.set(0, 1.5, 1.4); t.body.wakeUp();
+    toast(t.type === 'pipe' ? 'Торговец: «Целиком не возьму — разломай»' : 'Торговец: «Это оставь себе»'); return }
+  removeTrash(t); addCoins(price, BASKET.x, SHOP.floor + BASKET.h, BASKET.z);
+  burst(BASKET.x, SHOP.floor + BASKET.h, BASKET.z, ['#f2c14e', '#fff6c8', '#d99a2b'], 14, .7); haptic('medium');
+}
 function dropItem() {
-  const t = CH.held; if (!t) return; const b = t.body;
-  const cl = v => Math.max(PIT0 + .3, Math.min(PIT1 - .3, v));
-  b.position.set(cl(CH.x + CH.face.x * .6), b.position.y, cl(CH.z + CH.face.z * .6));
+  const t = CH.held; if (!t) return; const b = t.body;        // ставим там, где держали (место уже проверено: не в стене и не за краем)
   b.type = CANNON.Body.DYNAMIC; b.updateMassProperties(); b.velocity.set(CH.face.x * .4, 0, CH.face.z * .4); b.angularVelocity.set(0, 0, 0); b.wakeUp();
   t.held = false; CH.held = null; haptic('light');
 }
@@ -773,12 +810,143 @@ function drawIcons(dt) {
     const x = icCtx[k]; x.clearRect(0, 0, ICO, ICO); x.drawImage(icR.domElement, 0, 0) });
 }
 
+/* ---------- лавка подземного торговца (заглушка: место для механики и разметка пространства) ----------
+   базарная лавка в нише: дощатый настил, крестовины из жердей, ковёр на стене, полосатый навес с кистями,
+   фонарь на цепи, кувшины, бочка и ящик; торговец сидит в центре на подушке, справа — огромная плетёная корзина */
+const shopG = new THREE.Group(); shopG.visible = false; scene.add(shopG);
+const shopBase = new Map();
+function pixTex(w, h, draw) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'));
+  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t }
+const pxl = (x, c, a, b) => { x.fillStyle = c; x.fillRect(a, b, 1, 1) };
+function rodBetween(g, a, b, r, mat, seg = 5) {                // жердь между двумя точками
+  const v = new THREE.Vector3().subVectors(b, a), m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, v.length(), seg), mat);
+  m.position.copy(a).addScaledVector(v, .5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.normalize()); g.add(m); return m }
+function lathe(g, pts, mat, x, y, z) { const m = new THREE.Mesh(new THREE.LatheGeometry(pts.map(([r, h]) => new THREE.Vector2(r, h)), 7), mat); m.position.set(x, y, z); g.add(m); return m }
+function buildShop() {
+  const F = SHOP.floor, C = SHOP.ceil, X0 = SHOP.i0, X1 = SHOP.i1, Z0 = SHOP.j, Z1 = PIT0;
+  const deco = new THREE.Group(); shopG.add(deco);
+  // настил из досок
+  const plank = [0x7a5534, 0x6a4a2c, 0x85603a, 0x6f4e30];
+  for (let k = 0; k < 7; k++) part(deco, new THREE.BoxGeometry(X1 - X0 - .04, .05, .145), M(plank[k % 4]), (X0 + X1) / 2, F + .025, Z0 + .09 + k * .148);
+  for (const x of [X0 + .3, (X0 + X1) / 2, X1 - .3]) part(deco, new THREE.BoxGeometry(.08, .03, Z1 - Z0 - .02), M(0x4e3420), x, F + .052, (Z0 + Z1) / 2);
+  // крестовины по краям и балки сверху
+  const wood = M(0x5e4128), rope = M(0xb79a62);
+  for (const x of [X0 + .07, X1 - .07]) {
+    rodBetween(deco, new THREE.Vector3(x, F + .03, Z0 + .12), new THREE.Vector3(x, C - .04, Z1 - .08), .035, wood);
+    rodBetween(deco, new THREE.Vector3(x, F + .03, Z1 - .08), new THREE.Vector3(x, C - .04, Z0 + .12), .035, wood);
+    part(deco, new THREE.BoxGeometry(.09, .09, .09), rope, x, (F + C) / 2, (Z0 + Z1) / 2 + .02, 0, .7) }
+  rodBetween(deco, new THREE.Vector3(X0, C - .12, Z1 - .1), new THREE.Vector3(X1, C - .12, Z1 - .1), .04, wood);
+  rodBetween(deco, new THREE.Vector3(X0, C - .1, Z0 + .14), new THREE.Vector3(X1, C - .1, Z0 + .14), .035, wood);
+  // кувшины, бочка, ящик — слева от торговца
+  lathe(deco, [[0, 0], [.07, 0], [.13, .08], [.15, .18], [.11, .29], [.05, .33], [.06, .37], [0, .37]], M(0xa85a3a), X0 + .55, F + .05, Z0 + .3);
+  lathe(deco, [[0, 0], [.06, 0], [.1, .07], [.1, .15], [.06, .21], [.045, .25], [0, .25]], M(0xcfae80), X0 + .78, F + .05, Z0 + .72);
+  part(deco, new THREE.CylinderGeometry(.15, .15, .36, 8), M(0x6b4423), X0 + .26, F + .23, Z0 + .66);
+  for (const h of [.1, .3]) part(deco, new THREE.CylinderGeometry(.158, .158, .035, 8), M(0x2f2219), X0 + .26, F + .05 + h, Z0 + .66);
+  part(deco, new THREE.BoxGeometry(.3, .28, .3), M(0x7d6a52), X0 + .27, F + .19, Z0 + .25, .25);
+  for (const h of [.1, .22]) part(deco, new THREE.BoxGeometry(.31, .035, .31), M(0x564634), X0 + .27, F + .05 + h, Z0 + .25, .25);
+  // бутылочки-товар перед торговцем
+  [[0x3f7a52, -.18], [0x6a3a7a, -.05], [0xb0803a, .1]].forEach(([c, dx]) => { part(deco, new THREE.CylinderGeometry(.03, .035, .12, 6), M(c), MERCH.x + dx, F + .11, Z1 - .2);
+    part(deco, new THREE.CylinderGeometry(.012, .012, .05, 4), M(c), MERCH.x + dx, F + .19, Z1 - .2) });
+  mergeParts(deco);
+  // ковёр на задней стене
+  const rug = pixTex(12, 18, x => { const P = { r: '#8e2a26', R: '#b8452c', o: '#d98a3a', b: '#33507a', y: '#e2c26a', k: '#3a1a1e' };
+    for (let yy = 0; yy < 18; yy++) for (let xx = 0; xx < 12; xx++) { let c;
+      if (xx === 0 || xx === 11 || yy === 0 || yy === 17) c = 'k'; else if (xx === 1 || xx === 10 || yy === 1 || yy === 16) c = 'y';
+      else { const cy = (yy - 2) % 7, dd = Math.abs(cy - 3) + Math.abs(xx - 5.5); c = dd < 1.6 ? 'y' : dd < 2.8 ? 'b' : dd < 3.6 ? 'o' : cy === 6 ? 'R' : 'r' }
+      pxl(x, P[c], xx, yy) } });
+  const rugM = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.2), new THREE.MeshLambertMaterial({ map: rug })); rugM.position.set(MERCH.x - .15, F + .72, Z0 + .015); shopG.add(rugM);
+  // полосатый навес с кистями спереди
+  const val = pixTex(30, 6, x => { const S = ['#5a2a4a', '#9a2f2a', '#d9a441', '#9a2f2a'];
+    for (let xx = 0; xx < 30; xx++) { const c = S[Math.floor(xx / 2) % 4]; for (let yy = 0; yy < 4; yy++) pxl(x, yy === 0 ? '#3a1a2a' : c, xx, yy); if (xx % 3 === 1) { pxl(x, '#d9a441', xx, 4); pxl(x, '#d9a441', xx, 5) } } });
+  const valM = new THREE.Mesh(new THREE.PlaneGeometry(X1 - X0, .3), new THREE.MeshLambertMaterial({ map: val, alphaTest: .5, side: THREE.DoubleSide })); valM.position.set((X0 + X1) / 2, C - .17, Z1 - .02); shopG.add(valM);
+  // фонарь на цепи — главный свет лавки
+  SHOP.lamp = new THREE.Vector3(MERCH.x + .62, C - .85, Z0 + .58);
+  const lamp = new THREE.Group(); TYPES.lantern.build(lamp); lamp.position.copy(SHOP.lamp); shopG.add(lamp);
+  part(shopG, new THREE.BoxGeometry(.015, C - SHOP.lamp.y - .3, .015), M(0x2b2f36), SHOP.lamp.x, (C + SHOP.lamp.y + .3) / 2, SHOP.lamp.z);
+  // торговец-заглушка: сидит в капюшоне, глаза светятся
+  const mg = new THREE.Group(); mg.position.set(MERCH.x, F + .05, MERCH.z); shopG.add(mg);
+  part(mg, new THREE.BoxGeometry(.56, .08, .44), M(0x6a2a3a), 0, .04, 0);                         // подушка
+  part(mg, new THREE.BoxGeometry(.46, .12, .24), M(0x2d2236), 0, .14, .1);                          // скрещённые ноги
+  part(mg, new THREE.CylinderGeometry(.15, .23, .5, 7), M(0x3d2c52), 0, .4, 0);                    // балахон
+  for (const s of [-1, 1]) part(mg, new THREE.BoxGeometry(.1, .3, .12), M(0x34254a), s * .19, .42, .06, 0, -.35, s * .25);   // руки
+  part(mg, new THREE.BoxGeometry(.2, .12, .08), M(0x2a1f3a), 0, .3, .16);                          // сложенные кисти в рукавах
+  part(mg, new THREE.ConeGeometry(.2, .42, 6), M(0x2a1f3a), 0, .82, -.02);                         // капюшон
+  part(mg, new THREE.BoxGeometry(.2, .18, .12), M(0x0d0a10), 0, .74, .1);                          // тьма под капюшоном
+  part(mg, new THREE.BoxGeometry(.06, .02, .03), M(0xd9a441), 0, .58, .13);                         // застёжка
+  mergeParts(mg);
+  const eye = new THREE.MeshBasicMaterial({ color: 0xffd36a }); eye.userData.glow = true;
+  for (const s of [-1, 1]) part(mg, new THREE.BoxGeometry(.05, .03, .02), eye, s * .05, .75, .17);
+  mg.traverse(o => { if (o.isMesh) o.userData.merchant = true });
+  // огромная плетёная корзина справа от торговца
+  const weave = pixTex(8, 8, x => { for (let yy = 0; yy < 8; yy++) for (let xx = 0; xx < 8; xx++) pxl(x, ((xx >> 1) + (yy >> 1)) % 2 ? '#a8783e' : (yy % 2 ? '#8a5e2c' : '#c08d4c'), xx, yy) });
+  weave.wrapS = weave.wrapT = THREE.RepeatWrapping; weave.repeat.set(6, 2);
+  const bg = new THREE.Group(); bg.position.set(BASKET.x, F + .05, BASKET.z); shopG.add(bg);
+  const outer = new THREE.Mesh(new THREE.CylinderGeometry(BASKET.r, BASKET.r * .85, BASKET.h, 12, 1, true), new THREE.MeshLambertMaterial({ map: weave })); outer.position.y = BASKET.h / 2; bg.add(outer);
+  const inner = new THREE.Mesh(new THREE.CylinderGeometry(BASKET.r - .02, BASKET.r * .85 - .02, BASKET.h, 12, 1, true), new THREE.MeshLambertMaterial({ color: 0x3a2614, side: THREE.BackSide })); inner.position.y = BASKET.h / 2; bg.add(inner);
+  part(bg, new THREE.CircleGeometry(BASKET.r * .85, 12), M(0x2a1a0e), 0, .02, 0, 0, -Math.PI / 2);
+  part(bg, new THREE.TorusGeometry(BASKET.r, .035, 4, 14), M(0x6e4a22), 0, BASKET.h, 0, 0, Math.PI / 2);
+  bg.traverse(o => { if (o.isMesh) o.userData.basket = true });
+  const warm = new THREE.Color(1, .9, .74);                   // тёплый свет фонаря
+  shopG.traverse(o => { if (!o.isMesh) return; o.castShadow = o.receiveShadow = false; if (o.material.color && !o.material.userData.glow) o.material.color.multiply(warm) });
+}
+buildShop();
+function revealShop() { SHOP.revealed = true; shopG.visible = true; lightDirty = true; setTimeout(() => toast('Кирью: …лавка? Под землёй?!'), 500) }
+function nearShop() { return CH.x > SHOP.i0 - .2 && CH.x < SHOP.i1 + .2 && CH.z < PIT0 + 1.3 && Math.abs(CH.y - SHOP.floor) < 1 }
+
+/* ---------- монеты ---------- */
+const COINI = ["..kkkkk..", ".kyyyyyk.", "kyllyyydk", "kylyyyydk", "kyyyyyydk", "kyyyyyydk", "kyyyyyddk", ".kdddddk.", "..kkkkk.."];
+const COINP = { k: '#5a3a10', y: '#f2c14e', l: '#fff3b0', d: '#c8902a' };
+const coinsEl = document.getElementById('coins'), coinN = document.getElementById('coinN');
+icon(COINI, COINP, coinsEl.querySelector('.ci'));
+let coins = 0;
+function showCoins() { coinN.textContent = coins; coinsEl.classList.remove('bump'); void coinsEl.offsetWidth; coinsEl.classList.add('bump') }
+function addCoins(n, x, y, z) {
+  coins += n; showCoins();
+  if (x === undefined) return;
+  const v = new THREE.Vector3(x, y, z).project(cam), r = cv.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+  const el = document.createElement('div'); el.className = 'plus'; el.textContent = '+' + n;
+  el.style.left = (r.left - sr.left + (v.x + 1) / 2 * r.width) + 'px'; el.style.top = (r.top - sr.top + (1 - v.y) / 2 * r.height) + 'px';
+  stage.appendChild(el); setTimeout(() => el.remove(), 1000);
+}
+
+/* ---------- окно лавки ---------- */
+const WARES = [{ type: 'lantern', name: 'Фонарь', desc: 'Светит на четверть ямы', price: 6 }];
+const shopwrap = document.getElementById('shopwrap'), shopclose = document.getElementById('shopclose'), shoplist = document.getElementById('shoplist');
+icon(XI, { k: '#10141f', x: '#e9f0ee' }, shopclose);
+function wareIcon(type, host) {                              // 3D-иконка товара тем же способом, что и инструменты
+  const g = new THREE.Group(); TYPES[type].build(g); g.rotation.set(.35, .7, 0); g.scale.setScalar(3.2); g.position.y = -.5;
+  icScene.add(g); icR.render(icScene, icCam); icScene.remove(g);
+  const c = document.createElement('canvas'); c.width = c.height = ICO; c.getContext('2d').drawImage(icR.domElement, 0, 0); host.appendChild(c) }
+function openShop() {
+  shoplist.textContent = '';
+  for (const w of WARES) {
+    const row = document.createElement('div'); row.className = 'ware';
+    const ic = document.createElement('div'); ic.className = 'wic'; wareIcon(w.type, ic); row.appendChild(ic);
+    const tx = document.createElement('div'); tx.className = 'wtx'; tx.innerHTML = '<b></b><span></span>'; tx.querySelector('b').textContent = w.name; tx.querySelector('span').textContent = w.desc; row.appendChild(tx);
+    const btn = document.createElement('button'); btn.className = 'buy'; const cc = document.createElement('i'); icon(COINI, COINP, cc); btn.append(cc, ' ' + w.price);
+    btn.setAttribute('aria-label', 'Купить: ' + w.name + ' за ' + w.price); if (coins < w.price) btn.classList.add('poor');
+    btn.addEventListener('click', () => buy(w, btn)); row.appendChild(btn); shoplist.appendChild(row) }
+  document.getElementById('shopsay').textContent = coins ? '«Мусор — в корзину, монеты — сюда. Что берёшь?»' : '«Пустые карманы? Неси мусор в корзину — заплачу.»';
+  shopwrap.hidden = false; shopclose.focus(); haptic('light');
+}
+function closeShop() { shopwrap.hidden = true; haptic('light') }
+function buy(w, btn) {
+  if (coins < w.price) { btn.classList.remove('no'); void btn.offsetWidth; btn.classList.add('no'); haptic('warn'); document.getElementById('shopsay').textContent = '«Не хватает. Неси ещё мусора.»'; return }
+  coins -= w.price; showCoins(); closeShop();
+  const t = makeTrash(w.type, CH.x + rnd(-.08, .08), Math.min(1.5, CH.y + 6), CH.z + rnd(-.08, .08), rnd(0, 6.28), -1); activate(t);
+  t.body.angularVelocity.set(rnd(-2, 2), 0, rnd(-2, 2)); toast('Куплено: ' + w.name.toLowerCase() + ' — лови сверху!'); haptic('medium');
+}
+shopclose.addEventListener('click', closeShop);
+shopwrap.addEventListener('click', e => { if (e.target === shopwrap) closeShop() });
+addEventListener('keydown', e => { if (e.code === 'Escape' && !shopwrap.hidden) closeShop() });
+
 /* ---------- чёрная толща под видимыми слоями: дальше свет всё равно не доходит ---------- */
 const under = new THREE.Mesh(new THREE.BoxGeometry(N, 60, N).translate(N / 2, -30, N / 2), new THREE.MeshBasicMaterial({ color: 0x000000 }));
 under.matrixAutoUpdate = true; scene.add(under);
 /* ---------- цикл ---------- */
 /* ---------- замер производительности: тройной тап по счётчику слоя включает/выключает табличку ----------
    время ЦП по частям кадра + FPS + рывки. Если FPS низкий, а ЦП на кадр маленький — упираемся в видеокарту */
+const SESSION0 = Date.now(), SESSION0_TXT = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const perf = { on: false, el: null, acc: {}, n: 0, t0: performance.now(), long: 0, total: 0, maxDt: 0, lightN: 0, calls: 0, tris: 0 };
 try { perf.on = localStorage.getItem('perf') === '1' } catch (_) { }
 function perfEl() { if (perf.el) return perf.el; const e = document.createElement('div');
@@ -795,7 +963,8 @@ function perfFrame(raw, parts) {
   for (const k in parts) perf.acc[k] = (perf.acc[k] || 0) + parts[k];
   const now = performance.now(); if (now - perf.t0 < 1000) return;
   const s = (now - perf.t0) / 1000, n = perf.n, cpu = Object.values(perf.acc).reduce((x, y) => x + y, 0) / n;
-  perfEl().textContent = 'FPS ' + (n / s).toFixed(0) + ' · худший кадр ' + perf.maxDt.toFixed(0) + ' мс · рывков ' + perf.long + ' (всего ' + perf.total + ')\n' +
+  const ss = Math.floor((Date.now() - SESSION0) / 1000), two = v => String(v).padStart(2, '0');
+  perfEl().textContent = 'сессия ' + (ss >= 3600 ? Math.floor(ss / 3600) + ':' : '') + two(Math.floor(ss / 60) % 60) + ':' + two(ss % 60) + ' (с ' + SESSION0_TXT + ')\n' + 'FPS ' + (n / s).toFixed(0) + ' · худший кадр ' + perf.maxDt.toFixed(0) + ' мс · рывков ' + perf.long + ' (всего ' + perf.total + ')\n' +
     'ЦП на кадр ' + cpu.toFixed(1) + ' мс: ' + Object.keys(perf.acc).map(k => k + ' ' + (perf.acc[k] / n).toFixed(1)).join(' · ') + '\n' +
     'пересчёт света ' + (perf.lightN / s).toFixed(1) + '/с · отрисовок ' + perf.calls + ' · треугольников ' + (perf.tris / 1000).toFixed(1) + 'k\n' +
     'кадр ' + W + '×' + H + ' ×' + SCALE + ' · экран ' + innerWidth + '×' + innerHeight + ' · dpr ' + (devicePixelRatio || 1).toFixed(2) + '\n' + 'GPU: ' + gpuName;
@@ -808,13 +977,18 @@ function frame(now) {
   for (const g of grabs.values()) stepHeld(g);
   stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held);
   const Tp = performance.now(); world.step(1 / 60, dt, 3); const Tq = performance.now();
+  const sold = [];
   for (const t of trash) if (t.body) {
-    if (!t.held) { depenetrate(t); if (lostItem(t)) returnItem(t) }
+    if (!t.held) {
+      if (winZone(t.body.position)) {                          // летит в корзину: продаём, когда опустится ниже края (или застрянет над ней)
+        t.zoneT = (t.zoneT || 0) + dt; if (t.body.position.y < SHOP.floor + BASKET.h + .12 || t.zoneT > .8) { sold.push(t); continue } }
+      else { t.zoneT = 0; depenetrate(t); if (lostItem(t)) returnItem(t) } }
     t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
     const vy = t.body.velocity.y;                             // удар об пол: тряска и пыль — один раз за падение
     if (!t.held && t.falling && vy > -1) { t.falling = false; if (t.fallV < -5) { haptic('medium'); const p = t.g.position; burst(p.x, p.y + .05, p.z, ['#8c7a6a', '#5e4c42', '#b8a48c'], 10, .5) } }
     if (!t.held && vy < -3) { t.falling = true; t.fallV = Math.min(t.fallV || 0, vy) } else if (!t.falling) t.fallV = 0;
   }
+  for (const t of sold) basketTake(t);
   stepParts(dt);
   // подсветка блоков, которые можно копать
   pulseU.value = tool === 'pick' ? .12 + .1 * Math.sin(now / 260) : 0;
@@ -846,5 +1020,5 @@ ensureBodies();
 genTrash();
 { const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
-window.__dbg = { LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
+window.__dbg = { SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
