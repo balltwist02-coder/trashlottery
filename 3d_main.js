@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { createKiryu } from './kiryu.js?v=4';
+import { createMerchant } from './merchant.js?v=1';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
 const PLOT = window.PLOT3D, TEX = window.TEX3D;
@@ -9,12 +10,12 @@ const PIT0 = 2, PIT1 = 6, PC = (PIT0 + PIT1) / 2; // яма занимает x,z
 const ACT = []; for (let j = PIT0; j < PIT1; j++) for (let i = PIT0; i < PIT1; i++) ACT.push([i, j]);
 const BH = 0.8165;                               // высота блока: кубы выглядят ровно как изометрические спрайты
 /* лавка подземного торговца — ниша в правой декоративной стенке (ряд j=1): клетки i0..i1-1, слои z0..z1 (2 блока высотой) */
-const SHOP = { i0: 2, i1: 5, j: 1, z0: 3, z1: 4, revealed: false };
+const SHOP = { i0: 2, i1: 6, j0: 0, j1: 1, z0: 3, z1: 4, revealed: false };   // во всю видимую стенку, 2 блока в глубину; сбоку открыто
 SHOP.floor = -(SHOP.z1 + 1) * BH; SHOP.ceil = -SHOP.z0 * BH;
-const BASKET = { x: 4.45, z: 1.5, r: .45, h: .62 };          // большая корзина справа от торговца
+const BASKET = { x: 5.02, z: 1.42, r: .5, h: .62 };          // огромная корзина справа от торговца
 const WIN = { x0: BASKET.x - .55, x1: BASKET.x + .55 };      // «окно» в невидимой стенке — только над корзиной
-const MERCH = { x: 3.3, z: 1.42 };                          // где сидит торговец
-const inShop = (i, j, z) => j === SHOP.j && i >= SHOP.i0 && i < SHOP.i1 && z >= SHOP.z0 && z <= SHOP.z1;
+const MERCH = { x: 3.75, z: 1.4, ry: .15 };                 // где сидит торговец: у самого края, чуть развёрнут к игроку
+const inShop = (i, j, z) => j >= SHOP.j0 && j <= SHOP.j1 && i >= SHOP.i0 && i < SHOP.i1 && z >= SHOP.z0 && z <= SHOP.z1;
 const PX = 64 / Math.SQRT2;                      // пикселей на единицу мира (ромб верха = 64 px)
 
 /* ---------- Telegram ---------- */
@@ -141,6 +142,7 @@ world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitu
 const G_BLOCK = 1, G_TRASH = 2, G_CHAR = 4;
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
 for (let z = 0; z <= BOT; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') blocks.set(i + ',' + j + ',' + z, { k: matKey(i, j, z), body: null });
+for (let z = SHOP.z0; z <= SHOP.z1; z++) for (let i = SHOP.i0; i < SHOP.i1; i++) blocks.set(i + ',-1,' + z, { k: ['З', 'З1', 'З2'][hash(i, -1, z)], body: null });   // задняя стенка выемки
 const hasB = (i, j, z) => blocks.has(i + ',' + j + ',' + z);
 // физика нужна только верхним блокам ямы (на них лежит мусор); глубже тела добавляются по мере раскопок
 function ensureBodies() {
@@ -155,7 +157,7 @@ const chunks = [];                                          // z -> {mesh, faces
 function buildChunk(z) {
   let ch = chunks[z]; if (ch) { scene.remove(ch.mesh); ch.mesh.geometry.dispose() }
   const pos = [], nrm = [], uv = [], idx = [], faces = [];
-  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) continue;
+  for (let i = 0; i < N; i++) for (let j = -1; j < N; j++) { const b = blocks.get(i + ',' + j + ',' + z); if (!b) continue;
     const open = [!hasB(i + 1, j, z) || i === N - 1, z === 0 || !hasB(i, j, z - 1), !hasB(i, j + 1, z) || j === N - 1];
     FT.forEach((ft, q) => { if (!open[q]) return;
       const v0 = pos.length / 3, t = TILE[b.k][ft.tx], tu = (t % ATL_C) * ATL_T, tv = (t / ATL_C | 0) * ATL_T;
@@ -327,7 +329,7 @@ function lightSources() {
   for (const t of trash) { const L = TYPES[t.type].light; if (!L || !t.active || !t.body) continue;
     if (t.held) { out.push([Math.floor(CH.x), Math.floor(CH.z), Math.floor(-(CH.y + .9) / BH), L]); continue }   // в руках — светит там, где стоит Кирью
     const p = t.body.position; out.push([Math.floor(p.x), Math.floor(p.z), Math.floor(-(p.y + .05) / BH), L]) }
-  if (SHOP.revealed) out.push([Math.floor(SHOP.lamp.x), SHOP.j, Math.floor(-SHOP.lamp.y / BH), 15]);   // фонарь в лавке
+  out.push([Math.floor(SHOP.lamp.x), Math.floor(SHOP.lamp.z), Math.floor(-SHOP.lamp.y / BH), 15]);   // фонарь в лавке (видно через открытый бок)
   return out;
 }
 function computeLight(src) {
@@ -390,12 +392,12 @@ const chBase = new Map();
 function updateLight() {
   const src = lightSources(), key = JSON.stringify(src);
   for (const z of chunkDirty) buildChunk(z);
-  if (lightDirty || key !== lightKey || chunkDirty.size) { lightDirty = false; lightKey = key; perf.lightN++; computeLight(src); for (const ch of chunks) if (ch) shadeChunk(ch) }
+  if (lightDirty || key !== lightKey || chunkDirty.size) { lightDirty = false; lightKey = key; perf.lightN++; computeLight(src); for (const ch of chunks) if (ch) shadeChunk(ch); shadeStall() }
   chunkDirty.clear();
   for (const t of trash) if (t.g.visible) { const p = t.g.position, br = lightAt(p.x, p.y + .15, p.z);
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
-  if (shopG.visible) { const sb = Math.min(2.2, 2.6 * lightAt(MERCH.x + .4, SHOP.floor + .7, 1.6));
-    if (shopG.br === undefined || Math.abs(shopG.br - sb) > .004) { shopG.br = sb; dimGroup(shopG, sb, shopBase) } }
+  { const mb = Math.min(1.7, .07 + 2.5 * lightAt(MERCH.x, SHOP.floor + .7, MERCH.z));
+    if (shopG.br === undefined || Math.abs(shopG.br - mb) > .004) { shopG.br = mb; dimGroup(shopG.userData.mer.root, mb, merBase) } }
   const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z));    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
   if (CH.br === undefined || Math.abs(CH.br - cb) > .004) { CH.br = cb; dimGroup(chG, cb, chBase) }
 }
@@ -490,7 +492,7 @@ const faceTo = (x, z) => { const v = new THREE.Vector3(x - CH.x, 0, z - CH.z); i
 function tap(e) {
   const h = pick(e);
   if (h && h.object.userData.merchant) { if (nearShop()) openShop(); else toast('Надо подойти к лавке поближе'); return }
-  if (h && h.object.userData.basket) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
+  if (h && h.object.userData.deco && Math.hypot(h.point.x - BASKET.x, h.point.z - BASKET.z) < BASKET.r + .12) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
   const t = h && h.object.userData.t;
   if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
     const p = t.body.position;
@@ -570,6 +572,7 @@ function depenetrate(t) {
    закрашивается тёмным — у ближнего к камере предмета, поэтому в куче видно, кто сверху */
 const idRT = new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, depthTexture: new THREE.DepthTexture(1, 1) });
 const ID_BLOCK = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const DECO_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(253 / 255, 0, 0) }), MERCH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(254 / 255, 0, 0) });
 const olMat = new THREE.ShaderMaterial({
   uniforms: { tId: { value: idRT.texture }, tD: { value: idRT.depthTexture }, px: { value: new THREE.Vector2(1, 1) } },
   transparent: true, depthTest: false, depthWrite: false,
@@ -592,7 +595,8 @@ function drawOutlines() {
   const saved = [];
   let lo = 1e9, hi = 0; for (const v of d) { lo = Math.min(lo, v); hi = Math.max(hi, v) }
   const vis = [];
-  for (const c of chunks) if (c) { saved.push([c.mesh, c.mesh.material]); c.mesh.material = ID_BLOCK; const z = c.mesh.userData.chunk; if (c.mesh.visible && (z < lo - 1 || z > hi + 1)) { c.mesh.visible = false; vis.push(c.mesh) } }
+  for (const c of chunks) if (c) { saved.push([c.mesh, c.mesh.material]); c.mesh.material = ID_BLOCK; const z = c.mesh.userData.chunk; if (c.mesh.visible && (z < lo - 1 || z > hi + 1) && z > SHOP.z1 + 1) { c.mesh.visible = false; vis.push(c.mesh) } }
+  shopG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = o.userData.merchant ? MERCH_ID : DECO_ID } });
   const uv = under.visible; under.visible = false;
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
@@ -664,7 +668,7 @@ function grabItem(t) {
 const PRICE = { coffee: 2, pipeHalf: 4 };                     // сколько монет даёт торговец за кусочек мусора
 function heldFree(x, y, z, sell) {                             // можно ли держать предмет в этой точке
   const inPit = x > PIT0 + .12 && x < PIT1 - .12 && z > PIT0 + .12 && z < PIT1 - .12;
-  const inWin = sell && SHOP.revealed && x > WIN.x0 + .08 && x < WIN.x1 - .08 && z > SHOP.j + .12 && z <= PIT0 + .06 && y > SHOP.floor + .12 && y < SHOP.ceil - .12;
+  const inWin = sell && SHOP.revealed && x > WIN.x0 + .08 && x < WIN.x1 - .08 && z > BASKET.z - BASKET.r + .1 && z <= PIT0 + .06 && y > SHOP.floor + .12 && y < SHOP.ceil - .12;
   return (inPit || inWin) && !solidAt(Math.floor(x), Math.floor(z), Math.floor(-y / BH));
 }
 function carryPose(t) {
@@ -686,7 +690,7 @@ function returnItem(t) {
   b.velocity.set(0, 0, 0); b.angularVelocity.set((Math.random() - .5) * 4, 0, (Math.random() - .5) * 4); b.wakeUp(); t.falling = false; t.fallV = 0;
   toast('Сверху что-то летит!');
 }
-const winZone = p => p.x > WIN.x0 && p.x < WIN.x1 && p.z < PIT0 - .02 && p.z > SHOP.j - .3 && p.y > SHOP.floor - 1.2 && p.y < SHOP.ceil + .3;   // за окном над корзиной
+const winZone = p => p.x > WIN.x0 && p.x < WIN.x1 && p.z < PIT0 - .02 && p.z > BASKET.z - BASKET.r - .3 && p.y > SHOP.floor - 1.2 && p.y < SHOP.ceil + .3;   // за окном над корзиной
 function basketTake(t) {                                       // корзина торговца: мусор — в монеты, остальное выкидывает обратно
   const price = PRICE[t.type], p = t.body.position;
   if (!price) { t.body.position.set(BASKET.x, SHOP.floor + 1, PIT0 + .35); t.body.velocity.set(0, 1.5, 1.4); t.body.wakeUp();
@@ -810,88 +814,150 @@ function drawIcons(dt) {
     const x = icCtx[k]; x.clearRect(0, 0, ICO, ICO); x.drawImage(icR.domElement, 0, 0) });
 }
 
-/* ---------- лавка подземного торговца (заглушка: место для механики и разметка пространства) ----------
-   базарная лавка в нише: дощатый настил, крестовины из жердей, ковёр на стене, полосатый навес с кистями,
-   фонарь на цепи, кувшины, бочка и ящик; торговец сидит в центре на подушке, справа — огромная плетёная корзина */
-const shopG = new THREE.Group(); shopG.visible = false; scene.add(shopG);
-const shopBase = new Map();
-function pixTex(w, h, draw) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'));
-  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t }
-const pxl = (x, c, a, b) => { x.fillStyle = c; x.fillRect(a, b, 1, 1) };
-function rodBetween(g, a, b, r, mat, seg = 5) {                // жердь между двумя точками
+/* ---------- лавка подземного торговца: выемка во всю правую стенку, 2 блока в глубину ----------
+   базарная лавка: настил из досок, крестовины из жердей, драпировка с кистями, ковёр, корзина, бочки, мешки со специями,
+   кувшины, свёрнутые ковры, медный чайник и фонарь на цепи. Всё неподвижное — один меш (одна команда видеокарте);
+   свет считается по деталям, торговец — отдельная живая моделька (merchant.js) */
+const shopG = new THREE.Group(); scene.add(shopG);
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+function rodBetween(g, a, b, r, mat, seg = 6) {                // жердь между двумя точками
   const v = new THREE.Vector3().subVectors(b, a), m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, v.length(), seg), mat);
   m.position.copy(a).addScaledVector(v, .5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.normalize()); g.add(m); return m }
-function lathe(g, pts, mat, x, y, z) { const m = new THREE.Mesh(new THREE.LatheGeometry(pts.map(([r, h]) => new THREE.Vector2(r, h)), 7), mat); m.position.set(x, y, z); g.add(m); return m }
-function buildShop() {
-  const F = SHOP.floor, C = SHOP.ceil, X0 = SHOP.i0, X1 = SHOP.i1, Z0 = SHOP.j, Z1 = PIT0;
-  const deco = new THREE.Group(); shopG.add(deco);
-  // настил из досок
-  const plank = [0x7a5534, 0x6a4a2c, 0x85603a, 0x6f4e30];
-  for (let k = 0; k < 7; k++) part(deco, new THREE.BoxGeometry(X1 - X0 - .04, .05, .145), M(plank[k % 4]), (X0 + X1) / 2, F + .025, Z0 + .09 + k * .148);
-  for (const x of [X0 + .3, (X0 + X1) / 2, X1 - .3]) part(deco, new THREE.BoxGeometry(.08, .03, Z1 - Z0 - .02), M(0x4e3420), x, F + .052, (Z0 + Z1) / 2);
-  // крестовины по краям и балки сверху
-  const wood = M(0x5e4128), rope = M(0xb79a62);
-  for (const x of [X0 + .07, X1 - .07]) {
-    rodBetween(deco, new THREE.Vector3(x, F + .03, Z0 + .12), new THREE.Vector3(x, C - .04, Z1 - .08), .035, wood);
-    rodBetween(deco, new THREE.Vector3(x, F + .03, Z1 - .08), new THREE.Vector3(x, C - .04, Z0 + .12), .035, wood);
-    part(deco, new THREE.BoxGeometry(.09, .09, .09), rope, x, (F + C) / 2, (Z0 + Z1) / 2 + .02, 0, .7) }
-  rodBetween(deco, new THREE.Vector3(X0, C - .12, Z1 - .1), new THREE.Vector3(X1, C - .12, Z1 - .1), .04, wood);
-  rodBetween(deco, new THREE.Vector3(X0, C - .1, Z0 + .14), new THREE.Vector3(X1, C - .1, Z0 + .14), .035, wood);
-  // кувшины, бочка, ящик — слева от торговца
-  lathe(deco, [[0, 0], [.07, 0], [.13, .08], [.15, .18], [.11, .29], [.05, .33], [.06, .37], [0, .37]], M(0xa85a3a), X0 + .55, F + .05, Z0 + .3);
-  lathe(deco, [[0, 0], [.06, 0], [.1, .07], [.1, .15], [.06, .21], [.045, .25], [0, .25]], M(0xcfae80), X0 + .78, F + .05, Z0 + .72);
-  part(deco, new THREE.CylinderGeometry(.15, .15, .36, 8), M(0x6b4423), X0 + .26, F + .23, Z0 + .66);
-  for (const h of [.1, .3]) part(deco, new THREE.CylinderGeometry(.158, .158, .035, 8), M(0x2f2219), X0 + .26, F + .05 + h, Z0 + .66);
-  part(deco, new THREE.BoxGeometry(.3, .28, .3), M(0x7d6a52), X0 + .27, F + .19, Z0 + .25, .25);
-  for (const h of [.1, .22]) part(deco, new THREE.BoxGeometry(.31, .035, .31), M(0x564634), X0 + .27, F + .05 + h, Z0 + .25, .25);
-  // бутылочки-товар перед торговцем
-  [[0x3f7a52, -.18], [0x6a3a7a, -.05], [0xb0803a, .1]].forEach(([c, dx]) => { part(deco, new THREE.CylinderGeometry(.03, .035, .12, 6), M(c), MERCH.x + dx, F + .11, Z1 - .2);
-    part(deco, new THREE.CylinderGeometry(.012, .012, .05, 4), M(c), MERCH.x + dx, F + .19, Z1 - .2) });
-  mergeParts(deco);
-  // ковёр на задней стене
-  const rug = pixTex(12, 18, x => { const P = { r: '#8e2a26', R: '#b8452c', o: '#d98a3a', b: '#33507a', y: '#e2c26a', k: '#3a1a1e' };
-    for (let yy = 0; yy < 18; yy++) for (let xx = 0; xx < 12; xx++) { let c;
-      if (xx === 0 || xx === 11 || yy === 0 || yy === 17) c = 'k'; else if (xx === 1 || xx === 10 || yy === 1 || yy === 16) c = 'y';
-      else { const cy = (yy - 2) % 7, dd = Math.abs(cy - 3) + Math.abs(xx - 5.5); c = dd < 1.6 ? 'y' : dd < 2.8 ? 'b' : dd < 3.6 ? 'o' : cy === 6 ? 'R' : 'r' }
-      pxl(x, P[c], xx, yy) } });
-  const rugM = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.2), new THREE.MeshLambertMaterial({ map: rug })); rugM.position.set(MERCH.x - .15, F + .72, Z0 + .015); shopG.add(rugM);
-  // полосатый навес с кистями спереди
-  const val = pixTex(30, 6, x => { const S = ['#5a2a4a', '#9a2f2a', '#d9a441', '#9a2f2a'];
-    for (let xx = 0; xx < 30; xx++) { const c = S[Math.floor(xx / 2) % 4]; for (let yy = 0; yy < 4; yy++) pxl(x, yy === 0 ? '#3a1a2a' : c, xx, yy); if (xx % 3 === 1) { pxl(x, '#d9a441', xx, 4); pxl(x, '#d9a441', xx, 5) } } });
-  const valM = new THREE.Mesh(new THREE.PlaneGeometry(X1 - X0, .3), new THREE.MeshLambertMaterial({ map: val, alphaTest: .5, side: THREE.DoubleSide })); valM.position.set((X0 + X1) / 2, C - .17, Z1 - .02); shopG.add(valM);
-  // фонарь на цепи — главный свет лавки
-  SHOP.lamp = new THREE.Vector3(MERCH.x + .62, C - .85, Z0 + .58);
-  const lamp = new THREE.Group(); TYPES.lantern.build(lamp); lamp.position.copy(SHOP.lamp); shopG.add(lamp);
-  part(shopG, new THREE.BoxGeometry(.015, C - SHOP.lamp.y - .3, .015), M(0x2b2f36), SHOP.lamp.x, (C + SHOP.lamp.y + .3) / 2, SHOP.lamp.z);
-  // торговец-заглушка: сидит в капюшоне, глаза светятся
-  const mg = new THREE.Group(); mg.position.set(MERCH.x, F + .05, MERCH.z); shopG.add(mg);
-  part(mg, new THREE.BoxGeometry(.56, .08, .44), M(0x6a2a3a), 0, .04, 0);                         // подушка
-  part(mg, new THREE.BoxGeometry(.46, .12, .24), M(0x2d2236), 0, .14, .1);                          // скрещённые ноги
-  part(mg, new THREE.CylinderGeometry(.15, .23, .5, 7), M(0x3d2c52), 0, .4, 0);                    // балахон
-  for (const s of [-1, 1]) part(mg, new THREE.BoxGeometry(.1, .3, .12), M(0x34254a), s * .19, .42, .06, 0, -.35, s * .25);   // руки
-  part(mg, new THREE.BoxGeometry(.2, .12, .08), M(0x2a1f3a), 0, .3, .16);                          // сложенные кисти в рукавах
-  part(mg, new THREE.ConeGeometry(.2, .42, 6), M(0x2a1f3a), 0, .82, -.02);                         // капюшон
-  part(mg, new THREE.BoxGeometry(.2, .18, .12), M(0x0d0a10), 0, .74, .1);                          // тьма под капюшоном
-  part(mg, new THREE.BoxGeometry(.06, .02, .03), M(0xd9a441), 0, .58, .13);                         // застёжка
-  mergeParts(mg);
-  const eye = new THREE.MeshBasicMaterial({ color: 0xffd36a }); eye.userData.glow = true;
-  for (const s of [-1, 1]) part(mg, new THREE.BoxGeometry(.05, .03, .02), eye, s * .05, .75, .17);
-  mg.traverse(o => { if (o.isMesh) o.userData.merchant = true });
-  // огромная плетёная корзина справа от торговца
-  const weave = pixTex(8, 8, x => { for (let yy = 0; yy < 8; yy++) for (let xx = 0; xx < 8; xx++) pxl(x, ((xx >> 1) + (yy >> 1)) % 2 ? '#a8783e' : (yy % 2 ? '#8a5e2c' : '#c08d4c'), xx, yy) });
-  weave.wrapS = weave.wrapT = THREE.RepeatWrapping; weave.repeat.set(6, 2);
-  const bg = new THREE.Group(); bg.position.set(BASKET.x, F + .05, BASKET.z); shopG.add(bg);
-  const outer = new THREE.Mesh(new THREE.CylinderGeometry(BASKET.r, BASKET.r * .85, BASKET.h, 12, 1, true), new THREE.MeshLambertMaterial({ map: weave })); outer.position.y = BASKET.h / 2; bg.add(outer);
-  const inner = new THREE.Mesh(new THREE.CylinderGeometry(BASKET.r - .02, BASKET.r * .85 - .02, BASKET.h, 12, 1, true), new THREE.MeshLambertMaterial({ color: 0x3a2614, side: THREE.BackSide })); inner.position.y = BASKET.h / 2; bg.add(inner);
-  part(bg, new THREE.CircleGeometry(BASKET.r * .85, 12), M(0x2a1a0e), 0, .02, 0, 0, -Math.PI / 2);
-  part(bg, new THREE.TorusGeometry(BASKET.r, .035, 4, 14), M(0x6e4a22), 0, BASKET.h, 0, 0, Math.PI / 2);
-  bg.traverse(o => { if (o.isMesh) o.userData.basket = true });
-  const warm = new THREE.Color(1, .9, .74);                   // тёплый свет фонаря
-  shopG.traverse(o => { if (!o.isMesh) return; o.castShadow = o.receiveShadow = false; if (o.material.color && !o.material.userData.glow) o.material.color.multiply(warm) });
+const WARM = new THREE.Color(1, .9, .76);                       // тёплый свет фонаря
+/* все детали группы → один меш; у каждой детали свой номер — по нему считается свет */
+function mergeStatic(g) {
+  g.updateMatrixWorld(true); const inv = g.matrixWorld.clone().invert();
+  const pos = [], nrm = [], col = [], pid = [], centers = [], list = [];
+  g.traverse(o => { if (o.isMesh && !o.material.userData.glow) list.push(o) });
+  for (const o of list) {
+    const geo = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone()).applyMatrix4(inv.clone().multiply(o.matrixWorld));
+    const p = geo.attributes.position.array, n = geo.attributes.normal.array, vc = geo.attributes.color && geo.attributes.color.array;
+    const ms = Array.isArray(o.material) ? o.material : [o.material], grp = geo.groups.length ? geo.groups : [{ start: 0, count: p.length / 3, materialIndex: 0 }];
+    geo.computeBoundingBox(); const id = centers.length; centers.push(geo.boundingBox.getCenter(new THREE.Vector3()));
+    for (const gr of grp) { const c = (Array.isArray(o.material) ? ms[gr.materialIndex || 0] : ms[0]).color;
+      for (let v = gr.start; v < gr.start + gr.count; v++) { pos.push(p[v * 3], p[v * 3 + 1], p[v * 3 + 2]); nrm.push(n[v * 3], n[v * 3 + 1], n[v * 3 + 2]);
+        const k = vc ? [vc[v * 3], vc[v * 3 + 1], vc[v * 3 + 2]] : [1, 1, 1]; col.push(c.r * k[0] * WARM.r, c.g * k[1] * WARM.g, c.b * k[2] * WARM.b); pid.push(id) } }
+    o.parent.remove(o) }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+  mesh.userData = { deco: true, base: Float32Array.from(col), pid: Uint16Array.from(pid), centers }; g.add(mesh); return mesh;
 }
-buildShop();
-function revealShop() { SHOP.revealed = true; shopG.visible = true; lightDirty = true; setTimeout(() => toast('Кирью: …лавка? Под землёй?!'), 500) }
-function nearShop() { return CH.x > SHOP.i0 - .2 && CH.x < SHOP.i1 + .2 && CH.z < PIT0 + 1.3 && Math.abs(CH.y - SHOP.floor) < 1 }
+let STALL = null;
+function shadeStall() {                                        // свет по деталям лавки: ближе к фонарю — ярче
+  const u = STALL.userData, col = STALL.geometry.attributes.color, a = col.array;
+  const br = u.centers.map(c => Math.min(1.7, .07 + 2.5 * lightAt(c.x, c.y, c.z)));
+  for (let v = 0; v < u.pid.length; v++) { const b = br[u.pid[v]]; a[v * 3] = u.base[v * 3] * b; a[v * 3 + 1] = u.base[v * 3 + 1] * b; a[v * 3 + 2] = u.base[v * 3 + 2] * b }
+  col.needsUpdate = true;
+}
+function buildStall() {
+  const F0 = SHOP.floor, F = F0 + .06, C = SHOP.ceil, X0 = SHOP.i0, X1 = SHOP.i1, ZB = 0, ZF = PIT0;
+  const g = new THREE.Group(); shopG.add(g);
+  const pp = (geo, c, x, y, z, rx = 0, ry = 0, rz = 0) => { const m = new THREE.Mesh(geo, typeof c === 'number' ? M(c) : c); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); g.add(m); return m };
+  const Bx = (w, h, d) => new THREE.BoxGeometry(w, h, d), Cy = (r0, r1, h, s = 8, open = false) => new THREE.CylinderGeometry(r0, r1, h, s, 1, open);
+  const LA = (pts, s = 10) => new THREE.LatheGeometry(pts.map(([r, h]) => new THREE.Vector2(r, h)), s);
+  const pole = (a, b, r, c) => rodBetween(g, a, b, r, M(c), 6);
+  // настил из досок
+  const wood = [0x8a5a34, 0x7a4e2c, 0x95653b, 0x6e4426];
+  for (let k = 0; k < 13; k++) pp(Bx(X1 - X0 - .03, .06, .142), wood[k % 4], (X0 + X1) / 2, F0 + .03 + ((k * 7) % 3 - 1) * .004, ZB + .08 + k * .146);
+  pp(Bx(X1 - X0, .085, .035), 0x5a3a20, (X0 + X1) / 2, F0 + .02, ZF - .02);
+  // крестовины по краям, балки, верёвочные узлы
+  for (const x of [X0 + .1, X1 - .1]) {
+    pole(V3(x, F, ZB + .25), V3(x, C - .05, ZF - .12), .036, 0x6a4628); pole(V3(x, F, ZF - .12), V3(x, C - .05, ZB + .25), .036, 0x5e3e22);
+    pp(new THREE.TorusGeometry(.05, .02, 4, 8), 0xc9a86a, x, (F + C - .05) / 2, (ZB + ZF + .13) / 2, 0, Math.PI / 2, 0) }
+  pole(V3(X0, C - .05, ZF - .12), V3(X1, C - .05, ZF - .12), .044, 0x5e3e22);
+  pole(V3(X0, C - .08, ZB + .25), V3(X1, C - .08, ZB + .25), .036, 0x5e3e22);
+  // драпировка спереди: фестоны трёх цветов, золотая кайма, кисти. Над торговцем проём, края подвязаны —
+  // камера смотрит сверху наискосок, и сплошной подзор закрыл бы ему голову
+  const cloth = [0x8e2430, 0x4e2a5e, 0xb07a1e], gold = 0xd2a03a, GAP0 = MERCH.x + .1, GAP1 = MERCH.x + 1;
+  pp(Bx(X1 - X0, .05, .035), gold, (X0 + X1) / 2, C - .05, ZF - .085);
+  let ci = 0;
+  for (const [a, b, n] of [[X0, GAP0, 4], [GAP1, X1, 3]]) { const pw = (b - a) / n;
+    for (let k = 0; k < n; k++, ci++) { const x0 = a + k * pw, cc = cloth[ci % 3];
+      for (let q = 0; q < 3; q++) { const w = pw / 3, hh = q === 1 ? .25 : .18; pp(Bx(w + .003, hh, .022), cc, x0 + w * (q + .5), C - .07 - hh / 2, ZF - .075 + (q === 1 ? .006 : 0)) }
+      pp(Bx(pw / 3, .028, .026), gold, x0 + pw / 2, C - .306, ZF - .066);
+      if (k) { pp(Cy(.024, 0, .075, 5), gold, x0, C - .3, ZF - .068); pp(Bx(.022, .022, .022), 0xf0c860, x0, C - .255, ZF - .068) } }
+    const tx = a === X0 ? b : a, sx = a === X0 ? -1 : 1, tc = cloth[(ci + 1) % 3];      // подвязанный хвост у проёма
+    pp(Bx(.11, .2, .03), tc, tx + sx * .055, C - .17, ZF - .07); pp(Bx(.07, .2, .03), tc, tx + sx * .05, C - .37, ZF - .07, 0, 0, sx * .12);
+    pp(Bx(.09, .025, .04), gold, tx + sx * .05, C - .27, ZF - .068); pp(Cy(.026, 0, .08, 5), gold, tx + sx * .07, C - .32, ZF - .062) }
+  // ковёр на задней стене — рельефное полотно со складками и узором
+  { const cols = 14, rows = 18, x0 = 3.95, x1 = X1 - .12, y0 = F + .12, y1 = C - .16, w = (x1 - x0) / cols, h = (y1 - y0) / rows;
+    const pal = { k: 0x3a1418, r: 0x8e2a26, R: 0xa83a2c, o: 0xd98a3a, b: 0x33507a, y: 0xe2c26a };
+    const pat = (c, r) => { if (c === 0 || c === cols - 1 || r === 0 || r === rows - 1) return 'k'; if (c === 1 || c === cols - 2 || r === 1 || r === rows - 2) return 'y';
+      const cy = (r - 2) % 7, dd = Math.abs(cy - 3) + Math.abs(c - (cols - 1) / 2) * .9; return dd < 1.4 ? 'y' : dd < 2.6 ? 'b' : dd < 3.4 ? 'o' : cy === 6 ? 'R' : 'r' };
+    const pos = [], colA = [], zf = x => ZB + .035 + .018 * Math.sin((x - x0) * 15);
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const xa = x0 + c * w, xb = xa + w, ya = y1 - r * h, yb = ya - h, cc = new THREE.Color(pal[pat(c, r)]);
+      const q = [[xa, ya, zf(xa)], [xa, yb, zf(xa)], [xb, yb, zf(xb)], [xa, ya, zf(xa)], [xb, yb, zf(xb)], [xb, ya, zf(xb)]];
+      for (const v of q) { pos.push(...v); colA.push(cc.r, cc.g, cc.b) } }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(colA, 3)); geo.computeVertexNormals();
+    g.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true })));
+    pole(V3(x0 - .06, y1 + .03, ZB + .06), V3(x1 + .06, y1 + .03, ZB + .06), .022, 0x4a3018);
+    for (let c = 0; c <= cols; c += 2) pp(Bx(.012, .05, .012), 0xe2c26a, x0 + c * w, y0 - .025, zf(x0 + c * w));   // бахрома
+  }
+  // огромная плетёная корзина: стойки, плетёные ряды, толстый обод, внутри — уже наброшенный мусор
+  { const bx = BASKET.x, bz = BASKET.z, R0 = BASKET.r * .84, R1 = BASKET.r, H = BASKET.h;
+    for (let k = 0; k < 14; k++) { const a = k / 14 * Math.PI * 2; pole(V3(bx + Math.cos(a) * R0, F + .02, bz + Math.sin(a) * R0), V3(bx + Math.cos(a) * R1, F + H, bz + Math.sin(a) * R1), .014, 0x7a5528) }
+    for (let r = 0; r < 7; r++) { const y = F + .05 + r * (H - .09) / 6, rr = R0 + (R1 - R0) * (y - F) / H, n = 22, sl = 2 * Math.PI * rr / n;
+      for (let k = 0; k < n; k++) { const a = (k + (r % 2) * .5) / n * Math.PI * 2, out = (k + r) % 2 ? .012 : -.004;
+        pp(Bx(sl * 1.06, .074, .028), (k + r) % 2 ? 0xc49558 : 0xa27438, bx + Math.cos(a) * (rr + out), y, bz + Math.sin(a) * (rr + out), 0, -(a + Math.PI / 2), 0) } }
+    pp(new THREE.TorusGeometry(R1 + .005, .046, 5, 22), 0x8a5e2c, bx, F + H, bz, Math.PI / 2, 0, 0);
+    const inner = new THREE.CylinderGeometry(R1 - .035, R0 - .03, H - .03, 14, 1, true); inner.scale(-1, 1, 1);   // внутренняя стенка (вывернута)
+    pp(inner, 0x2e1c0e, bx, F + H / 2 + .01, bz); pp(new THREE.CircleGeometry(R0 - .03, 14), 0x24160a, bx, F + .03, bz, -Math.PI / 2);
+    pp(Cy(.15, .15, .3, 10), 0xa8383a, bx - .14, F + H - .06, bz + .04, .35, 0, .25); pp(Cy(.153, .153, .09, 10, true), 0xe8d3a0, bx - .14, F + H - .06, bz + .04, .35, 0, .25);
+    pp(Cy(.075, .075, .82, 9), 0x5f7f9e, bx + .1, F + H - .02, bz - .1, .9, .6, 0);
+  }
+  // слева: бочка, кувшины, мешки со специями
+  { const barrel = (x, z, s) => { pp(LA([[0, 0], [.17 * s, 0], [.19 * s, .06 * s], [.205 * s, .2 * s], [.19 * s, .34 * s], [.17 * s, .4 * s], [0, .4 * s]], 12), 0x7a4a26, x, F, z);
+      for (const y of [.09, .31]) pp(new THREE.TorusGeometry(.197 * s, .013, 4, 14), 0x3a3634, x, F + y * s, z, Math.PI / 2, 0, 0);
+      pp(Cy(.16 * s, .16 * s, .02, 12), 0x5a3418, x, F + .405 * s, z) };
+    barrel(2.42, .45, 1); barrel(2.85, .3, .85);
+    const amph = (x, z, c, s) => { pp(LA([[0, 0], [.06 * s, 0], [.11 * s, .05 * s], [.14 * s, .16 * s], [.14 * s, .28 * s], [.1 * s, .4 * s], [.05 * s, .46 * s], [.05 * s, .52 * s], [.068 * s, .545 * s], [0, .545 * s]], 10), c, x, F, z);
+      for (const sx of [-1, 1]) pp(new THREE.TorusGeometry(.05 * s, .012, 4, 8, Math.PI), c, x + sx * .075 * s, F + .44 * s, z, 0, 0, sx * Math.PI / 2) };
+    amph(2.32, .95, 0xa65a36, 1); amph(2.62, 1.0, 0xcfae80, .7); amph(3.12, .45, 0x8a4a2e, .8);
+    const sack = (x, z, spice) => { pp(LA([[0, 0], [.13, 0], [.16, .08], [.165, .18], [.14, .26], [.11, .29], [0, .29]], 10), 0xa88a5a, x, F, z);
+      pp(new THREE.TorusGeometry(.115, .024, 4, 12), 0x8a6e44, x, F + .29, z, Math.PI / 2, 0, 0); pp(new THREE.ConeGeometry(.105, .08, 10), spice, x, F + .33, z) };
+    sack(2.28, 1.62, 0xc2452d); sack(2.62, 1.72, 0xe0a526); sack(2.84, 1.44, 0x6f8a3a);
+  }
+  // справа у стены: свёрнутые ковры и ящики
+  { const roll = (x, z, c, tilt) => { pp(Cy(.085, .085, 1.05, 10), c, x, F + .5, z, 0, 0, tilt);
+      for (const t of [-.38, 0, .38]) pp(Cy(.088, .088, .05, 10), 0xd2a03a, x - Math.sin(tilt) * t * -1, F + .5 + t * Math.cos(tilt), z, 0, 0, tilt) };
+    roll(5.6, .16, 0x7a2a3a, -.12); roll(5.42, .13, 0x2e4a6e, -.05); roll(5.68, .44, 0x8a6a2a, -.2);
+    const crate = (x, y, z, s) => { pp(Bx(.36 * s, .32 * s, .36 * s), 0x8a7458, x, y + .16 * s, z);
+      for (const yy of [.05, .27]) pp(Bx(.37 * s, .045 * s, .37 * s), 0x5e4c36, x, y + yy * s, z);
+      pp(Bx(.4 * s, .045 * s, .02), 0x6e5a40, x, y + .16 * s, z + .185 * s, 0, 0, .7) };
+    crate(4.35, F, .32, 1); crate(4.38, F + .32, .3, .8); crate(3.75, F, .2, .9);
+  }
+  // медный поднос с чайником и пиалами под фонарём, по правую руку торговца
+  { const tx = MERCH.x - .67, tz = ZF - .25;
+    pp(Cy(.15, .15, .018, 14), 0xb8862e, tx, F + .009, tz);
+    pp(LA([[0, 0], [.06, 0], [.075, .04], [.07, .08], [.045, .1], [.025, .11], [.03, .125], [0, .135]], 10), 0xd9a441, tx, F + .018, tz);
+    pole(V3(tx + .06, F + .07, tz), V3(tx + .13, F + .12, tz + .02), .009, 0xd9a441);
+    pp(new THREE.TorusGeometry(.04, .009, 4, 8, Math.PI), 0xd9a441, tx - .07, F + .08, tz, 0, 0, Math.PI / 2);
+    for (const [dx, dz] of [[.08, .07], [-.03, .1]]) pp(Cy(.025, .02, .035, 8), 0x2f8a8a, tx + dx, F + .036, tz + dz);
+  }
+  // гирлянда сушёного перца
+  { const x = 2.75; pole(V3(x, C - .1, ZF - .14), V3(x, C - .62, ZF - .14), .006, 0x3a2618);
+    for (let k = 0; k < 7; k++) pp(new THREE.ConeGeometry(.024, .085, 5), k % 3 === 2 ? 0x8a3a18 : 0xb8261c, x + (k % 2 ? .022 : -.022), C - .17 - k * .065, ZF - .14, Math.PI, 0, (k % 2 ? -1 : 1) * .5) }
+  // фонарь на цепи — главный свет лавки
+  SHOP.lamp = V3(MERCH.x - .3, C - .48, ZF - .16);            // левее торговца, чтобы не закрывать его
+  { const L = SHOP.lamp, brass = 0xb8862e, nk = Math.round((C - .07 - (L.y + .19)) / .05);
+    for (let k = 0; k <= nk; k++) pp(new THREE.TorusGeometry(.02, .006, 4, 6), 0x3a3634, L.x, C - .07 - k * .05, L.z, 0, k % 2 ? Math.PI / 2 : 0, 0);
+    pp(Cy(.07, .09, .025, 8), brass, L.x, L.y - .11, L.z); pp(new THREE.ConeGeometry(.095, .08, 8), brass, L.x, L.y + .12, L.z);
+    pp(new THREE.TorusGeometry(.03, .008, 4, 8), brass, L.x, L.y + .17, L.z);
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; pp(Bx(.012, .2, .012), brass, L.x + Math.cos(a) * .072, L.y, L.z + Math.sin(a) * .072) }
+    const glass = new THREE.MeshBasicMaterial({ color: 0xffd27a }); glass.userData.glow = true;
+    pp(Cy(.06, .06, .19, 8), glass, L.x, L.y, L.z) }
+  STALL = mergeStatic(g);
+  // торговец
+  const MER = createMerchant(THREE); MER.root.position.set(MERCH.x, F, MERCH.z); MER.root.rotation.y = MERCH.ry; shopG.add(MER.root);
+  MER.root.traverse(o => { if (o.isMesh) { o.userData.merchant = true; o.castShadow = o.receiveShadow = false; if (!o.material.userData.warm) { o.material.color.multiply(WARM); o.material.userData.warm = true } } });
+  shopG.userData.mer = MER;
+}
+buildStall();
+const merBase = new Map();
+function revealShop() { SHOP.revealed = true; lightDirty = true; setTimeout(() => toast('Кирью: …лавка? Под землёй?!'), 500) }
+function nearShop() { return SHOP.revealed && CH.x > SHOP.i0 - .2 && CH.x < SHOP.i1 + .2 && CH.z < PIT0 + 1.3 && Math.abs(CH.y - SHOP.floor) < 1 }
 
 /* ---------- монеты ---------- */
 const COINI = ["..kkkkk..", ".kyyyyyk.", "kyllyyydk", "kylyyyydk", "kyyyyyydk", "kyyyyyydk", "kyyyyyddk", ".kdddddk.", "..kkkkk.."];
@@ -976,6 +1042,7 @@ function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   for (const g of grabs.values()) stepHeld(g);
   stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held);
+  shopG.userData.mer.update(dt, { near: nearShop(), px: CH.x - MERCH.x, pz: CH.z - MERCH.z });
   const Tp = performance.now(); world.step(1 / 60, dt, 3); const Tq = performance.now();
   const sold = [];
   for (const t of trash) if (t.body) {
@@ -1020,5 +1087,5 @@ ensureBodies();
 genTrash();
 { const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
-window.__dbg = { SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
+window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
