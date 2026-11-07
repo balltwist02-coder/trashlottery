@@ -71,18 +71,13 @@ function drawBag(cnv) {
     if (dy <= 1) return '#cd9056'; if (dy === 2) return '#b4743f'; if (dy === 3) return '#9a5f33'; if (dy === 4) return '#5e3318';   // скатанный край горловины
     if (l === 1) return '#b4743f'; if (r <= 2) return '#7a4625';
     if (dy > body.h - 6) return '#6a3b1d'; if (dy > body.h - 11) return '#7d4826';
+    if (px > 4 && px < 73 && py > 16 && py < 85) return '#9a5f33';   // вокруг ячеек кожа ровная, без крапинок
     const n = nz(px, py); return n < .05 ? '#87502a' : n < .085 ? '#ab6d3b' : '#9a5f33' }, OUT);
   for (let py = body.y + 8; py < body.y + body.h - 4; py++) if ((py >> 1) % 2 === 0) { put(body.x + 2, py, ST); put(body.x + body.w - 3, py, ST) }   // строчка по краю
   for (let px = body.x + 6; px < body.x + body.w - 6; px++) if ((px >> 1) % 2 === 0) put(px, body.y + body.h - 3, ST);
-  for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) {      // кармашки
+  for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) {      // простые ячейки: тёмное углубление без узоров — инструменты читаются сразу
     const x0 = 7 + 22 * q, y0 = 19 + 22 * r;
-    paint({ x: x0, y: y0, w: 20, h: 20, rt: 2, rb: 3 }, (px, py) => { const dy = py - y0;
-      if (dy <= 1) return '#1c0d05'; if (dy <= 3) return '#331a0b'; if (dy <= 8) return '#4d2914';
-      if (dy === 9) return '#d2975c'; if (dy === 10) return '#ad6e3d';
-      return dy > 16 ? '#7d4826' : nz(px, py) < .06 ? '#8a522b' : '#9e6337' }, '#341a0a');
-    for (let py = y0 + 12; py < y0 + 17; py++) if (py % 2) { put(x0 + 2, py, '#e2bd82'); put(x0 + 17, py, '#e2bd82') }
-    for (let px = x0 + 4; px < x0 + 16; px++) if (px % 2 === 0) put(px, y0 + 17, '#e2bd82');
-    put(x0 + 2, y0 + 10, BR); put(x0 + 17, y0 + 10, BR); put(x0 + 2, y0 + 11, BRD); put(x0 + 17, y0 + 11, BRD);   // заклёпки
+    paint({ x: x0, y: y0, w: 20, h: 20, rt: 2, rb: 2 }, (px, py) => py - y0 <= 1 ? '#22130a' : py - y0 >= 18 ? '#55361f' : '#3a2416', '#1c0f07');
   }
   paint({ x: 34, y: 4, w: 8, h: 13, rt: 0, rb: 0 }, (px, py) => px === 35 ? '#8e5530' : STRAP, OUT);   // ремешок от клапана
   for (let py = 6; py < 10; py += 2) put(38, py, '#c9a26a');
@@ -270,7 +265,7 @@ function decoMat(kind) {                                        // 'moss' | 'lic
     sh.uniforms.uT = timeU; sh.uniforms.uMinY = clipU;
     let head = 'uniform float uT;\nvarying float vWY;\nvarying float vK;\n', bv = 'vK = 1.0;\n', pv = 'vWY = (modelMatrix * vec4(transformed, 1.0)).y;\n';
     if (!worm) { head += 'attribute float al;\n'; pv += 'if (al < 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n' }
-    if (kind === 'lich' || kind === 'glow') { head += 'attribute float gw;\nattribute float ph;\n'; bv += 'vK = 1.0 + gw * 0.3 * sin(uT * 1.7 + ph * 6.2832);\n' }
+    if (kind === 'lich' || kind === 'glow') { head += 'attribute float gw;\nattribute float ph;\n'; bv += 'vK = 1.0 + gw * 0.12 * sin(uT * 1.2 + ph * 6.2832);\n' }
     if (worm) { head += 'attribute vec4 wa;\nattribute vec3 wd;\nattribute vec3 we;\n';
       bv += 'float wp = uT * wa.w + wa.y;\ntransformed += (wd * sin(wp - wa.x * 4.0) + we * 0.6 * cos(wp * 0.73 + 1.3 - wa.x * 3.0)) * wa.z * wa.x;\n' }
     sh.vertexShader = head + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + bv).replace('#include <project_vertex>', '#include <project_vertex>\n' + pv);
@@ -331,13 +326,98 @@ function tinCan(g, full) {                                     // консерв
     addWorm(b, new THREE.Vector3(o.x * .045, h - .008, o.z * .045), new THREE.Vector3(0, 1, 0).addScaledVector(o, .5).normalize(), o, .08 + (k % 3) * .02, k * 1.7, .018, 4 + k * .7, .011) }
   g.add(new THREE.Mesh(bGeo(b), decoMat('item')));             // черви свешиваются через край и шевелятся
 }
+/* ---------- новый мусор: бутылки, пакет молока, огромная шина, скелет ---------- */
+const ZR = Math.PI / 2;                                        // поворот цилиндра на бок (ось вдоль X)
+function aluBottle(g) {                                        // жестяная пивная бутылка: тёмно-синяя с золотым поясом, без марки; лежит вдоль X
+  const blue = M(0x22325c), gold = M(0xd6a542), alu = M(0xc5ccd3), r = .062;
+  part(g, new THREE.CylinderGeometry(r, r, .19, 12), blue, -.06, r, 0, 0, 0, ZR);
+  part(g, new THREE.CylinderGeometry(r * .5, r, .07, 12), blue, .07, r, 0, 0, 0, -ZR);     // плечики к горлышку
+  part(g, new THREE.CylinderGeometry(r * .46, r * .5, .08, 10), alu, .145, r, 0, 0, 0, -ZR);
+  part(g, new THREE.CylinderGeometry(r * .55, r * .55, .022, 10), gold, .195, r, 0, 0, 0, ZR);   // пробка
+  part(g, new THREE.CylinderGeometry(r + .002, r + .002, .05, 12, 1, true), gold, -.05, r, 0, 0, 0, ZR);
+  part(g, new THREE.CylinderGeometry(r + .003, r + .003, .012, 12, 1, true), alu, -.05, r, 0, 0, 0, ZR);
+  part(g, new THREE.CylinderGeometry(r * .97, r * .97, .01, 12), alu, -.153, r, 0, 0, 0, ZR);
+}
+function glassBottle(g) {                                      // светло-зелёная стеклянная бутылка с длинным горлышком и бликом
+  const gl = M(0x9ad8a4), gd = M(0x74b882), hl = M(0xe4f9e6), r = .06;
+  part(g, new THREE.CylinderGeometry(r, r, .18, 10), gl, -.07, r, 0, 0, 0, ZR);
+  part(g, new THREE.CylinderGeometry(r * .42, r, .07, 10), gl, .055, r, 0, 0, 0, -ZR);
+  part(g, new THREE.CylinderGeometry(r * .4, r * .42, .1, 8), gl, .14, r, 0, 0, 0, -ZR);
+  part(g, new THREE.CylinderGeometry(r * .52, r * .52, .02, 8), gd, .195, r, 0, 0, 0, ZR);      // венчик
+  part(g, new THREE.CylinderGeometry(r * .98, r * .9, .02, 10), gd, -.165, r, 0, 0, 0, ZR);     // толстое донышко
+  part(g, new THREE.BoxGeometry(.14, .012, .02), hl, -.07, r * 1.85, .025);                     // блики
+  part(g, new THREE.BoxGeometry(.05, .01, .012), hl, .1, r * 1.45, .012);
+}
+function milkCarton(g) {                                       // картонный пакет молока: белый, синяя полоса, двускатный верх с гребнем
+  const wh = M(0xe9e5da), bl = M(0x4f86c6), bl2 = M(0x2e5f9e), w = .13, h = .22;
+  part(g, new THREE.BoxGeometry(w, h, w), wh, 0, h / 2, 0);
+  part(g, new THREE.BoxGeometry(w + .004, .08, w + .004), bl, 0, .07, 0);
+  part(g, new THREE.BoxGeometry(w + .006, .014, w + .006), bl2, 0, .115, 0);
+  for (const s of [-1, 1]) part(g, new THREE.BoxGeometry(w, .01, .087), wh, 0, h + .0285, s * .0325, 0, s * .72);   // скаты
+  part(g, new THREE.BoxGeometry(w, .028, .012), wh, 0, h + .07, 0);                            // гребень
+  part(g, new THREE.BoxGeometry(.04, .04, .004), bl, w * .22, .165, w / 2 + .003);              // кружок на боку
+}
+function tireMesh(g) {                                         // огромная шина с тракторным протектором «ёлочкой»; лежит плашмя на 2×2 клетки
+  const rub = M(0x25262a), lug = M(0x34353a), side = M(0x2e2f34), mud = M(0x4e3b29), R = .93, Rin = .46, H = .52;
+  const prof = [[Rin, .05], [Rin + .05, 0], [R - .07, 0], [R, .07], [R, H - .07], [R - .07, H], [Rin + .05, H], [Rin, H - .05], [Rin, .05]];
+  part(g, new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 28), rub, 0, 0, 0);
+  for (let k = 0; k < 22; k++) for (const s of [-1, 1]) { const a = (k + (s > 0 ? .5 : 0)) / 22 * Math.PI * 2;   // грунтозацепы
+    const l = new THREE.Group(); l.position.set(Math.cos(a) * (R + .02), H / 2 + s * .12, Math.sin(a) * (R + .02)); l.rotation.y = -a; g.add(l);
+    part(l, new THREE.BoxGeometry(.06, .25, .09), lug, 0, 0, 0, 0, s * .75, 0) }
+  part(g, new THREE.TorusGeometry((R + Rin) / 2, .025, 4, 28), side, 0, H, 0, 0, ZR);          // выпуклое кольцо на боковине
+  for (let k = 0; k < 14; k++) { const a = k / 14 * 6.2832; part(g, new THREE.BoxGeometry(.16, .025, .035), side, Math.cos(a) * .58, H + .005, Math.sin(a) * .58, -a) }
+  for (let k = 0; k < 6; k++) { const a = k * 1.7 + .4; part(g, new THREE.BoxGeometry(.14, .02, .1), mud, Math.cos(a) * .7, H + .008, Math.sin(a) * .7, -a + .3) }   // налипшая земля
+}
+/* скелет лежит на спине вдоль X, огромный череп у −x. Три части — каждая сама по себе предмет: лом разбирает скелет на них */
+const BONE = () => M(0xe0d7bf), BONE_D = () => M(0xb9ae94);
+function bone(g, a, b, r, mat) {                               // кость между двумя точками, с утолщениями на концах
+  const A = new THREE.Vector3(...a), Bv = new THREE.Vector3(...b), d = Bv.clone().sub(A), m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 6), mat);
+  m.position.copy(A).add(Bv).multiplyScalar(.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); g.add(m);
+  for (const p of [A, Bv]) { const k = new THREE.Mesh(new THREE.BoxGeometry(r * 2.4, r * 2.4, r * 2.4), mat); k.position.copy(p); g.add(k) }
+}
+function skullPart(g) {                                        // аномально большой череп: лежит затылком вниз, лицом вверх
+  const B = BONE(), S = BONE_D(), D = M(0x2a231c), cr = new THREE.SphereGeometry(.25, 10, 8); cr.scale(1.1, .9, .96);
+  part(g, cr, B, -.03, .23, 0);
+  part(g, new THREE.BoxGeometry(.2, .1, .3), B, .17, .17, 0);
+  for (const s of [-1, 1]) { part(g, new THREE.BoxGeometry(.11, .05, .09), D, .1, .42, s * .085); part(g, new THREE.BoxGeometry(.07, .05, .05), S, .2, .36, s * .14) }
+  part(g, new THREE.BoxGeometry(.05, .04, .045), D, .19, .39, 0, 0, 0, .3);                     // нос
+  for (let k = 0; k < 6; k++) part(g, new THREE.BoxGeometry(.022, .03, .025), B, .27, .27, -.065 + k * .026);
+  part(g, new THREE.BoxGeometry(.08, .07, .22), S, .3, .19, 0);                                  // нижняя челюсть
+  for (let k = 0; k < 5; k++) part(g, new THREE.BoxGeometry(.02, .026, .022), B, .27, .23, -.052 + k * .026);
+  part(g, new THREE.BoxGeometry(.06, .02, .012), S, -.08, .44, .1, .5);                          // трещинка
+}
+function chestPart(g) {                                        // позвоночник, рёбра, грудина и руки вдоль тела
+  const B = BONE(), S = BONE_D();
+  for (let k = 0; k < 9; k++) part(g, new THREE.BoxGeometry(.045, .05, .07), k % 2 ? S : B, -.26 + k * .06, .045, 0);
+  for (let k = 0; k < 6; k++) for (const s of [-1, 1]) { const t = new THREE.TorusGeometry(.11, .013, 4, 8, Math.PI); t.rotateZ(-ZR); t.rotateY(-s * ZR); t.scale(1, 1, 1.5); part(g, t, k % 2 ? S : B, -.2 + k * .062, .157, 0) }
+  part(g, new THREE.BoxGeometry(.28, .03, .045), B, -.07, .27, 0);                               // грудина
+  for (const s of [-1, 1]) {
+    part(g, new THREE.BoxGeometry(.04, .025, .16), S, -.25, .2, s * .1);                         // ключицы
+    bone(g, [-.27, .07, s * .25], [0, .05, s * .27], .022, B);
+    bone(g, [0, .05, s * .27], [.24, .05, s * .25], .016, B); bone(g, [0, .05, s * .29], [.24, .05, s * .28], .013, S);
+    part(g, new THREE.BoxGeometry(.06, .02, .06), B, .28, .04, s * .27);
+    for (let f = 0; f < 4; f++) part(g, new THREE.BoxGeometry(.06, .012, .011), S, .33, .035, s * (.25 + f * .016)) }
+}
+function legsPart(g) {                                         // таз и ноги, стопы торчат вверх
+  const B = BONE(), S = BONE_D();
+  for (const s of [-1, 1]) part(g, new THREE.BoxGeometry(.13, .11, .12), B, -.02, .08, s * .08, 0, s * .45);
+  part(g, new THREE.BoxGeometry(.1, .06, .08), S, -.08, .05, 0);
+  for (const s of [-1, 1]) {
+    bone(g, [.04, .05, s * .1], [.34, .05, s * .11], .024, B);
+    part(g, new THREE.BoxGeometry(.04, .03, .05), S, .36, .08, s * .11);
+    bone(g, [.36, .05, s * .11], [.62, .05, s * .115], .02, B); bone(g, [.36, .05, s * .14], [.62, .05, s * .14], .012, S);
+    part(g, new THREE.BoxGeometry(.05, .13, .07), B, .66, .1, s * .12);
+    for (let f = 0; f < 4; f++) part(g, new THREE.BoxGeometry(.02, .05, .012), S, .66, .19, s * (.095 + f * .017)) }
+}
+const SKEL = { skull: [-.69, skullPart], skelChest: [-.06, chestPart], skelLegs: [.3, legsPart] };   // где часть лежит в целом скелете
+const SKEL_SHAPES = { skull: () => [[new CANNON.Box(new CANNON.Vec3(.27, .2, .24)), [-.01, .22, 0]]], skelChest: () => [[new CANNON.Box(new CANNON.Vec3(.3, .13, .28)), [.03, .135, 0]]], skelLegs: () => [[new CANNON.Box(new CANNON.Vec3(.4, .06, .16)), [.27, .07, 0]]] };
 const TYPES = {
   coffee: { name: 'Банка кофе', size: 1, mass: 1,
     build(g) { const red = M(0xa8383a), band = M(0xe8d3a0), lid = M(0xc9d3dc);
       part(g, new THREE.CylinderGeometry(.15, .15, .3, 10), [red, lid, lid], 0, .15, 0);
       part(g, new THREE.CylinderGeometry(.153, .153, .09, 10, 1, true), band, 0, .15, 0) },
     shapes: () => [[new CANNON.Cylinder(.15, .15, .3, 10), [0, .15, 0]]] },
-  pipe: { name: 'Ржавая труба', size: 2, mass: 2, breaks: 'pipeHalf',
+  pipe: { name: 'Ржавая труба', size: 2, mass: 2, breaks: true, pieces: [['pipeHalf', [-.43, 0, 0]], ['pipeHalf', [.43, 0, 0]]],
     build(g) { pipeMesh(g, 1.7, 17) },
     shapes: () => rod(1.7) },
   lantern: { name: 'Фонарь', size: 1, mass: .8, light: 15,
@@ -358,6 +438,25 @@ const TYPES = {
   pipeHalf: { name: 'Половина трубы', size: 1, mass: 1,
     build(g) { pipeMesh(g, .82, 5) },
     shapes: () => rod(.82) },
+  beer: { name: 'Жестяная бутылка пива', size: 1, mass: .5,
+    build(g) { aluBottle(g) },
+    shapes: () => [[new CANNON.Cylinder(.062, .062, .34, 8), [.02, .062, 0], QZ90]] },
+  glass: { name: 'Зелёная бутылка', size: 1, mass: .6,
+    build(g) { glassBottle(g) },
+    shapes: () => [[new CANNON.Cylinder(.06, .06, .36, 8), [.015, .06, 0], QZ90]] },
+  milk: { name: 'Пакет молока', size: 1, mass: .4,
+    build(g) { milkCarton(g) },
+    shapes: () => [[new CANNON.Box(new CANNON.Vec3(.065, .14, .065)), [0, .14, 0]]] },
+  tire: { name: 'Огромная шина', size: 4, mass: 10, heavy: true,
+    build(g) { tireMesh(g) },
+    shapes: () => Array.from({ length: 14 }, (_, k) => { const a = k / 14 * 6.2832; return [new CANNON.Sphere(.25), [Math.cos(a) * .7, .26, Math.sin(a) * .7]] }) },
+  skeleton: { name: 'Скелет с огромным черепом', size: 2, mass: 2.8, breaks: true, brokeMsg: 'Скелет разобран на части', chips: ['#e0d7bf', '#b9ae94', '#8c8170'],
+    pieces: Object.entries(SKEL).map(([k, [ox]]) => [k, [ox, 0, 0]]),
+    build(g) { for (const [ox, fn] of Object.values(SKEL)) { const p = new THREE.Group(); p.position.x = ox; g.add(p); fn(p) } },
+    shapes: () => Object.entries(SKEL_SHAPES).flatMap(([k, f]) => f().map(([sh, o]) => [sh, [o[0] + SKEL[k][0], o[1], o[2]]])) },
+  skull: { name: 'Огромный череп', size: 1, mass: .9, build(g) { skullPart(g) }, shapes: SKEL_SHAPES.skull },
+  skelChest: { name: 'Грудная клетка', size: 1, mass: 1, build(g) { chestPart(g) }, shapes: SKEL_SHAPES.skelChest },
+  skelLegs: { name: 'Таз и ноги', size: 1, mass: .9, build(g) { legsPart(g) }, shapes: SKEL_SHAPES.skelLegs },
 };
 const trash = [];
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -387,21 +486,27 @@ function makeTrash(type, x, y, z, ry, layer) {
   trash.push(t); return t;
 }
 function genTrash() {
-  const cellOk = (i, j, z) => code(i, j, z) !== '.';
-  for (let z = 1; z < DIG; z++) for (let n = 0; n < 2; n++) {    // на слой — до двух предметов, каждый с шансом 60%
-    if (Math.random() >= .6) continue;
-    const rt = Math.random(), type = rt < .42 ? 'coffee' : rt < .66 ? 'tin' : 'pipe';
+  const cellOk = (i, j, z) => code(i, j, z) !== '.', pick = () => PIT0 + (Math.random() * (PIT1 - PIT0) | 0);
+  const place = (type, z) => {
     let x, zz, ry;
-    if (type !== 'pipe') { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) continue; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
-    else { const along = Math.random() < .5, a = PIT0 + (Math.random() * (PIT1 - PIT0 - 1) | 0), b = PIT0 + (Math.random() * (PIT1 - PIT0) | 0);
-      if (along) { if (!cellOk(a, b, z) || !cellOk(a + 1, b, z)) continue; x = a + 1; zz = b + .5; ry = 0 }
-      else { if (!cellOk(b, a, z) || !cellOk(b, a + 1, z)) continue; x = b + .5; zz = a + 1; ry = Math.PI / 2 } }
+    if (type === 'tire') { const a = PIT0 + (Math.random() * (PIT1 - PIT0 - 1) | 0), b = PIT0 + (Math.random() * (PIT1 - PIT0 - 1) | 0);   // 2×2 клетки
+      if (![[0, 0], [1, 0], [0, 1], [1, 1]].every(([p, q]) => cellOk(a + p, b + q, z))) return false; x = a + 1; zz = b + 1; ry = rnd(0, 6.28) }
+    else if (type === 'pipe' || type === 'skeleton') { const along = Math.random() < .5, a = PIT0 + (Math.random() * (PIT1 - PIT0 - 1) | 0), b = pick(), flip = Math.random() < .5 ? Math.PI : 0;
+      if (along) { if (!cellOk(a, b, z) || !cellOk(a + 1, b, z)) return false; x = a + 1; zz = b + .5; ry = flip }
+      else { if (!cellOk(b, a, z) || !cellOk(b, a + 1, z)) return false; x = b + .5; zz = a + 1; ry = Math.PI / 2 + flip } }
+    else { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
     const t = makeTrash(type, x, -(z + 1) * BH + .01, zz, ry, z); t.g.visible = false;
     const cells = new Set();                                     // какие клетки ямы задевает предмет
     t.g.traverse(o => { if (!o.isMesh) return; const bb = new THREE.Box3().setFromObject(o);
       for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a]; if (bb.max.x > i + .03 && bb.min.x < i + .97 && bb.max.z > j + .03 && bb.min.z < j + .97) cells.add(a) } });
-    t.cells = [...cells];
+    t.cells = [...cells]; return true;
+  };
+  for (let z = 1; z < DIG; z++) for (let n = 0; n < 2; n++) {    // на слой — до двух предметов, каждый с шансом 60%
+    if (Math.random() >= .6) continue;
+    const r = Math.random(); place(r < .26 ? 'coffee' : r < .46 ? 'tin' : r < .58 ? 'beer' : r < .68 ? 'glass' : r < .78 ? 'milk' : 'pipe', z);
   }
+  for (let k = 0, z = 5 + (Math.random() * 9 | 0); k < 6 && !place('tire', z); k++, z++);        // огромная шина — одна на участок
+  for (let k = 0, z = 9 + (Math.random() * 9 | 0); k < 6 && !place('skeleton', z); k++, z = Math.min(DIG - 1, z + 1));   // скелет — тоже один, поглубже
 }
 function setGrey(t, on) { if (!t.grey) t.grey = GREY.clone(); t.g.traverse(o => { if (o.isMesh) o.material = on ? t.grey : t.colors.get(o) }) }
 function updateTrash() {
@@ -637,16 +742,16 @@ function tap(e) {
   act();                                                       // иначе — инструмент в ту сторону, куда смотрит персонаж
 }
 function breakTrash(t) {
-  const b = t.body, kind = TYPES[t.type].breaks, q = b.quaternion, ry = t.g.rotation.y;
+  const b = t.body, T0 = TYPES[t.type], q = b.quaternion, c = t.com;
   removeTrash(t);
-  for (const s of [-1, 1]) {                                 // две половины на месте целой трубы, с лёгким толчком в стороны
-    const p = b.pointToWorldFrame(new CANNON.Vec3(s * .43, -.075, 0));   // от центра трубы к «дну» половинки
+  for (const [kind, o] of T0.pieces) {                         // части встают туда, где лежали в целом предмете, и разлетаются с лёгким толчком
+    const p = b.pointToWorldFrame(new CANNON.Vec3(o[0] - c.x, o[1] - c.y, o[2] - c.z));
     const h = makeTrash(kind, p.x, p.y, p.z, 0, -1); h.g.quaternion.set(q.x, q.y, q.z, q.w); h.g.updateMatrixWorld(true);
-    activate(h); const dir = q.vmult(new CANNON.Vec3(s, 0, 0));
+    activate(h); const dir = q.vmult(new CANNON.Vec3(Math.sign(o[0]), 0, 0));
     h.body.velocity.set(dir.x * 1.1, 1.2, dir.z * 1.1);
   }
-  const p = b.position; burst(p.x, p.y + .1, p.z, ['#8a4b2a', '#a35a2c', '#5f7f9e', '#c9d3dc'], 22, .8);
-  haptic('heavy'); toast('Сломано: ' + TYPES[t.type].name);
+  const p = b.position; burst(p.x, p.y + .1, p.z, T0.chips || ['#8a4b2a', '#a35a2c', '#5f7f9e', '#c9d3dc'], 22, .8);
+  haptic('heavy'); toast(T0.brokeMsg || 'Сломано: ' + T0.name);
 }
 
 /* ---------- тост и карта ---------- */
@@ -729,7 +834,7 @@ function drawOutlines() {
     t.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = t.idMat } }) });
   chG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = CH_ID } });
   const shV = shadow.visible; shadow.visible = false; for (const p of parts) p.m.visible = false;
-  const dm = [DECO.moss, DECO.lich, DECO.glow, WORM.mesh]; for (const m of dm) m.visible = false;   // мох, лишайник и черви обводки не получают
+  const dm = [DECO.moss, DECO.lich, WORM.mesh]; for (const m of dm) m.visible = false;   // мох, лишайник и черви обводки не получают
   renderer.setRenderTarget(idRT); renderer.clear(); renderer.render(scene, cam); renderer.setRenderTarget(null);
   for (const [o, m] of saved) o.material = m; for (const m of vis) m.visible = true; under.visible = uv; shadow.visible = shV; for (const p of parts) p.m.visible = true; for (const m of dm) m.visible = true;
   renderer.autoClear = false; renderer.render(olScene, cam); renderer.autoClear = true;
@@ -772,7 +877,7 @@ function act() {
   if (CH.held && CH.held.type === 'tin') { const s = spotAhead(); if (s && s.state) { useSpot(s); return } }   // пустую банку — к разрыхлённым червям
   if (tool === 'glove') {                                      // перчатка: поднять предмет перед собой или поставить тот, что в руках
     if (CH.held) { dropItem(); return }
-    const t = nearItem(t => true); if (t) grabItem(t); else shakeTool('glove'); return }
+    const t = nearItem(t => !TYPES[t.type].heavy) || nearItem(t => true); if (t) grabItem(t); else shakeTool('glove'); return }
   if (CH.held) { busy(); return }                              // руки заняты: ни копать, ни ломать
   if (tool === 'bar') {                                        // лом: ближайший ломаемый предмет перед персонажем
     const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
@@ -790,6 +895,7 @@ function nearItem(ok) {                                        // ближайш
 }
 /* перчатка: предмет поднимается к груди и едет вместе с персонажем; повторное действие ставит его перед собой */
 function grabItem(t) {
+  if (TYPES[t.type].heavy) { shakeTool('glove'); haptic('warn'); toast('Слишком тяжёлая — даже не сдвинуть'); return }
   const b = t.body; t.held = true; CH.held = t; t.hinted = false;
   b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
   CH.swing = 0; haptic('medium'); toast('В руках: ' + TYPES[t.type].name);
@@ -1102,11 +1208,19 @@ function nearShop() { return SHOP.revealed && CH.x > SHOP.i0 - .2 && CH.x < SHOP
 
 /* ---------- лишайник, мох и гнёзда червей на стенках ----------
    украшения сидят на гранях блоков: на стенках, смотрящих в яму, и на внешнем срезе участка.
-   Склеены в три меша: светящийся лишайник (сам светится и добавляет слабый свет в сетку освещения), мох (его красит свет
+   Склеены в три меша: светящийся лишайник (тускло светится сам и чуть-чуть подсвечивает стенку вокруг), мох (его красит свет
    клетки перед гранью) и черви (шевелятся в шейдере). Выкопали блок — его украшения гаснут флажком в вершинах, без пересборки */
-const LICH_L = 9;                                               // сила света лишайника (фонарь — 15)
+const LICH_L = 7;                                               // свет лишайника — приглушённый (фонарь — 15)
 const MOSS = [0x1e3218, 0x29421f, 0x355427, 0x446834].map(c => new THREE.Color(c));
-const LICH = { vine: new THREE.Color(0x48626f), leaf: new THREE.Color(0x5b7a89), bulb: new THREE.Color(0x86b8cf), core: new THREE.Color(0xbfe6f6) };
+const LICH = [0x2a3f49, 0x36505c, 0x46636f].map(c => new THREE.Color(c)), LDOT = new THREE.Color(0x76a0b2);   // приглушённый серо-голубой
+// всего два вида пятен светящегося лишайника — одни и те же везде, меняется только место на грани
+const LICH_KINDS = [0, 1].map(v => { const R = k => hr(v + 11, 3, 5, 4000 + k), boxes = [], dots = [];
+  if (!v) for (let k = 0; k < 14; k++) { const ang = R(k) * 6.2832, rr = Math.sqrt(R(20 + k));          // «розетка» — округлое пятно, как мох
+    boxes.push([Math.cos(ang) * .15 * rr, Math.sin(ang) * .11 * rr, .04 + R(40 + k) * .045, .035 + R(60 + k) * .035, .008 + .016 * (1.1 - rr), Math.min(2, (R(80 + k) * 1.4 + (1 - rr) * 1.8) | 0)]) }
+  else for (let k = 0; k < 14; k++) { const t = k / 13;                                                    // «корка» — расползается по грани вширь
+    boxes.push([(t - .5) * .36 + (R(20 + k) - .5) * .03, (R(30 + k) - .5) * .07 + Math.sin(t * Math.PI) * .03, .04 + R(40 + k) * .035, .03 + R(60 + k) * .03, .008 + .014 * Math.sin(t * Math.PI), Math.min(2, (R(80 + k) * 1.3 + Math.sin(t * Math.PI) * 1.5) | 0)]) }
+  for (let k = 0; k < 5; k++) dots.push(v ? [(k - 2) * .07 + (R(200 + k) - .5) * .03, (R(220 + k) - .5) * .05] : [Math.cos(k * 1.26 + .3) * .09 * (k % 2 ? 1 : .55), Math.sin(k * 1.26 + .3) * .07 * (k % 2 ? 1 : .55)]);   // светлые точки
+  return { boxes, dots, hu: v ? .22 : .2, hv: v ? .08 : .15 } });
 const SOIL = [0x24150c, 0x332012, 0x45291a, 0x5a3a24].map(c => new THREE.Color(c)), HOLE = new THREE.Color(0x0b0604);
 function faceFrame(i, j, z, f) {                                // грань +x (f=0) или +z (f=4): центр, нормаль, оси в плоскости (u × v = n) и клетка перед ней
   const y = -(z + .5) * BH, V = (a, b, c) => new THREE.Vector3(a, b, c);
@@ -1117,8 +1231,8 @@ const onFace = (F, a, b, t) => F.c.clone().addScaledVector(F.u, a).addScaledVect
 // гнёзда червей — на ближних к яме гранях декоративных стенок, каждые 2 слоя, по очереди слева и справа
 const SPOTS = [['L', 3, 1], ['R', 4, 2], ['L', 2, 4], ['R', 3, 6], ['L', 4, 8], ['R', 5, 10], ['L', 3, 12], ['R', 2, 14], ['L', 5, 16], ['R', 4, 18]]
   .map(([s, k, z]) => { const i = s === 'L' ? 1 : k, j = s === 'L' ? k : 1; return { i, j, z, F: faceFrame(i, j, z, s === 'L' ? 0 : 4), state: 0, v0: 0, vn: 0, br: -1 } });
-const DECO = { items: [], byKey: new Map(), moss: null, lich: null, glow: null, mossBase: null };
-{ const bm = geoB({ al: [1] }), bl = geoB({ al: [1], gw: [0], ph: [0] }), bg = geoB({ al: [1], gw: [0], ph: [0] }), HV = BH / 2, cl = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+const DECO = { items: [], byKey: new Map(), moss: null, lich: null, mossBase: null };
+{ const bm = geoB({ al: [1] }), bl = geoB({ al: [1], gw: [0], ph: [0] }), HV = BH / 2, cl = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const moss = F => {                                           // пятно мха: комочки, погуще к середине, и пара свисающих нитей
     const R = k => hr(F.i * 7 + F.f, F.j, F.z, 100 + k), v0 = bm.pos.length / 3;
     const ca = (R(1) - .5) * .5, cb = (R(2) - .5) * (BH - .36), ra = .14 + R(3) * .14, rb = .1 + R(4) * .1;
@@ -1131,45 +1245,27 @@ const DECO = { items: [], byKey: new Map(), moss: null, lich: null, glow: null, 
       bBox(bm, F, onFace(F, cl(ca + (R(210 + k) - .5) * ra * 1.6, -.48, .48), b, .008), .009, len / 2, .006, MOSS[k % 2]) }
     return [v0, bm.pos.length / 3 - v0];
   };
-  const BLACK = new THREE.Color(0, 0, 0), HALO = new THREE.Color(.05, .088, .112);
-  const halo = (F, a, b, r, ph) => {                            // мягкое свечение вокруг бусинки: веер треугольников, к краю гаснет (складывается со сценой)
-    const C = onFace(F, a, b, .004), c0 = bV(bg, C, HALO, { gw: [1], ph }), vs = [];
-    for (let k = 0; k < 8; k++) { const t = k / 8 * 6.2832; vs.push(bV(bg, C.clone().addScaledVector(F.u, Math.cos(t) * r).addScaledVector(F.v, Math.sin(t) * r), BLACK, { gw: [1], ph })) }
-    for (let k = 0; k < 8; k++) bg.idx.push(c0, vs[k], vs[(k + 1) % 8]);
+  const lichen = (F, upper) => {                                // пятно светящегося лишайника одного из двух видов; над червями — сверху справа
+    const R = k => hr(F.i * 7 + F.f, F.j, F.z, 900 + k), v0 = bl.pos.length / 3, K = LICH_KINDS[upper || R(1) < .5 ? 0 : 1];
+    const ca = upper ? .26 : (R(2) - .5) * 2 * (.48 - K.hu), cb = upper ? .22 : (R(3) - .5) * 2 * (HV - .02 - K.hv);
+    for (const [a, b, w, h, t, c] of K.boxes) bBox(bl, F, onFace(F, ca + a, cb + b, t / 2 + .002), w / 2, h / 2, t / 2, LICH[c]);
+    K.dots.forEach(([a, b], k) => bBox(bl, F, onFace(F, ca + a, cb + b, .026), .011, .011, .006, LDOT, { gw: [1], ph: [R(10 + k)] }));
+    return [v0, bl.pos.length / 3 - v0];
   };
-  const lichen = (F, upper) => {                                // светящаяся лиана: свисает от верхнего края грани, листики и светлые бусинки
-    const R = k => hr(F.i * 7 + F.f, F.j, F.z, 900 + k), v0 = bl.pos.length / 3, g0 = bg.pos.length / 3;
-    for (let q = 0, nv = 2 + (R(1) * 3 | 0); q < nv; q++) {
-      let a = (R(10 + q) - .5) * .8, b = HV + .01, dir = -Math.PI / 2 + (R(30 + q) - .5) * .5, len = 0;
-      const maxLen = upper ? .28 : .3 + R(35 + q) * (BH - .3);
-      for (let k = 0; k < 16 && len < maxLen; k++) {
-        const s = q * 17 + k, sl = .05 + R(50 + s) * .04, a2 = a + Math.cos(dir) * sl, b2 = b + Math.sin(dir) * sl;
-        if (Math.abs(a2) > .46 || b2 < -HV + .02) break;
-        const U = F.u.clone().multiplyScalar(Math.cos(dir)).addScaledVector(F.v, Math.sin(dir)), W = F.u.clone().multiplyScalar(-Math.sin(dir)).addScaledVector(F.v, Math.cos(dir));
-        bQuad(bl, quadPts(onFace(F, (a + a2) / 2, (b + b2) / 2, .005), U, sl / 2 + .008, W, .014), LICH.vine, { ph: [R(2)] });
-        const r = R(60 + s), sd = R(65 + s) < .5 ? 1 : -1;
-        if (r < .22) { const z = .012 + R(70 + s) * .006, ba = a2 + W.dot(F.u) * .028 * sd, bb = b2 + W.dot(F.v) * .028 * sd, ph = [R(90 + s)];
-          bBox(bl, F, onFace(F, ba, bb, z + .006), z, z, z, r < .04 ? LICH.core : LICH.bulb, { gw: [1], ph }); halo(F, ba, bb, .09 + R(75 + s) * .05, ph) }
-        else if (r < .78) bQuad(bl, quadPts(onFace(F, a2 + W.dot(F.u) * .03 * sd, b2 + W.dot(F.v) * .03 * sd, .007), U, .02, W, .014), LICH.leaf, { gw: [.3], ph: [R(95 + s)] });
-        a = a2; b = b2; len += sl; dir = cl(dir + (R(100 + s) - .5) * .7, -Math.PI + .5, -.5) } }
-    return [v0, bl.pos.length / 3 - v0, g0, bg.pos.length / 3 - g0];
-  };
-  const add = (F, kind, [v0, vn, g0 = 0, gn = 0]) => { if (!vn) return; const it = { kind, F, i: F.i, j: F.j, z: F.z, f: F.f, v0, vn, g0, gn, alive: true, br: -1, inner: F.f === 0 ? F.i === 1 : F.j === 1 };
+  const add = (F, kind, [v0, vn]) => { if (!vn) return; const it = { kind, F, i: F.i, j: F.j, z: F.z, f: F.f, v0, vn, alive: true, br: -1, inner: F.f === 0 ? F.i === 1 : F.j === 1 };
     DECO.items.push(it); const key = F.i + ',' + F.j + ',' + F.z; if (!DECO.byKey.has(key)) DECO.byKey.set(key, []); DECO.byKey.get(key).push(it) };
   const spotK = new Set(SPOTS.map(s => s.i + ',' + s.j + ',' + s.z + ',' + s.F.f)), faces = [];
   for (let z = 0; z < DIG; z++) { for (let j = PIT0; j < PIT1; j++) faces.push([1, j, z, 0]); for (let i = PIT0; i < PIT1; i++) faces.push([i, 1, z, 4]) }    // стенки ямы
   for (let z = 0; z <= BOT; z++) { for (let j = 0; j < N; j++) faces.push([N - 1, j, z, 0]); for (let i = 0; i < N; i++) faces.push([i, N - 1, z, 4]) }   // внешний срез
-  const lit = new Set();                                         // лианы тянутся сверху вниз: под лишайником он часто продолжается
-  for (const [i, j, z, f] of faces) { if (!hasB(i, j, z)) continue; const F = faceFrame(i, j, z, f), key = i + ',' + j + ',' + f + ',';
-    if (spotK.has(i + ',' + j + ',' + z + ',' + f)) { add(F, 'lich', lichen(F, true)); lit.add(key + z); continue }   // над червями — лиана, чтобы их было видно в темноте
+  for (const [i, j, z, f] of faces) { if (!hasB(i, j, z)) continue; const F = faceFrame(i, j, z, f);
+    if (spotK.has(i + ',' + j + ',' + z + ',' + f)) { add(F, 'lich', lichen(F, true)); continue }      // над червями — лишайник, чтобы их было видно в темноте
     if (hr(i * 7 + f, j, z, 1) < (z < 3 ? .34 : .24)) add(F, 'moss', moss(F));
-    if (z >= 2 && hr(i * 7 + f, j, z, 2) < (lit.has(key + (z - 1)) ? .42 : z < 5 ? .11 : .16)) { add(F, 'lich', lichen(F, false)); lit.add(key + z) } }
-  DECO.moss = new THREE.Mesh(bGeo(bm), decoMat('moss')); DECO.lich = new THREE.Mesh(bGeo(bl), decoMat('lich')); DECO.glow = new THREE.Mesh(bGeo(bg), decoMat('glow')); DECO.mossBase = Float32Array.from(bm.col);
-  for (const m of [DECO.moss, DECO.lich, DECO.glow]) { m.frustumCulled = false; m.matrixAutoUpdate = false; scene.add(m) } }
+    else if (z >= 2 && hr(i * 7 + f, j, z, 2) < (z < 5 ? .07 : .11)) add(F, 'lich', lichen(F, false)) }
+  DECO.moss = new THREE.Mesh(bGeo(bm), decoMat('moss')); DECO.lich = new THREE.Mesh(bGeo(bl), decoMat('lich')); DECO.mossBase = Float32Array.from(bm.col);
+  for (const m of [DECO.moss, DECO.lich]) { m.frustumCulled = false; m.matrixAutoUpdate = false; scene.add(m) } }
 function decoGone(i, j, z) {                                    // блок выкопан — его мох и лишайник гаснут
   const L = DECO.byKey.get(i + ',' + j + ',' + z); if (!L) return;
-  for (const it of L) { if (!it.alive) continue; it.alive = false; const a = (it.kind === 'moss' ? DECO.moss : DECO.lich).geometry.attributes.al; a.array.fill(0, it.v0, it.v0 + it.vn); a.needsUpdate = true;
-    if (it.gn) { const g = DECO.glow.geometry.attributes.al; g.array.fill(0, it.g0, it.g0 + it.gn); g.needsUpdate = true } }
+  for (const it of L) { if (!it.alive) continue; it.alive = false; const a = (it.kind === 'moss' ? DECO.moss : DECO.lich).geometry.attributes.al; a.array.fill(0, it.v0, it.v0 + it.vn); a.needsUpdate = true }
 }
 function decoLight(push, OUT) {                                 // свет лишайника: на стенке ямы — в клетку перед гранью, на внешнем срезе — пятном по срезу
   OUT.fill(0);
@@ -1187,10 +1283,12 @@ function shadeDeco() {                                          // мох кра
     for (let v = it.v0 * 3, e = (it.v0 + it.vn) * 3; v < e; v++) a[v] = base[v] * br }
   if (ch) col.needsUpdate = true;
 }
-/* гнездо червей: тёмное влажное пятно с норками. Разрыхлили лопаткой — комья земли, и черви лезут наружу сильнее */
+/* гнездо червей: тёмное влажное пятно с норками. Разрыхлили лопаткой — комья земли, и черви лезут наружу сильнее.
+   Собрали в банку — гнездо пропадает со стенки насовсем (state 2): иначе это бесконечная ферма */
 const WORM = { mesh: null, base: null, mat: null };
 function spotGeo(b, s) {
   const F = s.F, R = k => hr(s.i, s.j, s.z, 300 + k), at = (a, bb, t) => onFace(F, a, bb, t), cb = -.06, loose = s.state === 1, v0 = b.pos.length / 3;
+  if (s.state === 2) { s.v0 = v0; s.vn = 0; return }
   for (let k = 0; k < 9; k++) { const ang = R(k) * 6.2832, rr = Math.sqrt(R(20 + k)), w = .08 + R(40 + k) * .07, h = .06 + R(60 + k) * .05;
     bBox(b, F, at(Math.cos(ang) * .17 * rr, cb + Math.sin(ang) * .11 * rr, .004), w / 2, h / 2, .004, SOIL[R(80 + k) * 2 | 0]) }
   for (let k = 0, n = loose ? 7 : 3; k < n; k++) {
@@ -1222,13 +1320,13 @@ const spotOpen = s => !solidAt(s.F.fi, s.F.fj, s.F.fz);          // перед �
 function spotReach(s) { const p = onFace(s.F, 0, -.06, 0), dy = p.y - CH.y; return dy > -.2 && dy < 1.45 && Math.hypot(p.x - CH.x, p.z - CH.z) < .95 }
 function spotAhead() {                                          // гнездо перед персонажем, до которого он дотягивается
   let best = null, bd = 9;
-  for (const s of SPOTS) { if (!spotOpen(s) || !spotReach(s)) continue; const dx = s.F.c.x - CH.x, dz = s.F.c.z - CH.z, dd = Math.hypot(dx, dz);
+  for (const s of SPOTS) { if (s.state === 2 || !spotOpen(s) || !spotReach(s)) continue; const dx = s.F.c.x - CH.x, dz = s.F.c.z - CH.z, dd = Math.hypot(dx, dz);
     if (dx * CH.face.x + dz * CH.face.z > -.1 && dd < bd) { bd = dd; best = s } }
   return best;
 }
 function spotHit(h) {                                           // тап по грани стенки, на которой гнездо
   const u = h && h.object.userData; if (!u || u.kind !== 'b') return null;
-  return SPOTS.find(s => s.i === u.i && s.j === u.j && s.z === u.z && (s.F.f === 0 ? h.point.x > s.i + .97 : h.point.z > s.j + .97)) || null;
+  return SPOTS.find(s => s.state !== 2 && s.i === u.i && s.j === u.j && s.z === u.z && (s.F.f === 0 ? h.point.x > s.i + .97 : h.point.z > s.j + .97)) || null;
 }
 function useSpot(s) {
   if (!spotReach(s)) { toast('Черви далеко — подойди к стенке'); return }
@@ -1247,9 +1345,9 @@ function loosen(s) {
 function fillTin(s) {                                           // пустая банка превращается в банку с червями прямо в руках
   const old = CH.held, gp = old.g.position.clone(); old.held = false; CH.held = null; removeTrash(old);
   const t = makeTrash('wormTin', gp.x, gp.y, gp.z, CH.yaw, -1); activate(t); grabItem(t);
-  s.state = 0; buildWorms(); CH.swing = .3;
+  s.state = 2; buildWorms(); CH.swing = .3;
   const p = onFace(s.F, 0, -.06, .1); burst(p.x, p.y, p.z, ['#e58ca0', '#f6bac6', '#3a2415'], 14, .4);
-  toast('Банка с червями! Торговец даст за неё 5'); haptic('medium');
+  toast('Банка с червями! Гнездо опустело'); haptic('medium');
 }
 
 /* ---------- монеты ---------- */
@@ -1359,7 +1457,7 @@ function frame(now) {
   // подсветка того, к чему можно приложить инструмент: блоки под кирку, гнёзда червей под лопатку или пустую банку
   const hl = new Set(); if (tool === 'pick' && !CH.held) for (let a = 0; a < ACT.length; a++) if (diggable(a, d[a]) && reach(a)) hl.add(ACT[a][0] + ',' + ACT[a][1] + ',' + d[a]);
   const tinH = !!CH.held && CH.held.type === 'tin';
-  if ((tool === 'trowel' && !CH.held) || tinH) for (const s of SPOTS) if (!s.state === !tinH && spotOpen(s) && spotReach(s)) hl.add(s.i + ',' + s.j + ',' + s.z);
+  if ((tool === 'trowel' && !CH.held) || tinH) for (const s of SPOTS) if ((tinH ? s.state === 1 : s.state === 0) && spotOpen(s) && spotReach(s)) hl.add(s.i + ',' + s.j + ',' + s.z);
   pulseU.value = hl.size || tool === 'pick' ? .12 + .1 * Math.sin(now / 260) : 0;
   setHighlight(hl);
   const T1 = performance.now();
