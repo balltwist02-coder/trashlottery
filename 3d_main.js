@@ -327,26 +327,33 @@ function tinCan(g, full) {                                     // консерв
   g.add(new THREE.Mesh(bGeo(b), decoMat('item')));             // черви свешиваются через край и шевелятся
 }
 /* ---------- новый мусор: бутылки, пакет молока, огромная шина, скелет ---------- */
-const ZR = Math.PI / 2;                                        // поворот цилиндра на бок (ось вдоль X)
-function aluBottle(g) {                                        // жестяная пивная бутылка: тёмно-синяя с золотым поясом, без марки; лежит вдоль X
-  const blue = M(0x22325c), gold = M(0xd6a542), alu = M(0xc5ccd3), r = .062;
-  part(g, new THREE.CylinderGeometry(r, r, .19, 12), blue, -.06, r, 0, 0, 0, ZR);
-  part(g, new THREE.CylinderGeometry(r * .5, r, .07, 12), blue, .07, r, 0, 0, 0, -ZR);     // плечики к горлышку
-  part(g, new THREE.CylinderGeometry(r * .46, r * .5, .08, 10), alu, .145, r, 0, 0, 0, -ZR);
-  part(g, new THREE.CylinderGeometry(r * .55, r * .55, .022, 10), gold, .195, r, 0, 0, 0, ZR);   // пробка
-  part(g, new THREE.CylinderGeometry(r + .002, r + .002, .05, 12, 1, true), gold, -.05, r, 0, 0, 0, ZR);
-  part(g, new THREE.CylinderGeometry(r + .003, r + .003, .012, 12, 1, true), alu, -.05, r, 0, 0, 0, ZR);
-  part(g, new THREE.CylinderGeometry(r * .97, r * .97, .01, 12), alu, -.153, r, 0, 0, 0, ZR);
+const ZR = Math.PI / 2, TAU = Math.PI * 2;                     // ZR — поворот на бок: ось предмета вдоль X
+const lathe = (prof, seg, a = 0, len = TAU) => new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), seg, a, len);
+/* бутылки большие — длиной почти в клетку: стоя достали бы Кирью до предплечья. Внутри группы b бутылка стоит (дно в 0), сама группа лежит вдоль X */
+function bottleBase(g, L, R) { const b = new THREE.Group(); b.position.set(-L / 2, R, 0); b.rotation.z = -ZR; g.add(b); return b }
+function aluBottle(g) {                                        // алюминиевая пивная бутылка: ярко-красная, белый пояс, серебристые ободки, без марки
+  const red = M(0xe8262c), redD = M(0xb8141c), wh = M(0xf6f2e8), alu = M(0xd6dce2), L = .98, R = .13, b = bottleBase(g, L, R);
+  part(b, lathe([[0, 0], [R * .9, 0], [R, .025], [R, .5], [R * .96, .56], [R * .84, .63], [R * .66, .7], [R * .5, .76], [R * .42, .81], [R * .4, .87], [R * .47, .885], [R * .47, .905], [R * .4, .91], [0, .91]], 14), red, 0, 0, 0);
+  part(b, new THREE.CylinderGeometry(R + .004, R + .004, .17, 14, 1, true), wh, 0, .33, 0);       // белый пояс
+  part(b, new THREE.CylinderGeometry(R + .007, R + .007, .03, 14, 1, true), redD, 0, .33, 0);     // красная полоса по поясу
+  part(b, new THREE.CylinderGeometry(R + .004, R + .004, .035, 14, 1, true), alu, 0, .045, 0);    // серебристый ободок у дна
+  part(b, new THREE.CylinderGeometry(R * .5, R * .52, .05, 12, 1, true), wh, 0, .79, 0);          // белое колечко на горлышке
+  part(b, new THREE.CylinderGeometry(R * .53, R * .53, .022, 12, 1, true), alu, 0, .915, 0);
+  part(b, new THREE.CylinderGeometry(R * .5, R * .5, .06, 12), redD, 0, .945, 0);                 // пробка
+  const hl = M(0xff8f86), hy = R + Math.sqrt(R * R - .0025) + .005;                             // блики по верху бока
+  part(g, new THREE.BoxGeometry(.16, .014, .03), hl, -.35, hy, .05); part(g, new THREE.BoxGeometry(.08, .014, .026), hl, -.03, hy, .05);
 }
-function glassBottle(g) {                                      // светло-зелёная стеклянная бутылка с длинным горлышком и бликом
-  const gl = M(0x9ad8a4), gd = M(0x74b882), hl = M(0xe4f9e6), r = .06;
-  part(g, new THREE.CylinderGeometry(r, r, .18, 10), gl, -.07, r, 0, 0, 0, ZR);
-  part(g, new THREE.CylinderGeometry(r * .42, r, .07, 10), gl, .055, r, 0, 0, 0, -ZR);
-  part(g, new THREE.CylinderGeometry(r * .4, r * .42, .1, 8), gl, .14, r, 0, 0, 0, -ZR);
-  part(g, new THREE.CylinderGeometry(r * .52, r * .52, .02, 8), gd, .195, r, 0, 0, 0, ZR);      // венчик
-  part(g, new THREE.CylinderGeometry(r * .98, r * .9, .02, 10), gd, -.165, r, 0, 0, 0, ZR);     // толстое донышко
-  part(g, new THREE.BoxGeometry(.14, .012, .02), hl, -.07, r * 1.85, .025);                     // блики
-  part(g, new THREE.BoxGeometry(.05, .01, .012), hl, .1, r * 1.45, .012);
+function glassBottle(g) {                                      // светло-зелёная стеклянная бутылка: бумажная этикетка, длинное горлышко, блики
+  const gl = M(0x96e2a2), gd = M(0x5fb672), hl = M(0xf0fff2), lab = M(0xf3e5b6), labR = M(0xd2483a), dk = M(0x1c3a25), L = .98, R = .125, b = bottleBase(g, L, R), hy = R + Math.sqrt(R * R - .0025) + .005;
+  part(b, lathe([[0, 0], [R * .88, 0], [R, .03], [R, .53], [R * .95, .59], [R * .76, .65], [R * .52, .7], [R * .4, .745], [R * .37, .9], [R * .48, .91], [R * .48, .955], [R * .3, .965], [0, .965]], 12), gl, 0, 0, 0);
+  part(b, new THREE.CylinderGeometry(R + .004, R + .004, .2, 12, 1, true), lab, 0, .3, 0);        // этикетка
+  part(b, new THREE.CylinderGeometry(R + .007, R + .007, .04, 12, 1, true), labR, 0, .3, 0);      // красная полоса на этикетке
+  part(b, new THREE.CylinderGeometry(R * .5, R * .5, .045, 10, 1, true), gd, 0, .932, 0);         // венчик горлышка потемнее
+  part(b, new THREE.CylinderGeometry(R * .3, R * .3, .014, 8), dk, 0, .966, 0);                   // тёмная дырочка горлышка
+  part(b, new THREE.CylinderGeometry(R * .93, R * .93, .02, 12), gd, 0, .011, 0);                 // толстое донышко
+  part(g, new THREE.BoxGeometry(.17, .014, .03), hl, -.385, hy, .05);                             // блики сверху на боку и на горлышке
+  part(g, new THREE.BoxGeometry(.1, .014, .026), hl, -.025, hy, .05);
+  part(g, new THREE.BoxGeometry(.12, .012, .02), hl, .33, R + R * .37 + .004, .01);
 }
 function milkCarton(g) {                                       // картонный пакет молока: белый, синяя полоса, двускатный верх с гребнем
   const wh = M(0xe9e5da), bl = M(0x4f86c6), bl2 = M(0x2e5f9e), w = .13, h = .22;
@@ -357,60 +364,98 @@ function milkCarton(g) {                                       // картонн
   part(g, new THREE.BoxGeometry(w, .028, .012), wh, 0, h + .07, 0);                            // гребень
   part(g, new THREE.BoxGeometry(.04, .04, .004), bl, w * .22, .165, w / 2 + .003);              // кружок на боку
 }
-function tireMesh(g) {                                         // огромная шина с тракторным протектором «ёлочкой»; лежит плашмя на 2×2 клетки
-  const rub = M(0x25262a), lug = M(0x34353a), side = M(0x2e2f34), mud = M(0x4e3b29), R = .93, Rin = .46, H = .52;
+/* огромная шина с тракторным протектором «ёлочкой»; лежит плашмя на 2×2 клетки. Лом рубит её пополам, половинки — ещё пополам.
+   Кусок шины — дуга от угла a0 до a1 (угол a — точка (cos a, sin a) в плоскости XZ), у куска на срезах видна полость и стальной корд */
+const TIRE = { R: .93, Rin: .46, H: .52 };
+function tireArc(g, a0, a1) {
+  const rub = M(0x25262a), lug = M(0x34353a), side = M(0x2e2f34), mud = M(0x4e3b29), cut = M(0x4a4b52), hole = M(0x0b0b0e), steel = M(0xc8ced6);
+  const { R, Rin, H } = TIRE, span = a1 - a0, full = span > TAU - 1e-6, inA = a => full || (a > a0 + .07 && a < a1 - .07), seg = k => Math.max(3, Math.round(k * span / TAU));
   const prof = [[Rin, .05], [Rin + .05, 0], [R - .07, 0], [R, .07], [R, H - .07], [R - .07, H], [Rin + .05, H], [Rin, H - .05], [Rin, .05]];
-  part(g, new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 28), rub, 0, 0, 0);
-  for (let k = 0; k < 22; k++) for (const s of [-1, 1]) { const a = (k + (s > 0 ? .5 : 0)) / 22 * Math.PI * 2;   // грунтозацепы
+  part(g, lathe(prof, seg(28), Math.PI / 2 - a1, span), rub, 0, 0, 0);
+  for (let k = 0; k < 22; k++) for (const s of [-1, 1]) { const a = (k + (s > 0 ? .5 : 0)) / 22 * TAU; if (!inA(a)) continue;   // грунтозацепы
     const l = new THREE.Group(); l.position.set(Math.cos(a) * (R + .02), H / 2 + s * .12, Math.sin(a) * (R + .02)); l.rotation.y = -a; g.add(l);
     part(l, new THREE.BoxGeometry(.06, .25, .09), lug, 0, 0, 0, 0, s * .75, 0) }
-  part(g, new THREE.TorusGeometry((R + Rin) / 2, .025, 4, 28), side, 0, H, 0, 0, ZR);          // выпуклое кольцо на боковине
-  for (let k = 0; k < 14; k++) { const a = k / 14 * 6.2832; part(g, new THREE.BoxGeometry(.16, .025, .035), side, Math.cos(a) * .58, H + .005, Math.sin(a) * .58, -a) }
-  for (let k = 0; k < 6; k++) { const a = k * 1.7 + .4; part(g, new THREE.BoxGeometry(.14, .02, .1), mud, Math.cos(a) * .7, H + .008, Math.sin(a) * .7, -a + .3) }   // налипшая земля
+  const ring = new THREE.TorusGeometry((R + Rin) / 2, .025, 4, seg(28), span); ring.rotateX(ZR); ring.rotateY(-a0);
+  part(g, ring, side, 0, H, 0);                                // выпуклое кольцо на боковине
+  for (let k = 0; k < 14; k++) { const a = k / 14 * TAU; if (inA(a)) part(g, new THREE.BoxGeometry(.16, .025, .035), side, Math.cos(a) * .58, H + .005, Math.sin(a) * .58, -a) }
+  for (let k = 0; k < 6; k++) { const a = (k * 1.7 + .4) % TAU; if (inA(a)) part(g, new THREE.BoxGeometry(.14, .02, .1), mud, Math.cos(a) * .7, H + .008, Math.sin(a) * .7, -a + .3) }   // налипшая земля
+  if (full) return;
+  const inner = [[Rin + .07, .1], [R - .1, .08], [R - .06, .12], [R - .06, H - .12], [R - .1, H - .08], [Rin + .07, H - .1]], up = new THREE.Vector3(0, 1, 0);
+  for (const [a, e] of [[a0, -1], [a1, 1]]) {                  // срез: резина посветлее, внутри темнота полой шины, торчит стальной корд
+    const rad = new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), tan = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(e);
+    const basis = e > 0 ? new THREE.Matrix4().makeBasis(rad, up, tan) : new THREE.Matrix4().makeBasis(up, rad, tan);   // грань среза смотрит наружу, вдоль tan
+    for (const [pts, mat, off] of [[prof.slice(0, -1), cut, .002], [inner, hole, .005]]) {
+      const geo = new THREE.ShapeGeometry(new THREE.Shape(pts.map(([r, y]) => e > 0 ? new THREE.Vector2(r, y) : new THREE.Vector2(y, r))));
+      geo.applyMatrix4(basis); geo.translate(tan.x * off, 0, tan.z * off); part(g, geo, mat, 0, 0, 0) }
+    for (const [y, dr] of [[.15, .03], [.26, .045], [.37, .03]]) part(g, new THREE.BoxGeometry(.016, .016, .08), steel, rad.x * (R - dr) + tan.x * .035, y, rad.z * (R - dr) + tan.z * .035, Math.atan2(tan.x, tan.z));
+  }
 }
-/* скелет лежит на спине вдоль X, огромный череп у −x. Три части — каждая сама по себе предмет: лом разбирает скелет на них */
-const BONE = () => M(0xe0d7bf), BONE_D = () => M(0xb9ae94);
-function bone(g, a, b, r, mat) {                               // кость между двумя точками, с утолщениями на концах
-  const A = new THREE.Vector3(...a), Bv = new THREE.Vector3(...b), d = Bv.clone().sub(A), m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 6), mat);
-  m.position.copy(A).add(Bv).multiplyScalar(.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); g.add(m);
-  for (const p of [A, Bv]) { const k = new THREE.Mesh(new THREE.BoxGeometry(r * 2.4, r * 2.4, r * 2.4), mat); k.position.copy(p); g.add(k) }
+const tireShapes = (a0, a1) => { const n = Math.max(2, Math.round(14 * (a1 - a0) / TAU));   // физика шины — шары по кольцу
+  return Array.from({ length: n }, (_, k) => { const a = a0 + (k + .5) / n * (a1 - a0); return [new CANNON.Sphere(.25), [Math.cos(a) * .7, .26, Math.sin(a) * .7]] }) };
+const TIRE_CHIPS = ['#25262a', '#4a4b52', '#4e3b29', '#c8ced6'];
+/* скелет Егора Филатова лежит на спине вдоль X, огромный череп у −x. Кости толстые, с шишками-мыщелками на концах.
+   Три части — каждая сама по себе предмет: лом разбирает скелет на них */
+const BONE = () => M(0xe9e0c6), BONE_D = () => M(0xc4b692), BHOLE = () => M(0x17110c), TOOTH = () => M(0xf8f3e3), UP = new THREE.Vector3(0, 1, 0);
+function bone(g, a, b, r, mat, knob = 1.3) {                   // кость от точки a до b; knob — размер шишек на концах (0 — без них)
+  const A = new THREE.Vector3(...a), Bv = new THREE.Vector3(...b), d = Bv.clone().sub(A), len = d.length(); d.normalize();
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.08, len, 7), mat); m.position.copy(A).add(Bv).multiplyScalar(.5); m.quaternion.setFromUnitVectors(UP, d); g.add(m);
+  if (!knob) return;
+  const sd = new THREE.Vector3().crossVectors(d, UP); if (sd.lengthSq() < 1e-4) sd.set(1, 0, 0); sd.normalize();
+  for (const [p, k] of [[A, 1], [Bv, -1]]) for (const s of [-1, 1]) { const n = new THREE.Mesh(new THREE.SphereGeometry(r * knob, 7, 5), mat);
+    n.position.copy(p).addScaledVector(sd, s * r * .7).addScaledVector(d, k * r * .3); g.add(n) }
 }
-function skullPart(g) {                                        // аномально большой череп: лежит затылком вниз, лицом вверх
-  const B = BONE(), S = BONE_D(), D = M(0x2a231c), cr = new THREE.SphereGeometry(.25, 10, 8); cr.scale(1.1, .9, .96);
-  part(g, cr, B, -.03, .23, 0);
-  part(g, new THREE.BoxGeometry(.2, .1, .3), B, .17, .17, 0);
-  for (const s of [-1, 1]) { part(g, new THREE.BoxGeometry(.11, .05, .09), D, .1, .42, s * .085); part(g, new THREE.BoxGeometry(.07, .05, .05), S, .2, .36, s * .14) }
-  part(g, new THREE.BoxGeometry(.05, .04, .045), D, .19, .39, 0, 0, 0, .3);                     // нос
-  for (let k = 0; k < 6; k++) part(g, new THREE.BoxGeometry(.022, .03, .025), B, .27, .27, -.065 + k * .026);
-  part(g, new THREE.BoxGeometry(.08, .07, .22), S, .3, .19, 0);                                  // нижняя челюсть
-  for (let k = 0; k < 5; k++) part(g, new THREE.BoxGeometry(.02, .026, .022), B, .27, .23, -.052 + k * .026);
-  part(g, new THREE.BoxGeometry(.06, .02, .012), S, -.08, .44, .1, .5);                          // трещинка
-}
-function chestPart(g) {                                        // позвоночник, рёбра, грудина и руки вдоль тела
-  const B = BONE(), S = BONE_D();
-  for (let k = 0; k < 9; k++) part(g, new THREE.BoxGeometry(.045, .05, .07), k % 2 ? S : B, -.26 + k * .06, .045, 0);
-  for (let k = 0; k < 6; k++) for (const s of [-1, 1]) { const t = new THREE.TorusGeometry(.11, .013, 4, 8, Math.PI); t.rotateZ(-ZR); t.rotateY(-s * ZR); t.scale(1, 1, 1.5); part(g, t, k % 2 ? S : B, -.2 + k * .062, .157, 0) }
-  part(g, new THREE.BoxGeometry(.28, .03, .045), B, -.07, .27, 0);                               // грудина
+function skullPart(g) {                                        // аномально большой череп: лежит затылком вниз, лицом вверх, подбородком к телу (+x)
+  const B = BONE(), S = BONE_D(), D = BHOLE(), T = TOOTH();
+  const cr = new THREE.SphereGeometry(.27, 12, 9); cr.scale(1.05, .78, 1); part(g, cr, B, -.07, .22, 0);   // свод
+  part(g, new THREE.BoxGeometry(.28, .3, .46), B, .08, .25, 0);                                  // плоское лицо смотрит вверх
+  part(g, new THREE.BoxGeometry(.07, .05, .5), S, -.03, .415, 0);                                // тяжёлая надбровная дуга
   for (const s of [-1, 1]) {
-    part(g, new THREE.BoxGeometry(.04, .025, .16), S, -.25, .2, s * .1);                         // ключицы
-    bone(g, [-.27, .07, s * .25], [0, .05, s * .27], .022, B);
-    bone(g, [0, .05, s * .27], [.24, .05, s * .25], .016, B); bone(g, [0, .05, s * .29], [.24, .05, s * .28], .013, S);
-    part(g, new THREE.BoxGeometry(.06, .02, .06), B, .28, .04, s * .27);
-    for (let f = 0; f < 4; f++) part(g, new THREE.BoxGeometry(.06, .012, .011), S, .33, .035, s * (.25 + f * .016)) }
+    part(g, new THREE.BoxGeometry(.15, .022, .16), D, .075, .405, s * .125);                       // огромные пустые глазницы
+    part(g, new THREE.BoxGeometry(.13, .1, .07), S, .1, .33, s * .245);                         // скулы торчат вбок
+    part(g, new THREE.BoxGeometry(.26, .09, .05), S, .2, .2, s * .19);                          // ветви челюсти
+  }
+  part(g, new THREE.CylinderGeometry(.055, .055, .022, 3), D, .18, .405, 0, -ZR);                 // носовая дыра — треугольник остриём к глазам
+  part(g, new THREE.BoxGeometry(.05, .12, .34), D, .235, .33, 0);                                 // темнота рта за зубами
+  part(g, new THREE.BoxGeometry(.1, .03, .32), D, .28, .25, 0);
+  for (let k = 0; k < 6; k++) part(g, new THREE.BoxGeometry(.055, .085, .045), T, .245, .355, -.1375 + k * .055);   // верхние зубы
+  part(g, new THREE.BoxGeometry(.09, .13, .36), S, .335, .2, 0);                                  // нижняя челюсть отвисла — рот открыт
+  for (let k = 0; k < 5; k++) part(g, new THREE.BoxGeometry(.05, .06, .045), T, .31, .29, -.11 + k * .055);         // нижние зубы
+  part(g, new THREE.BoxGeometry(.1, .016, .018), D, -.2, .405, .12, .6); part(g, new THREE.BoxGeometry(.08, .016, .018), D, -.13, .41, .075, -.5);   // трещина
 }
-function legsPart(g) {                                         // таз и ноги, стопы торчат вверх
+function chestPart(g) {                                        // позвоночник, рёбра бочкой, грудина, ключицы и руки вдоль тела
   const B = BONE(), S = BONE_D();
-  for (const s of [-1, 1]) part(g, new THREE.BoxGeometry(.13, .11, .12), B, -.02, .08, s * .08, 0, s * .45);
-  part(g, new THREE.BoxGeometry(.1, .06, .08), S, -.08, .05, 0);
+  for (let k = 0; k < 6; k++) { const x = -.27 + k * .085; part(g, new THREE.BoxGeometry(.06, .07, .1), k % 2 ? S : B, x, .045, 0); part(g, new THREE.BoxGeometry(.03, .035, .2), S, x, .04, 0) }
+  for (let k = 0; k < 5; k++) for (const s of [-1, 1]) { const t = new THREE.TorusGeometry(.15, .032, 5, 9, Math.PI); t.rotateZ(-ZR); t.rotateY(-s * ZR); t.scale(1, 1, 1.4); part(g, t, k % 2 ? S : B, -.2 + k * .08, .2, 0) }
+  part(g, new THREE.BoxGeometry(.32, .05, .08), B, -.07, .385, 0);                               // грудина
   for (const s of [-1, 1]) {
-    bone(g, [.04, .05, s * .1], [.34, .05, s * .11], .024, B);
-    part(g, new THREE.BoxGeometry(.04, .03, .05), S, .36, .08, s * .11);
-    bone(g, [.36, .05, s * .11], [.62, .05, s * .115], .02, B); bone(g, [.36, .05, s * .14], [.62, .05, s * .14], .012, S);
-    part(g, new THREE.BoxGeometry(.05, .13, .07), B, .66, .1, s * .12);
-    for (let f = 0; f < 4; f++) part(g, new THREE.BoxGeometry(.02, .05, .012), S, .66, .19, s * (.095 + f * .017)) }
+    bone(g, [-.26, .33, s * .05], [-.29, .16, s * .29], .028, B, 0);                             // ключица
+    part(g, new THREE.SphereGeometry(.06, 7, 5), B, -.28, .09, s * .33);                         // плечевой сустав
+    bone(g, [-.26, .065, s * .34], [0, .06, s * .35], .042, B);                                   // плечевая кость
+    bone(g, [.03, .05, s * .32], [.24, .045, s * .32], .03, S); bone(g, [.03, .045, s * .375], [.24, .04, s * .37], .022, B);   // лучевая и локтевая
+    part(g, new THREE.BoxGeometry(.08, .035, .11), B, .29, .03, s * .345);                       // кисть
+    for (let f = 0; f < 4; f++) part(g, new THREE.BoxGeometry(.08, .028, .022), S, .365, .025, s * (.305 + f * .027)) }
 }
-const SKEL = { skull: [-.69, skullPart], skelChest: [-.06, chestPart], skelLegs: [.3, legsPart] };   // где часть лежит в целом скелете
-const SKEL_SHAPES = { skull: () => [[new CANNON.Box(new CANNON.Vec3(.27, .2, .24)), [-.01, .22, 0]]], skelChest: () => [[new CANNON.Box(new CANNON.Vec3(.3, .13, .28)), [.03, .135, 0]]], skelLegs: () => [[new CANNON.Box(new CANNON.Vec3(.4, .06, .16)), [.27, .07, 0]]] };
+function legsPart(g) {                                         // таз и толстые ноги, стопы торчат пальцами вверх
+  const B = BONE(), S = BONE_D(), D = BHOLE();
+  part(g, new THREE.BoxGeometry(.1, .07, .11), S, .03, .05, 0);                                   // крестец
+  for (const s of [-1, 1]) { const w = new THREE.SphereGeometry(.1, 8, 6); w.scale(.8, .55, 1.2); part(g, w, B, .07, .085, s * .11) }   // крылья таза
+  part(g, new THREE.BoxGeometry(.06, .06, .22), S, .17, .065, 0);
+  for (const s of [-1, 1]) {
+    part(g, new THREE.BoxGeometry(.045, .012, .05), D, .17, .1, s * .06);                        // дыры в тазу
+    bone(g, [.13, .06, s * .13], [.42, .06, s * .13], .052, B);                                   // бедренная кость
+    part(g, new THREE.SphereGeometry(.045, 6, 5), B, .44, .115, s * .13);                        // коленная чашечка
+    bone(g, [.46, .055, s * .12], [.66, .05, s * .12], .042, B); bone(g, [.47, .045, s * .19], [.65, .045, s * .19], .022, S);   // голень
+    part(g, new THREE.BoxGeometry(.08, .07, .1), B, .69, .045, s * .13);                         // пятка
+    part(g, new THREE.BoxGeometry(.07, .16, .1), S, .7, .15, s * .13);                           // стопа вверх
+    for (let f = 0; f < 4; f++) part(g, new THREE.BoxGeometry(.035, .055, .022), B, .7, .255, s * (.093 + f * .025)) }
+}
+const SKEL = { skull: [-.62, skullPart, [-1, 0, 0]], skelChest: [.06, chestPart, [-.25, 0, 0]], skelLegs: [.25, legsPart, [1, 0, 0]] };   // где часть лежит в целом скелете и куда отлетает
+const SKEL_SHAPES = {
+  skull: () => [[new CANNON.Box(new CANNON.Vec3(.325, .21, .27)), [-.025, .21, 0]]],
+  skelChest: () => [[new CANNON.Box(new CANNON.Vec3(.235, .2, .26)), [-.065, .2, 0]], ...[-1, 1].map(s => [new CANNON.Box(new CANNON.Vec3(.34, .05, .065)), [.04, .05, s * .345]])],
+  skelLegs: () => [[new CANNON.Box(new CANNON.Vec3(.37, .07, .2)), [.35, .07, 0]], [new CANNON.Box(new CANNON.Vec3(.05, .14, .18)), [.7, .14, 0]]],
+};
+const BOTTLE_SH = R => () => [[new CANNON.Cylinder(R, R, .56, 10), [-.21, R, 0], QZ90], [new CANNON.Cylinder(R * .55, R * .55, .42, 8), [.28, R, 0], QZ90]];
 const TYPES = {
   coffee: { name: 'Банка кофе', size: 1, mass: 1,
     build(g) { const red = M(0xa8383a), band = M(0xe8d3a0), lid = M(0xc9d3dc);
@@ -438,25 +483,33 @@ const TYPES = {
   pipeHalf: { name: 'Половина трубы', size: 1, mass: 1,
     build(g) { pipeMesh(g, .82, 5) },
     shapes: () => rod(.82) },
-  beer: { name: 'Жестяная бутылка пива', size: 1, mass: .5,
+  beer: { name: 'Жестяная бутылка пива', size: 1, mass: .8,
     build(g) { aluBottle(g) },
-    shapes: () => [[new CANNON.Cylinder(.062, .062, .34, 8), [.02, .062, 0], QZ90]] },
-  glass: { name: 'Зелёная бутылка', size: 1, mass: .6,
+    shapes: BOTTLE_SH(.13) },
+  glass: { name: 'Зелёная бутылка', size: 1, mass: .8,
     build(g) { glassBottle(g) },
-    shapes: () => [[new CANNON.Cylinder(.06, .06, .36, 8), [.015, .06, 0], QZ90]] },
+    shapes: BOTTLE_SH(.125) },
   milk: { name: 'Пакет молока', size: 1, mass: .4,
     build(g) { milkCarton(g) },
     shapes: () => [[new CANNON.Box(new CANNON.Vec3(.065, .14, .065)), [0, .14, 0]]] },
-  tire: { name: 'Огромная шина', size: 4, mass: 10, heavy: true,
-    build(g) { tireMesh(g) },
-    shapes: () => Array.from({ length: 14 }, (_, k) => { const a = k / 14 * 6.2832; return [new CANNON.Sphere(.25), [Math.cos(a) * .7, .26, Math.sin(a) * .7]] }) },
-  skeleton: { name: 'Скелет с огромным черепом', size: 2, mass: 2.8, breaks: true, brokeMsg: 'Скелет разобран на части', chips: ['#e0d7bf', '#b9ae94', '#8c8170'],
-    pieces: Object.entries(SKEL).map(([k, [ox]]) => [k, [ox, 0, 0]]),
+  tire: { name: 'Огромная шина', size: 4, mass: 10, heavy: 'Слишком тяжёлая — даже не сдвинуть. Разруби ломом', breaks: true, brokeMsg: 'Шина разрублена пополам', chips: TIRE_CHIPS,
+    pieces: [['tireHalf', [0, 0, 0], 0, [0, 0, 1]], ['tireHalf', [0, 0, 0], Math.PI, [0, 0, -1]]],
+    build(g) { tireArc(g, 0, TAU) },
+    shapes: () => tireShapes(0, TAU) },
+  tireHalf: { name: 'Половина шины', size: 2, mass: 5, heavy: 'Всё ещё тяжело — разруби ещё раз', breaks: true, brokeMsg: 'Половина шины разрублена', chips: TIRE_CHIPS,
+    pieces: [['tireQuarter', [0, 0, 0], 0, [.7, 0, .7]], ['tireQuarter', [0, 0, 0], -ZR, [-.7, 0, .7]]],
+    build(g) { tireArc(g, 0, Math.PI) },
+    shapes: () => tireShapes(0, Math.PI) },
+  tireQuarter: { name: 'Кусок шины', size: 1, mass: 2,
+    build(g) { tireArc(g, 0, ZR) },
+    shapes: () => tireShapes(0, ZR) },
+  skeleton: { name: 'Скелет Егора Филатова', size: 2, mass: 3, breaks: true, brokeMsg: 'Егор Филатов разобран на части', chips: ['#e9e0c6', '#c4b692', '#8c8170'],
+    pieces: Object.entries(SKEL).map(([k, [ox, , push]]) => [k, [ox, 0, 0], 0, push]),
     build(g) { for (const [ox, fn] of Object.values(SKEL)) { const p = new THREE.Group(); p.position.x = ox; g.add(p); fn(p) } },
     shapes: () => Object.entries(SKEL_SHAPES).flatMap(([k, f]) => f().map(([sh, o]) => [sh, [o[0] + SKEL[k][0], o[1], o[2]]])) },
-  skull: { name: 'Огромный череп', size: 1, mass: .9, build(g) { skullPart(g) }, shapes: SKEL_SHAPES.skull },
-  skelChest: { name: 'Грудная клетка', size: 1, mass: 1, build(g) { chestPart(g) }, shapes: SKEL_SHAPES.skelChest },
-  skelLegs: { name: 'Таз и ноги', size: 1, mass: .9, build(g) { legsPart(g) }, shapes: SKEL_SHAPES.skelLegs },
+  skull: { name: 'Череп Егора Филатова', size: 1, mass: 1, build(g) { skullPart(g) }, shapes: SKEL_SHAPES.skull },
+  skelChest: { name: 'Рёбра Егора Филатова', size: 1, mass: 1.1, build(g) { chestPart(g) }, shapes: SKEL_SHAPES.skelChest },
+  skelLegs: { name: 'Ноги Егора Филатова', size: 1, mass: 1, build(g) { legsPart(g) }, shapes: SKEL_SHAPES.skelLegs },
 };
 const trash = [];
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -494,6 +547,7 @@ function genTrash() {
     else if (type === 'pipe' || type === 'skeleton') { const along = Math.random() < .5, a = PIT0 + (Math.random() * (PIT1 - PIT0 - 1) | 0), b = pick(), flip = Math.random() < .5 ? Math.PI : 0;
       if (along) { if (!cellOk(a, b, z) || !cellOk(a + 1, b, z)) return false; x = a + 1; zz = b + .5; ry = flip }
       else { if (!cellOk(b, a, z) || !cellOk(b, a + 1, z)) return false; x = b + .5; zz = a + 1; ry = Math.PI / 2 + flip } }
+    else if (type === 'beer' || type === 'glass') { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5; zz = j + .5; ry = (Math.random() * 4 | 0) * ZR + rnd(-.1, .1) }   // длинная бутылка — вдоль клетки
     else { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
     const t = makeTrash(type, x, -(z + 1) * BH + .01, zz, ry, z); t.g.visible = false;
     const cells = new Set();                                     // какие клетки ямы задевает предмет
@@ -525,7 +579,7 @@ function activate(t) {
   // раньше он был у дна, и упавшая на бок банка сама вставала, как неваляшка
   t.g.updateMatrixWorld(true);
   const inv = t.g.matrixWorld.clone().invert(), bb = new THREE.Box3();
-  t.g.traverse(o => { if (o.isMesh) { o.geometry.computeBoundingBox(); bb.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld).applyMatrix4(inv)) } });
+  t.g.traverse(o => { if (o.isMesh) { o.geometry.computeBoundingBox(); bb.union(o.geometry.boundingBox.clone().applyMatrix4(inv.clone().multiply(o.matrixWorld))) } });
   const c = bb.getCenter(new THREE.Vector3()); t.com = c; t.local = bb.translate(c.clone().negate());
   // умеренное торможение: предмет не «липнет» к стенкам и не застывает в наклоне
   const body = new CANNON.Body({ mass: TYPES[t.type].mass, collisionFilterGroup: G_TRASH, collisionFilterMask: G_BLOCK | G_CHAR, linearDamping: .3, angularDamping: .45 });
@@ -535,6 +589,7 @@ function activate(t) {
   body.quaternion.set(t.g.quaternion.x, t.g.quaternion.y, t.g.quaternion.z, t.g.quaternion.w);
   body.sleepSpeedLimit = .12; body.sleepTimeLimit = .5;
   world.addBody(body); t.body = body;
+  if (charHits(t)) { body.collisionFilterMask = G_BLOCK; t.ghost = true }
 }
 /* ---------- освещение по блокам (как в Minecraft) ----------
    в каждой клетке мира хранится уровень света 0..15. Небо светит сверху и слабеет с глубиной — ниже SKY_D слоёв полный мрак.
@@ -725,8 +780,8 @@ function tap(e) {
   if (h && h.object.userData.deco && Math.hypot(h.point.x - BASKET.x, h.point.z - BASKET.z) < BASKET.r + .12) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
   const t = h && h.object.userData.t;
   if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
-    const p = t.body.position;
-    if (Math.hypot(p.x - CH.x, p.z - CH.z) < 1.1 && Math.abs(p.y - CH.y) < 1) {
+    const p = itemPt(t);
+    if (Math.hypot(p.x - CH.x, p.z - CH.z) < 1 && Math.abs(p.y - CH.y) < 1) {
       if (tool === 'glove' && !CH.held) { faceTo(p.x, p.z); grabItem(t); return }
       if (tool === 'bar') { if (CH.held) { busy(); return } if (!TYPES[t.type].breaks) { shakeTool('bar'); return } faceTo(p.x, p.z); CH.swing = .3; breakTrash(t); return }
     }
@@ -744,11 +799,11 @@ function tap(e) {
 function breakTrash(t) {
   const b = t.body, T0 = TYPES[t.type], q = b.quaternion, c = t.com;
   removeTrash(t);
-  for (const [kind, o] of T0.pieces) {                         // части встают туда, где лежали в целом предмете, и разлетаются с лёгким толчком
-    const p = b.pointToWorldFrame(new CANNON.Vec3(o[0] - c.x, o[1] - c.y, o[2] - c.z));
-    const h = makeTrash(kind, p.x, p.y, p.z, 0, -1); h.g.quaternion.set(q.x, q.y, q.z, q.w); h.g.updateMatrixWorld(true);
-    activate(h); const dir = q.vmult(new CANNON.Vec3(Math.sign(o[0]), 0, 0));
-    h.body.velocity.set(dir.x * 1.1, 1.2, dir.z * 1.1);
+  for (const [kind, o, ry = 0, push = [Math.sign(o[0]), 0, 0]] of T0.pieces) {   // части встают туда, где лежали в целом предмете, и разлетаются с лёгким толчком
+    const p = b.pointToWorldFrame(new CANNON.Vec3(o[0] - c.x, o[1] - c.y, o[2] - c.z)), pq = q.mult(new CANNON.Quaternion().setFromEuler(0, ry, 0));
+    const h = makeTrash(kind, p.x, p.y, p.z, 0, -1); h.g.quaternion.set(pq.x, pq.y, pq.z, pq.w); h.g.updateMatrixWorld(true);
+    activate(h); const dir = q.vmult(new CANNON.Vec3(...push)), hv = TYPES[kind].heavy ? .5 : 1;
+    h.body.velocity.set(dir.x * 1.1 * hv, 1.2 * hv + .2, dir.z * 1.1 * hv);
   }
   const p = b.position; burst(p.x, p.y + .1, p.z, T0.chips || ['#8a4b2a', '#a35a2c', '#5f7f9e', '#c9d3dc'], 22, .8);
   haptic('heavy'); toast(T0.brokeMsg || 'Сломано: ' + T0.name);
@@ -887,20 +942,28 @@ function act() {
   if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
   shakeTool('pick');
 }
+function itemPt(t) {                                           // ближняя к персонажу точка предмета: у шины и скелета край намного ближе середины
+  const b = t.body, L = t.local, v = b.pointToLocalFrame(new CANNON.Vec3(CH.x, CH.y + .4, CH.z));
+  v.set(Math.min(L.max.x, Math.max(L.min.x, v.x)), Math.min(L.max.y, Math.max(L.min.y, v.y)), Math.min(L.max.z, Math.max(L.min.z, v.z)));
+  return b.pointToWorldFrame(v);
+}
+function charHits(t) {                                         // предмет задевает Кирью?
+  const p = itemPt(t); return Math.hypot(p.x - CH.x, p.z - CH.z) < .25 && p.y > CH.y - .05 && p.y < CH.y + 1.45;
+}
 function nearItem(ok) {                                        // ближайший найденный предмет перед персонажем, до которого достаём
-  let best = null, bd = 1.05;
-  for (const t of trash) { if (!t.active || t.held || !ok(t)) continue; const p = t.body.position, dx = p.x - CH.x, dz = p.z - CH.z, dist = Math.hypot(dx, dz);
+  let best = null, bd = .95;
+  for (const t of trash) { if (!t.active || t.held || !ok(t)) continue; const p = itemPt(t), dx = p.x - CH.x, dz = p.z - CH.z, dist = Math.hypot(dx, dz);
     if (Math.abs(p.y - CH.y) < .9 && dist < bd && dx * CH.face.x + dz * CH.face.z > -.1) { bd = dist; best = t } }
   return best;
 }
 /* перчатка: предмет поднимается к груди и едет вместе с персонажем; повторное действие ставит его перед собой */
 function grabItem(t) {
-  if (TYPES[t.type].heavy) { shakeTool('glove'); haptic('warn'); toast('Слишком тяжёлая — даже не сдвинуть'); return }
+  const hv = TYPES[t.type].heavy; if (hv) { shakeTool('glove'); haptic('warn'); toast(hv === true ? 'Слишком тяжёлая — даже не сдвинуть' : hv); return }
   const b = t.body; t.held = true; CH.held = t; t.hinted = false;
   b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
   CH.swing = 0; haptic('medium'); toast('В руках: ' + TYPES[t.type].name);
 }
-const PRICE = { tin: 1, coffee: 2, pipeHalf: 4, wormTin: 5 };   // сколько монет даёт торговец за кусочек мусора
+const PRICE = { tin: 1, coffee: 2, beer: 1, glass: 1, milk: 1, pipeHalf: 4, wormTin: 5, tireQuarter: 1, skeleton: 1, skull: 1, skelChest: 1, skelLegs: 1 };   // сколько монет даёт торговец за кусочек мусора
 function heldFree(x, y, z, sell) {                             // можно ли держать предмет в этой точке
   const inPit = x > PIT0 + .12 && x < PIT1 - .12 && z > PIT0 + .12 && z < PIT1 - .12;
   const inWin = sell && SHOP.revealed && x > WIN.x0 + .08 && x < WIN.x1 - .08 && z > BASKET.z - BASKET.r + .1 && z <= PIT0 + .06 && y > SHOP.floor + .12 && y < SHOP.ceil - .12;
@@ -937,6 +1000,7 @@ function dropItem() {
   const t = CH.held; if (!t) return; const b = t.body;        // ставим там, где держали (место уже проверено: не в стене и не за краем)
   b.type = CANNON.Body.DYNAMIC; b.updateMassProperties(); b.velocity.set(CH.face.x * .4, 0, CH.face.z * .4); b.angularVelocity.set(0, 0, 0); b.wakeUp();
   t.held = false; CH.held = null; haptic('light');
+  if (charHits(t)) { t.ghost = true; b.collisionFilterMask = G_BLOCK }
 }
 function stepChar(dt) {
   let ix = joy.x, iy = joy.y;
@@ -1446,7 +1510,8 @@ function frame(now) {
     if (!t.held) {
       if (winZone(t.body.position)) {                          // летит в корзину: продаём, когда опустится ниже края (или застрянет над ней)
         t.zoneT = (t.zoneT || 0) + dt; if (t.body.position.y < SHOP.floor + BASKET.h + .12 || t.zoneT > .8) { sold.push(t); continue } }
-      else { t.zoneT = 0; depenetrate(t); if (lostItem(t)) returnItem(t) } }
+      else { t.zoneT = 0; depenetrate(t); if (lostItem(t)) returnItem(t);
+        if (t.ghost ? !charHits(t) : CH.state !== 'walk' && charHits(t)) { t.ghost = !t.ghost; t.body.collisionFilterMask = t.ghost ? G_BLOCK : G_BLOCK | G_CHAR } } }   // упал или запрыгнул прямо на предмет — не расталкиваем
     t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
     const vy = t.body.velocity.y;                             // удар об пол: тряска и пыль — один раз за падение
     if (!t.held && t.falling && vy > -1) { t.falling = false; if (t.fallV < -5) { haptic('medium'); const p = t.g.position; burst(p.x, p.y + .05, p.z, ['#8c7a6a', '#5e4c42', '#b8a48c'], 10, .5) } }
