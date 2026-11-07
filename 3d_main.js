@@ -488,8 +488,8 @@ const TYPES = {
     build(g) { beerCan(g) },
     shapes: () => [[new CANNON.Cylinder(.105, .105, .36, 10), [0, .18, 0]]] },
   glass: { name: 'Зелёная бутылка', size: 1, mass: .8,
-    build(g) { glassBottle(g) },
-    shapes: BOTTLE_SH(.125) },
+    build(g) { const s = new THREE.Group(); s.scale.setScalar(.9); g.add(s); glassBottle(s) },   // на 10% меньше исходной
+    shapes: () => [[new CANNON.Cylinder(.1125, .1125, .504, 10), [-.189, .1125, 0], QZ90], [new CANNON.Cylinder(.062, .062, .378, 8), [.252, .1125, 0], QZ90]] },
   milk: { name: 'Пакет молока', size: 1, mass: .4,
     build(g) { milkCarton(g) },
     shapes: () => [[new CANNON.Box(new CANNON.Vec3(.065, .14, .065)), [0, .14, 0]]] },
