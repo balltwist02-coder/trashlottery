@@ -331,17 +331,18 @@ const ZR = Math.PI / 2, TAU = Math.PI * 2;                     // ZR — пов�
 const lathe = (prof, seg, a = 0, len = TAU) => new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), seg, a, len);
 /* бутылки большие — длиной почти в клетку: стоя достали бы Кирью до предплечья. Внутри группы b бутылка стоит (дно в 0), сама группа лежит вдоль X */
 function bottleBase(g, L, R) { const b = new THREE.Group(); b.position.set(-L / 2, R, 0); b.rotation.z = -ZR; g.add(b); return b }
-function aluBottle(g) {                                        // алюминиевая пивная бутылка: ярко-красная, белый пояс, серебристые ободки, без марки
-  const red = M(0xe8262c), redD = M(0xb8141c), wh = M(0xf6f2e8), alu = M(0xd6dce2), L = .98, R = .13, b = bottleBase(g, L, R);
-  part(b, lathe([[0, 0], [R * .9, 0], [R, .025], [R, .5], [R * .96, .56], [R * .84, .63], [R * .66, .7], [R * .5, .76], [R * .42, .81], [R * .4, .87], [R * .47, .885], [R * .47, .905], [R * .4, .91], [0, .91]], 14), red, 0, 0, 0);
-  part(b, new THREE.CylinderGeometry(R + .004, R + .004, .17, 14, 1, true), wh, 0, .33, 0);       // белый пояс
-  part(b, new THREE.CylinderGeometry(R + .007, R + .007, .03, 14, 1, true), redD, 0, .33, 0);     // красная полоса по поясу
-  part(b, new THREE.CylinderGeometry(R + .004, R + .004, .035, 14, 1, true), alu, 0, .045, 0);    // серебристый ободок у дна
-  part(b, new THREE.CylinderGeometry(R * .5, R * .52, .05, 12, 1, true), wh, 0, .79, 0);          // белое колечко на горлышке
-  part(b, new THREE.CylinderGeometry(R * .53, R * .53, .022, 12, 1, true), alu, 0, .915, 0);
-  part(b, new THREE.CylinderGeometry(R * .5, R * .5, .06, 12), redD, 0, .945, 0);                 // пробка
-  const hl = M(0xff8f86), hy = R + Math.sqrt(R * R - .0025) + .005;                             // блики по верху бока
-  part(g, new THREE.BoxGeometry(.16, .014, .03), hl, -.35, hy, .05); part(g, new THREE.BoxGeometry(.08, .014, .026), hl, -.03, hy, .05);
+function beerCan(g) {                                         // высокая пивная банка размером с банку кофе: серебристо-белая спереди, красная сзади, красные пояса, без надписей и марки
+  const wh = M(0xeceef0), red = M(0xe0262c), redD = M(0xb3161d), alu = M(0xb9c0c8), dk = M(0x5b636c), R = .105, H = .36;
+  part(g, new THREE.CylinderGeometry(R, R, H - .04, 14), [wh, alu, alu], 0, .02 + (H - .04) / 2, 0);
+  part(g, new THREE.CylinderGeometry(R + .003, R + .003, H - .05, 14, 1, true, Math.PI * .55, Math.PI * .9), red, 0, .025 + (H - .05) / 2, 0);   // красная спинка
+  part(g, new THREE.CylinderGeometry(R + .005, R + .005, .045, 14, 1, true), red, 0, .06, 0);            // красный пояс внизу
+  part(g, new THREE.CylinderGeometry(R + .006, R + .006, .012, 14, 1, true), redD, 0, .088, 0);
+  part(g, new THREE.CylinderGeometry(R + .005, R + .005, .03, 14, 1, true), red, 0, H - .07, 0);         // и под горлышком
+  part(g, new THREE.CylinderGeometry(R * .9, R, .02, 14), alu, 0, .01, 0);                               // донышко
+  part(g, new THREE.CylinderGeometry(R * .86, R, .03, 14), alu, 0, H - .025, 0);                         // скос к крышке
+  part(g, new THREE.CylinderGeometry(R * .88, R * .88, .012, 14), alu, 0, H - .004, 0);                  // крышка с ободком
+  part(g, new THREE.BoxGeometry(.05, .006, .03), dk, .02, H + .004, 0);                                  // ключ-открывашка
+  part(g, new THREE.BoxGeometry(.03, .006, .02), M(0x2a2e33), -.03, H + .002, 0);                        // дырочка
 }
 function glassBottle(g) {                                      // светло-зелёная стеклянная бутылка: бумажная этикетка, длинное горлышко, блики
   const gl = M(0x96e2a2), gd = M(0x5fb672), hl = M(0xf0fff2), lab = M(0xf3e5b6), labR = M(0xd2483a), dk = M(0x1c3a25), L = .98, R = .125, b = bottleBase(g, L, R), hy = R + Math.sqrt(R * R - .0025) + .005;
@@ -483,9 +484,9 @@ const TYPES = {
   pipeHalf: { name: 'Половина трубы', size: 1, mass: 1,
     build(g) { pipeMesh(g, .82, 5) },
     shapes: () => rod(.82) },
-  beer: { name: 'Жестяная бутылка пива', size: 1, mass: .8,
-    build(g) { aluBottle(g) },
-    shapes: BOTTLE_SH(.13) },
+  beer: { name: 'Банка пива', size: 1, mass: .5,
+    build(g) { beerCan(g) },
+    shapes: () => [[new CANNON.Cylinder(.105, .105, .36, 10), [0, .18, 0]]] },
   glass: { name: 'Зелёная бутылка', size: 1, mass: .8,
     build(g) { glassBottle(g) },
     shapes: BOTTLE_SH(.125) },
@@ -547,7 +548,7 @@ function genTrash() {
     else if (type === 'pipe' || type === 'skeleton') { const along = Math.random() < .5, a = PIT0 + (Math.random() * (PIT1 - PIT0 - 1) | 0), b = pick(), flip = Math.random() < .5 ? Math.PI : 0;
       if (along) { if (!cellOk(a, b, z) || !cellOk(a + 1, b, z)) return false; x = a + 1; zz = b + .5; ry = flip }
       else { if (!cellOk(b, a, z) || !cellOk(b, a + 1, z)) return false; x = b + .5; zz = a + 1; ry = Math.PI / 2 + flip } }
-    else if (type === 'beer' || type === 'glass') { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5; zz = j + .5; ry = (Math.random() * 4 | 0) * ZR + rnd(-.1, .1) }   // длинная бутылка — вдоль клетки
+    else if (type === 'glass') { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5; zz = j + .5; ry = (Math.random() * 4 | 0) * ZR + rnd(-.1, .1) }   // длинная бутылка — вдоль клетки
     else { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
     const t = makeTrash(type, x, -(z + 1) * BH + .01, zz, ry, z); t.g.visible = false;
     const cells = new Set();                                     // какие клетки ямы задевает предмет
