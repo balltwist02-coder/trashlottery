@@ -552,7 +552,7 @@ function genTrash() {
     else { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
     const t = makeTrash(type, x, -(z + 1) * BH + .01, zz, ry, z); t.g.visible = false;
     const cells = new Set();                                     // какие клетки ямы задевает предмет
-    t.g.traverse(o => { if (!o.isMesh) return; const bb = new THREE.Box3().setFromObject(o);
+    t.g.traverse(o => { if (!o.isMesh) return; const bb = new THREE.Box3().setFromObject(o, true);
       for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a]; if (bb.max.x > i + .03 && bb.min.x < i + .97 && bb.max.z > j + .03 && bb.min.z < j + .97) cells.add(a) } });
     t.cells = [...cells]; return true;
   };
@@ -847,11 +847,11 @@ function stepHeld(g) {
 function depenetrate(t) {
   // срабатывает, только если СЕРЕДИНА предмета оказалась внутри блока; край, свисающий со ступеньки, — это нормально
   const b = t.body; if (b.sleepState === CANNON.Body.SLEEPING) return;
-  const c = t.local.getCenter(new THREE.Vector3()), w = b.pointToWorldFrame(new CANNON.Vec3(c.x, c.y, c.z));
+  const c = new CANNON.Vec3(); for (const o of b.shapeOffsets) c.vadd(o, c); c.scale(1 / b.shapeOffsets.length, c);
+  const w = b.pointToWorldFrame(c);
   const a = ACT.findIndex(([i, j]) => w.x >= i && w.x < i + 1 && w.z >= j && w.z < j + 1); if (a < 0) return;
   const f = floorY(a); if (w.y >= f - .03) return;
-  const bb = worldBox(t, new THREE.Vector3(b.position.x, b.position.y, b.position.z));
-  b.position.y += f + .01 - bb.min.y; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+  b.updateAABB(); b.position.y += f + .01 - b.aabb.lowerBound.y; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
 }
 
 /* ---------- контур мусора: 1 пиксель тёмной обводки, чтобы предметы не сливались в куче ----------
@@ -970,13 +970,26 @@ function heldFree(x, y, z, sell) {                             // можно л�
   const inWin = sell && SHOP.revealed && x > WIN.x0 + .08 && x < WIN.x1 - .08 && z > BASKET.z - BASKET.r + .1 && z <= PIT0 + .06 && y > SHOP.floor + .12 && y < SHOP.ceil - .12;
   return (inPit || inWin) && !solidAt(Math.floor(x), Math.floor(z), Math.floor(-y / BH));
 }
+function poseFree(t, x, y, z, yaw, sell) {                    // весь предмет (его углы и середины сторон) не в стене и не за краем
+  const c = Math.cos(yaw), s = Math.sin(yaw), L = t.local, m = .06;
+  for (const lx of [L.min.x + m, 0, L.max.x - m]) for (const lz of [L.min.z + m, 0, L.max.z - m])
+    if (!heldFree(x + lx * c + lz * s, y, z - lx * s + lz * c, sell)) return false;
+  return true;
+}
 function carryPose(t) {
   const b = t.body, up = t.local.max.y - t.local.min.y, y = CH.y + .95 + up * .3, sell = !!PRICE[t.type];
-  let k = 1; for (; k > 0; k -= .125) if (heldFree(CH.x + CH.face.x * .42 * k, y, CH.z + CH.face.z * .42 * k, sell)) break;   // упёрлись — подтягиваем к себе
+  let k = 1, rot = t.carryRot || 0, found = false;               // упёрлись — подтягиваем к себе; поперёк не влезает — разворачиваем вдоль
+  for (const r of [rot, rot ? 0 : ZR]) { for (k = 1; k >= 0; k -= .125) if (poseFree(t, CH.x + CH.face.x * .42 * k, y, CH.z + CH.face.z * .42 * k, CH.yaw + r, sell)) { found = true; break }
+    if (found) { rot = r; break } }
+  let sx = 0, sz = 0;                                            // в углу не влезает никак — сдвигаем вдоль длинной стороны к середине ямы
+  if (!found) for (const r of [rot, rot ? 0 : ZR]) { const ax = Math.cos(CH.yaw + r), az = -Math.sin(CH.yaw + r);
+    for (const sh of [.25, -.25, .5, -.5, .75, -.75, 1, -1]) if (poseFree(t, CH.x + ax * sh, y, CH.z + az * sh, CH.yaw + r, sell)) { found = true; rot = r; sx = ax * sh; sz = az * sh; break }
+    if (found) break }
+  if (!found) rot = t.carryRot || 0; if (sx || sz || !found) k = 0; t.carryRot = rot;
   if (k < 1 && !sell && !t.hinted && heldFree(CH.x + CH.face.x * .42, y, CH.z + CH.face.z * .42, true)) {   // несёт к корзине то, что не продаётся
     t.hinted = true; toast(t.type === 'pipe' ? 'Целиком не влезет — сначала разломай ломом' : TYPES[t.type].light ? 'Фонарь лучше оставить себе' : 'Это торговцу не нужно') }
-  b.position.set(CH.x + CH.face.x * .42 * Math.max(0, k), y, CH.z + CH.face.z * .42 * Math.max(0, k));
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw, 0));   // длинные вещи держит поперёк себя
+  b.position.set(CH.x + sx + CH.face.x * .42 * Math.max(0, k), y, CH.z + sz + CH.face.z * .42 * Math.max(0, k));
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw + rot, 0));   // длинные вещи держит поперёк себя
   b.quaternion.set(q.x, q.y, q.z, q.w); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
 }
 /* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
