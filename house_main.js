@@ -143,9 +143,7 @@ function makeBg() {
 const camF = new THREE.Vector3(PC, 0, PC);                   // точка, за которой следит камера (сглаженная)
 function placeCam(dt) {
   const k = 1 - Math.exp(-dt * 4);                           // по горизонтали камера стоит на центре ямы, по глубине плавно идёт за персонажем
-  const up = Math.max(0, Math.min(1, (CH.y - .3) / (HF - 1))), out = cellAt(CH.x, CH.z) < 0 && !inR(HS.room, CH.x, CH.z) ? .55 : 0;   // на стенках и лестнице камера идёт за персонажем, в доме — смотрит на дом
-  const tx = PC + (CH.x - PC) * out, tz = PC + (CH.z - PC) * out;
-  camF.x += (tx - camF.x) * k; camF.z += (tz - camF.z) * k; camF.y += (CH.y + .3 + up * .5 - camF.y) * k;
+  camF.x = PC; camF.z = PC; camF.y += (CH.y + .3 - camF.y) * k;
   let sx = Math.round(camF.dot(SCR_R) * PX), sy = Math.round(camF.dot(SCR_U) * PX);
   const t = SCR_R.clone().multiplyScalar(sx / PX).addScaledVector(SCR_U, sy / PX);
   cam.position.copy(t).addScaledVector(VIEW, 60); cam.lookAt(t);
@@ -686,7 +684,7 @@ function updateLight() {
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
   { const mb = Math.min(1.7, .07 + 2.5 * lightAt(MERCH.x, SHOP.floor + .7, MERCH.z));
     if (shopG.br === undefined || Math.abs(shopG.br - mb) > .004) { shopG.br = mb; dimGroup(shopG.userData.mer.root, mb, merBase) } }
-  const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z));    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
+  const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z)) * (HOUSE.under ? .62 : 1);   // под полом дома — в тени    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
   if (CH.br === undefined || Math.abs(CH.br - cb) > .004) { CH.br = cb; dimGroup(chG, cb, chBase) }
 }
 function removeTrash(t) { scene.remove(t.g); if (t.body) world.removeBody(t.body); trash.splice(trash.indexOf(t), 1) }
@@ -1019,116 +1017,121 @@ function dropItem() {
   t.held = false; CH.held = null; haptic('light');
   if (charHits(t)) { t.ghost = true; b.collisionFilterMask = G_BLOCK }
 }
-/* ---------- дом на сваях: постоянная часть мира, одинаковая для всех участков ----------
-   лестница из досок начинается на правой декоративной стенке у переднего края, идёт к заднему углу,
-   поворачивает и поднимается вдоль левой стенки к площадке; с площадки дверь ведёт в дом за левой стенкой.
-   ближние стены и крыши у дома нет — видно всё, что внутри */
-const HF = 6 * BH, H1 = 2.8;                                 // пол дома и площадка в углу
+/* ---------- дом на сваях над участком: постоянная часть мира, одинаковая для всех участков ----------
+   лестница стоит на блоках прямо у края ямы: первый пролёт — вдоль правой стенки к заднему углу, второй — вдоль левой стенки вперёд.
+   наверху — балкон вдоль левой лицевой стороны, из него дверь в дом. у дома три стены: две дальние и стена с дверью.
+   пол дома лежит над всем участком и над первым пролётом; над вторым пролётом — проём */
+const HF = 8 * BH, H1 = HF * 4 / 6.9;                          // пол дома и площадка в углу
 const HS = {
-  f1: { x0: 1.4, x1: 5.6, z0: .6, z1: 1.4 },                   // первый пролёт: вдоль правой стенки к углу, вверх при уменьшении x
-  c1: { x0: .6, x1: 1.4, z0: .6, z1: 1.4 },                    // площадка в углу
-  f2: { x0: .6, x1: 1.4, z0: 1.4, z1: 4.6 },                   // второй пролёт: вдоль левой стенки, вверх при увеличении z
-  top: { x0: .6, x1: 1.75, z0: 4.6, z1: 5.6 },                 // площадка у двери
-  door: { x0: 1.5, x1: 2.45, z0: 4.78, z1: 5.42 },             // проём в дальней стене дома — дверь смотрит на нас
-  room: { x0: 2.36, x1: 5.75, z0: 2.36, z1: 5.75 },            // где можно ходить внутри
-  floor: { x0: 2, x1: 6, z0: 2, z1: 6 },                       // пол — ровно над ямой
+  f1: { x0: 1.9, x1: 5.9, z0: 1.1, z1: 1.9 },                  // первый пролёт: вдоль края ямы по правой стенке, вверх к углу (при уменьшении x)
+  c1: { x0: 1.1, x1: 1.9, z0: 1.1, z1: 1.9 },                  // площадка в углу
+  f2: { x0: 1.1, x1: 1.9, z0: 1.9, z1: 4.8 },                  // второй пролёт: вдоль края ямы по левой стенке, вверх вперёд
+  balc: { x0: 1.1, x1: 5.75, z0: 4.8, z1: 5.78 },              // балкон вдоль левой лицевой стороны
+  door: { x0: 2.2, x1: 2.9, z0: 4.4, z1: 5 },                  // дверь из балкона в дом
+  room: { x0: 2.25, x1: 5.75, z0: 1.25, z1: 4.55 },            // где можно ходить в доме
 };
+const DOOR_X = [2.15, 2.95], WALL_Z = 4.8;                     // проём и линия стены с дверью
 const inR = (r, x, z, m = 0) => x >= r.x0 - m && x <= r.x1 + m && z >= r.z0 - m && z <= r.z1 + m;
-function outerSurfaces(x, z) {                                 // все поверхности над точкой (кроме ямы)
+function outerSurfaces(x, z) {                                 // все поверхности над точкой, кроме дна ямы
   const s = [];
   if (inR({ x0: .25, x1: 2, z0: .25, z1: 5.75 }, x, z) || inR({ x0: .25, x1: 5.75, z0: .25, z1: 2 }, x, z)) s.push(0);   // верх декоративных стенок
   if (inR(HS.f1, x, z)) s.push(H1 * (HS.f1.x1 - x) / (HS.f1.x1 - HS.f1.x0));
   if (inR(HS.c1, x, z)) s.push(H1);
   if (inR(HS.f2, x, z)) s.push(H1 + (HF - H1) * (z - HS.f2.z0) / (HS.f2.z1 - HS.f2.z0));
-  if (inR(HS.top, x, z) || inR(HS.door, x, z) || inR(HS.room, x, z)) s.push(HF);
+  if (inR(HS.balc, x, z) || inR(HS.door, x, z) || inR(HS.room, x, z)) s.push(HF);
   return s;
 }
-function groundAt(x, z, yRef) {                                // на какой высоте стоять в точке; null — там пусто
-  const s = outerSurfaces(x, z), a = cellAt(x, z); if (a >= 0) s.push(floorY(a)); if (!s.length) return null;   // над ямой ещё и пол дома
+function groundAt(x, z, yRef) {                                // на какой высоте стоять в точке; null — там пусто или не залезть
+  const s = outerSurfaces(x, z), a = cellAt(x, z); if (a >= 0) s.push(floorY(a)); if (!s.length) return null;
   let best = -Infinity; for (const h of s) if (h <= yRef + .35 && h > best) best = h;
   if (best > -Infinity) return best;
-  const lo = Math.min(...s); return lo - yRef < BH + .1 ? lo : null;   // выше, чем можно залезть, — там для нас пусто
+  const lo = Math.min(...s); return lo - yRef < BH + .1 ? lo : null;
 }
-function outerHoldFree(x, y, z) {                              // держать предмет снаружи ямы: над лестницей, площадками, стенками, в доме
+const inHouse = () => CH.y > HF - .3 && (inR(HS.room, CH.x, CH.z, .1) || inR(HS.door, CH.x, CH.z));
+const underHouse = () => CH.y > .3 && CH.y < HF - .3 && cellAt(CH.x, CH.z) < 0;   // на лестнице под полом
+function outerHoldFree(x, y, z) {                              // держать предмет снаружи ямы: над лестницей, балконом, стенками, в доме
   const s = outerSurfaces(x, z); if (!s.length) return false;
-  if (inR(HS.floor, x, z) && !inR(HS.room, x, z, .05) && y > HF - .2) return false;   // сквозь стену дома
+  if (y > HF - .2 && !inR(HS.room, x, z, .05) && !inR(HS.balc, x, z, .05) && !inR(HS.door, x, z)) return false;   // сквозь стены дома
   return s.some(h => y > h + .15);
 }
-/* доски «ели из Майнкрафта»: рыжевато-коричневые, с тёмными стыками */
-function plankTex(base, dark, light) {
-  const c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d');
-  for (let r = 0; r < 4; r++) { const off = (r * 7) % 16;
-    for (let px = 0; px < 16; px++) for (let py = 0; py < 4; py++) { const n = Math.sin((px + r * 13) * 12.9898 + py * 78.233) * 43758.5453 % 1;
-      x.fillStyle = py === 3 ? dark : (px === off ? dark : Math.abs(n) < .12 ? light : Math.abs(n) > .9 ? dark : base); x.fillRect(px, r * 4 + py, 1, 1) } }
+/* доски тёмного дуба: широкие, с тёмными стыками и прожилками (своя текстура, не из Майнкрафта) */
+function plankTex(seed, base, dark, light) {
+  const c = document.createElement('canvas'); c.width = c.height = 32; const x = c.getContext('2d');
+  const rnd = (k => () => (k = (k * 16807) % 2147483647) / 2147483647)(seed);
+  for (let b = 0; b < 4; b++) { const sh = (rnd() - .5) * 18, col = n => `rgb(${n[0] + sh | 0},${n[1] + sh * .7 | 0},${n[2] + sh * .45 | 0})`;
+    x.fillStyle = col(base); x.fillRect(0, b * 8, 32, 8);
+    for (let k = 0; k < 5; k++) { x.fillStyle = col(rnd() < .5 ? dark : light); x.fillRect(rnd() * 32 | 0, b * 8 + 1 + (rnd() * 6 | 0), 5 + (rnd() * 12 | 0), 1) }
+    x.fillStyle = `rgb(${dark[0] - 14},${dark[1] - 10},${dark[2] - 6})`; x.fillRect(0, b * 8 + 7, 32, 1);
+    const j = (b * 13 + 5) % 32; x.fillRect(j, b * 8, 1, 7) }
   const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; return t;
 }
-const WOOD = new THREE.MeshLambertMaterial({ map: plankTex('#7a5634', '#4e341d', '#8f6942') });
-const WOOD_D = new THREE.MeshLambertMaterial({ map: plankTex('#5e4127', '#3b2614', '#6e4d2e') });
+const WOOD = new THREE.MeshLambertMaterial({ map: plankTex(7, [74, 50, 28], [52, 34, 18], [92, 64, 38]) });
+const WOOD_D = new THREE.MeshLambertMaterial({ map: plankTex(19, [54, 36, 20], [38, 25, 13], [68, 46, 26]) });
 const houseG = new THREE.Group(); scene.add(houseG);
-function hbox(x0, x1, y0, y1, z0, z1, mat = WOOD, rot = null, body = true) {   // брусок/доска; текстура тянется по размеру: 1 клетка = 16 пикселей
+const TX = .5;                                                 // текстура: 1 клетка = 2 повтора по 32 пикселя
+function hbox(x0, x1, y0, y1, z0, z1, mat = WOOD, rot = null, body = true, parent = houseG) {   // доска/брус; текстура тянется по размеру
   const w = x1 - x0, h = y1 - y0, dd = z1 - z0, g = new THREE.BoxGeometry(w, h, dd), uv = g.attributes.uv;
   const fs = [[dd, h], [dd, h], [w, dd], [w, dd], [w, h], [w, h]];
-  for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * fs[f][0], uv.getY(i) * fs[f][1]) }
-  const m = new THREE.Mesh(g, mat); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); if (rot) m.rotation.set(...rot); houseG.add(m);
+  for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * fs[f][0] / TX, uv.getY(i) * fs[f][1] / TX) }
+  const m = new THREE.Mesh(g, mat); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); if (rot) m.rotation.set(...rot); parent.add(m);
   if (body) { const b = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });
     b.addShape(new CANNON.Box(new CANNON.Vec3(w / 2, h / 2, dd / 2))); b.position.set(m.position.x, m.position.y, m.position.z);
     if (rot) b.quaternion.setFromEuler(...rot); world.addBody(b) }
   return m;
 }
-function wall(x0, x1, y0, y1, z0, z1) { const b = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });   // невидимый бортик
+function wall(x0, x1, y0, y1, z0, z1) { const b = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });   // невидимый бортик для предметов
   b.addShape(new CANNON.Box(new CANNON.Vec3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2))); b.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); world.addBody(b) }
-{ /* лестница: ступеньки-дощечки на двух тонких тетивах, без массивного основания */
-  const flight = (len, rise, place) => { const n = Math.round(len / .26), ang = Math.atan2(rise, len), L = Math.hypot(len, rise);
-    for (let k = 0; k < n; k++) { const t = (k + .5) / n; place('step', t * len, t * rise) }
-    place('rails', L, ang) };
-  // первый пролёт: вдоль x, вверх к углу
-  { const f = HS.f1, len = f.x1 - f.x0, rise = H1;
-    flight(len, rise, (k, a, b) => { if (k === 'step') hbox(f.x1 - a - .1, f.x1 - a + .1, b - .05, b, f.z0, f.z1, WOOD, null, false);
-      else for (const z of [f.z0 + .02, f.z1 - .02]) hbox((f.x0 + f.x1) / 2 - a / 2, (f.x0 + f.x1) / 2 + a / 2, rise / 2 - .16, rise / 2 - .04, z - .025, z + .025, WOOD_D, [0, 0, -b], false) });
-    hbox((f.x0 + f.x1) / 2 - Math.hypot(len, rise) / 2, (f.x0 + f.x1) / 2 + Math.hypot(len, rise) / 2, rise / 2 - .1, rise / 2 - .02, f.z0, f.z1, WOOD, [0, 0, -Math.atan2(rise, len)], true).visible = false }
-  // второй пролёт: вдоль z
-  { const f = HS.f2, len = f.z1 - f.z0, rise = HF - H1;
-    flight(len, rise, (k, a, b) => { if (k === 'step') hbox(f.x0, f.x1, H1 + b - .05, H1 + b, f.z0 + a - .1, f.z0 + a + .1, WOOD, null, false);
-      else for (const x of [f.x0 + .02, f.x1 - .02]) hbox(x - .025, x + .025, H1 + rise / 2 - .16, H1 + rise / 2 - .04, (f.z0 + f.z1) / 2 - a / 2, (f.z0 + f.z1) / 2 + a / 2, WOOD_D, [-b, 0, 0], false) });
-    hbox(f.x0, f.x1, H1 + rise / 2 - .1, H1 + rise / 2 - .02, (f.z0 + f.z1) / 2 - Math.hypot(len, rise) / 2, (f.z0 + f.z1) / 2 + Math.hypot(len, rise) / 2, WOOD, [-Math.atan2(rise, len), 0, 0], true).visible = false }
-  // площадки и столбики под ними
-  const c = HS.c1, t = HS.top;
-  hbox(c.x0, c.x1, H1 - .08, H1, c.z0, c.z1); hbox(t.x0, t.x1, HF - .08, HF, t.z0, t.z1);
-  for (const [px, pz, h] of [[c.x0 + .06, c.z0 + .06, H1], [c.x1 - .06, c.z0 + .06, H1], [c.x0 + .06, c.z1 - .06, H1], [c.x1 - .06, c.z1 - .06, H1],
-    [t.x1 - .06, t.z0 + .06, HF], [t.x1 - .06, t.z1 - .06, HF], [3.5, .66, H1 * .5], [3.5, 1.34, H1 * .5], [1.34, 3, H1 + (HF - H1) * .5]])
-    hbox(px - .05, px + .05, 0, h - .08, pz - .05, pz + .05, WOOD_D, null, false);
-  hbox(t.x1 - .04, t.x1, HF, HF + .9, t.z0, t.z1, WOOD_D, null, false); hbox(t.x0, t.x1, HF, HF + .9, t.z1 - .04, t.z1, WOOD_D, null, false);   // перила на площадке
-  hbox(t.x1 - .06, t.x1 + .02, HF + .85, HF + .93, t.z0, t.z1, WOOD, null, false);
-  wall(t.x1, t.x1 + .05, HF, HF + .6, t.z0, t.z1); wall(t.x0, t.x1, HF, HF + .6, t.z1, t.z1 + .05);
+{ /* лестница: ступеньки-дощечки на двух тонких тетивах */
+  { const f = HS.f1, len = f.x1 - f.x0, rise = H1, n = Math.round(len / .26), ang = Math.atan2(rise, len), L = Math.hypot(len, rise), cx = (f.x0 + f.x1) / 2;
+    for (let k = 0; k < n; k++) { const t = (k + .5) / n; hbox(f.x1 - t * len - .1, f.x1 - t * len + .1, t * rise - .05, t * rise, f.z0, f.z1, WOOD, null, false) }
+    for (const z of [f.z0 + .02, f.z1 - .02]) hbox(cx - L / 2, cx + L / 2, rise / 2 - .16, rise / 2 - .04, z - .025, z + .025, WOOD_D, [0, 0, -ang], false);
+    hbox(cx - L / 2, cx + L / 2, rise / 2 - .1, rise / 2 - .02, f.z0, f.z1, WOOD, [0, 0, -ang], true).visible = false;
+    for (const z of [f.z0 + .05, f.z1 - .05]) hbox(3.85, 3.95, 0, H1 * (f.x1 - 3.9) / len - .08, z - .05, z + .05, WOOD_D, null, false) }
+  { const f = HS.f2, len = f.z1 - f.z0, rise = HF - H1, n = Math.round(len / .26), ang = Math.atan2(rise, len), L = Math.hypot(len, rise), cz = (f.z0 + f.z1) / 2;
+    for (let k = 0; k < n; k++) { const t = (k + .5) / n; hbox(f.x0, f.x1, H1 + t * rise - .05, H1 + t * rise, f.z0 + t * len - .1, f.z0 + t * len + .1, WOOD, null, false) }
+    for (const x of [f.x0 + .02, f.x1 - .02]) hbox(x - .025, x + .025, H1 + rise / 2 - .16, H1 + rise / 2 - .04, cz - L / 2, cz + L / 2, WOOD_D, [-ang, 0, 0], false);
+    hbox(f.x0, f.x1, H1 + rise / 2 - .1, H1 + rise / 2 - .02, cz - L / 2, cz + L / 2, WOOD, [-ang, 0, 0], true).visible = false }
+  const c = HS.c1; hbox(c.x0, c.x1, H1 - .08, H1, c.z0, c.z1);
+  for (const [px, pz] of [[c.x0 + .06, c.z0 + .06], [c.x1 - .06, c.z0 + .06], [c.x0 + .06, c.z1 - .06], [c.x1 - .06, c.z1 - .06]]) hbox(px - .05, px + .05, 0, H1 - .08, pz - .05, pz + .05, WOOD_D, null, false);
   wall(c.x0 - .05, c.x0, H1, H1 + .5, c.z0, c.z1); wall(c.x0, c.x1, H1, H1 + .5, c.z0 - .05, c.z0);
 }
-{ /* сам дом над ямой: пол, две дальние стены (с дверью, окном и полками), срез ближних стен; сваи стоят на стенках, передний угол висит на раскосах */
-  const f = HS.floor, top = HF + 2.3, dz0 = HS.door.z0, dz1 = HS.door.z1;
-  hbox(f.x0, f.x1, HF - .16, HF, f.z0, f.z1);
-  // дальняя стена вдоль z (x = 2): дверь у площадки и окно
-  const W2 = HF + 2.02, wx = (z0, z1, y0, y1) => hbox(f.x0, f.x0 + .14, y0, y1, z0, z1);
-  wx(f.z0, 2.9, HF, W2); wx(2.9, 4.1, HF, HF + .9); wx(2.9, 4.1, HF + 1.7, W2); wx(4.1, dz0, HF, W2); wx(dz1, f.z1, HF, W2); wx(f.z0, f.z1, W2, top);
-  for (const z of [dz0 - .06, dz1]) hbox(f.x0 - .02, f.x0 + .18, HF, HF + 1.95, z, z + .06, WOOD_D, null, false);   // дверная коробка
-  hbox(f.x0 - .02, f.x0 + .18, HF + 1.9, HF + 2.02, dz0 - .06, dz1 + .06, WOOD_D, null, false);
-  hbox(f.x0 + .1, f.x0 + .2, HF + .86, HF + .94, 2.9, 4.1, WOOD_D, null, false); hbox(f.x0 + .1, f.x0 + .2, HF + 1.66, HF + 1.74, 2.9, 4.1, WOOD_D, null, false);   // окно
-  hbox(f.x0 + .1, f.x0 + .2, HF + .9, HF + 1.7, 3.47, 3.53, WOOD_D, null, false);
-  hbox(f.x0, f.x1, HF, top, f.z0, f.z0 + .14);                  // дальняя стена вдоль x (z = 2)
-  for (const [x, z] of [[f.x0, f.z0], [f.x0, f.z1 - .14], [f.x1 - .14, f.z0]]) hbox(x - .02, x + .16, HF - .16, top + .05, z - .02, z + .16, WOOD_D, null, false);   // угловые столбы
-  for (const y of [HF + .75, HF + 1.45]) hbox(2.6, 4.8, y - .05, y, f.z0 + .14, f.z0 + .5, WOOD_D);   // полки
-  hbox(f.x0, f.x1, HF, HF + .12, f.z1 - .1, f.z1, WOOD_D); hbox(f.x1 - .1, f.x1, HF, HF + .12, f.z0, f.z1, WOOD_D);   // срез ближних стен: низкий брус
-  wall(f.x1, f.x1 + .05, HF, HF + .7, f.z0, f.z1); wall(f.x0, f.x1, HF, HF + .7, f.z1, f.z1 + .05);   // предметы не падают с пола в яму
-  // сваи на стенках, балки под полом, раскосы держат передний угол
-  for (const [x, z] of [[1.85, 1.85], [1.85, 4], [1.85, 5.85], [4, 1.85], [5.85, 1.85]]) hbox(x - .08, x + .08, 0, HF - .16, z - .08, z + .08, WOOD_D, null, false);
-  hbox(1.75, 6, HF - .34, HF - .16, 1.78, 1.92, WOOD_D, null, false); hbox(1.78, 1.92, HF - .34, HF - .16, 1.75, 6, WOOD_D, null, false);
-  hbox(5.86, 6, HF - .34, HF - .16, 1.9, 6, WOOD_D, null, false); hbox(1.9, 6, HF - .34, HF - .16, 5.86, 6, WOOD_D, null, false);
-  for (const [x, z, rx, rz] of [[4.9, 1.85, 0, -.75], [1.85, 4.9, .75, 0], [5.9, 3.9, .75, 0], [3.9, 5.9, 0, -.75]]) hbox(x - .9, x + .9, HF - 1.05, HF - .95, z - .05, z + .05, WOOD_D, rz ? [0, 0, rz] : [0, Math.PI / 2, 0], false);
+const doorTop = new THREE.Group(); houseG.add(doorTop);        // верх стены с дверью: прячется, когда Кирью внутри — иначе стена закрыла бы дом
+{ /* дом */
+  const top = HF + 2.3, X0 = 1, X1 = 6, Z0 = 1, Z1 = 6, wt = .14;
+  hbox(1.9, X1, HF - .16, HF, Z0, WALL_Z);                      // пол дома (над проёмом второго пролёта пола нет)
+  hbox(X0, X1, HF - .16, HF, WALL_Z, Z1);                       // пол балкона
+  const wz = (x0, x1, y0, y1) => hbox(x0, x1, y0, y1, Z0, Z0 + wt);   // дальняя стена вдоль x (z = 1) с окном и полками
+  wz(X0, 3, HF, top); wz(3, 4.4, HF, HF + .9); wz(3, 4.4, HF + 1.7, top); wz(4.4, X1, HF, top);
+  hbox(3, 4.4, HF + .86, HF + .94, Z0 + .08, Z0 + .2, WOOD_D, null, false); hbox(3, 4.4, HF + 1.66, HF + 1.74, Z0 + .08, Z0 + .2, WOOD_D, null, false); hbox(3.67, 3.73, HF + .9, HF + 1.7, Z0 + .08, Z0 + .2, WOOD_D, null, false);
+  for (const y of [HF + .8, HF + 1.5]) hbox(4.6, 5.8, y - .05, y, Z0 + wt, Z0 + .5, WOOD_D);   // полки
+  hbox(X0, X0 + wt, HF - 1, top, Z0, WALL_Z);                   // дальняя стена вдоль z (x = 1) — над проёмом лестницы
+  const d0 = DOOR_X[0], d1 = DOOR_X[1], stub = HF + .45;        // стена с дверью (z = WALL_Z): низ всегда, верх прячется изнутри
+  hbox(1.9, d0, HF, stub, WALL_Z - wt, WALL_Z); hbox(d1, X1, HF, stub, WALL_Z - wt, WALL_Z);
+  hbox(1.9, d0, stub, top, WALL_Z - wt, WALL_Z, WOOD, null, false, doorTop); hbox(d1, X1, stub, top, WALL_Z - wt, WALL_Z, WOOD, null, false, doorTop);
+  hbox(d0, d1, HF + 2, top, WALL_Z - wt, WALL_Z, WOOD, null, false, doorTop);
+  for (const x of [d0 - .06, d1]) hbox(x, x + .06, HF, HF + 2.02, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false, doorTop);   // коробка
+  hbox(d0 - .06, d1 + .06, HF + 1.96, HF + 2.06, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false, doorTop);
+  wall(1.9, d0, HF, top, WALL_Z - wt, WALL_Z); wall(d1, X1, HF, top, WALL_Z - wt, WALL_Z);
+  for (const [x, z] of [[X0, Z0], [X1 - wt, Z0], [X0, WALL_Z - wt]]) hbox(x - .02, x + .16, HF - .16, top + .05, z - .02, z + .16, WOOD_D, null, false);   // угловые столбы
+  hbox(1.88, 1.96, HF, HF + .9, Z0 + wt, WALL_Z - wt, WOOD_D); hbox(1.86, 1.98, HF + .86, HF + .96, Z0 + wt, WALL_Z - wt, WOOD, null, false);   // перила у проёма лестницы
+  hbox(X0, X1, HF + .86, HF + .96, Z1 - .08, Z1, WOOD); hbox(X1 - .08, X1, HF + .86, HF + .96, WALL_Z, Z1, WOOD);   // перила балкона
+  for (let x = X0 + .15; x < X1; x += .4) hbox(x - .03, x + .03, HF, HF + .86, Z1 - .07, Z1 - .01, WOOD_D, null, false);
+  for (let z = WALL_Z + .3; z < Z1; z += .4) hbox(X1 - .07, X1 - .01, HF, HF + .86, z - .03, z + .03, WOOD_D, null, false);
+  wall(X0, X1, HF, HF + .9, Z1 - .08, Z1); wall(X1 - .08, X1, HF, HF + .9, WALL_Z, Z1); wall(X1, X1 + .05, HF, HF + .7, Z0, WALL_Z);   // бортики: предметы не падают в яму
+  hbox(X0, X0 + .08, HF, HF + .96, WALL_Z, Z1, WOOD_D);         // торец балкона
+  for (const [x, z] of [[.85, .85], [.85, 3.4], [.85, 5.85], [3.4, .85], [5.85, .85]]) hbox(x - .09, x + .09, 0, HF - .16, z - .09, z + .09, WOOD_D, null, false);   // сваи на стенках
+  hbox(.76, X1, HF - .36, HF - .16, .78, .92, WOOD_D, null, false); hbox(.78, .92, HF - .36, HF - .16, .76, Z1, WOOD_D, null, false);   // балки
+  hbox(.9, X1, HF - .36, HF - .16, Z1 - .12, Z1, WOOD_D, null, false); hbox(X1 - .12, X1, HF - .36, HF - .16, .9, Z1, WOOD_D, null, false);
+  for (let x = 1.5; x < X1; x += 1.1) hbox(x - .05, x + .05, HF - .34, HF - .16, .9, Z1, WOOD_D, null, false);
+  hbox(4.1, 6.3, HF - 1.3, HF - 1.18, .8, .9, WOOD_D, [0, 0, -.9], false); hbox(.8, .9, HF - 1.3, HF - 1.18, 4.1, 6.3, WOOD_D, [.9, 0, 0], false);   // раскосы
 }
-/* пока Кирью снаружи на лестнице, дом становится полупрозрачным — иначе его закрыл бы пол */
-const HOUSE_A = { v: 1 };
-function fadeHouse(dt) {
-  const behind = CH.y > .3 && !inR(HS.room, CH.x, CH.z, .1) && !inR(HS.door, CH.x, CH.z), t = behind ? .32 : 1;
-  HOUSE_A.v += (t - HOUSE_A.v) * Math.min(1, dt * 6); const a = HOUSE_A.v, tr = a < .99;
-  for (const m of [WOOD, WOOD_D]) { m.opacity = a; if (m.transparent !== tr) { m.transparent = tr; m.depthWrite = !tr; m.needsUpdate = true } }
+/* Кирью под полом на лестнице: рисуем его поверх дома, а дом не делаем прозрачным */
+const XRAY = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0], 3)), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
+const HOUSE = { under: false };
+XRAY.frustumCulled = false; XRAY.renderOrder = 998; XRAY.onBeforeRender = r => { if (HOUSE.under) r.clearDepth() }; scene.add(XRAY);
+function stepHouse() {
+  HOUSE.under = underHouse(); doorTop.visible = !inHouse();
+  chG.traverse(o => { if (o.isMesh) o.renderOrder = 999 });
 }
 function stepChar(dt) {
   let ix = joy.x, iy = joy.y;
@@ -1163,7 +1166,7 @@ function stepChar(dt) {
         if (Math.abs(h - fl) < .3) { CH.x = nx; CH.z = nz; CH.moving = true }
         else if (Math.abs(dir[ax]) > .55) blocked = { h, ad: new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0) };
       }
-      const kind = blocked ? (blocked.h < fl ? 'edge' : blocked.h - fl < BH + .05 ? 'wall' : null) : null;
+      const kind = blocked && fl < .05 && blocked.h < .05 ? (blocked.h < fl ? 'edge' : blocked.h - fl < BH + .05 ? 'wall' : null) : null;   // прыгать и залезать — только в яме и на верх стенок
       if (kind) {
         if (CH.state !== kind) { CH.state = kind; CH.t = 0 }
         CH.t += dt; CH.face.copy(blocked.ad);
@@ -1659,7 +1662,7 @@ function frame(now) {
   const cl = -camF.y / BH, z0 = Math.floor(cl - 10), z1 = Math.min(BOT, Math.ceil(cl + 10), Math.max(SKY_D, maxD + 5));
   under.position.y = -(z1 + 1) * BH; clipU.value = under.position.y;
   for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
-  placeCam(dt); fadeHouse(dt);
+  placeCam(dt); stepHouse();
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
   const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
