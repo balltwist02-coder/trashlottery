@@ -233,7 +233,7 @@ scene.add(new THREE.AmbientLight(0xffffff, AMB * Math.PI));
 const fill = new THREE.DirectionalLight(0xffffff, FILL * Math.PI); fill.position.copy(FILL_DIR); scene.add(fill);
 const sun = new THREE.DirectionalLight(0xffffff, SUN * Math.PI); sun.castShadow = true;
 sun.shadow.mapSize.set(512, 512);                           // крупные «пиксели» тени — в стиле игры и дёшево
-Object.assign(sun.shadow.camera, { left: -5.5, right: 5.5, top: 5.5, bottom: -5.5, near: 1, far: 70 }); sun.shadow.camera.updateProjectionMatrix();
+Object.assign(sun.shadow.camera, { left: -5.5, right: 5.5, top: 5.5, bottom: -5.5, near: 1, far: 45 }); sun.shadow.camera.updateProjectionMatrix();
 sun.shadow.bias = -.002; sun.shadow.normalBias = .02;
 scene.add(sun, sun.target);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.BasicShadowMap; renderer.shadowMap.autoUpdate = false;
@@ -1079,12 +1079,6 @@ function hbox(x0, x1, y0, y1, z0, z1, mat = WOOD, rot = null, body = true, paren
 }
 function wall(x0, x1, y0, y1, z0, z1) { const b = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });   // невидимый бортик для предметов
   b.addShape(new CANNON.Box(new CANNON.Vec3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2))); b.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); world.addBody(b) }
-function rail(x0, x1, z0, z1, y, alongX) {                     // перила: брус сверху и балясины
-  hbox(x0, x1, y + .86, y + .96, z0, z1, WOOD);
-  if (alongX) for (let x = x0 + .12; x < x1 - .05; x += .38) hbox(x - .03, x + .03, y, y + .86, z0 + .01, z1 - .01, WOOD_D, null, false);
-  else for (let z = z0 + .12; z < z1 - .05; z += .38) hbox(x0 + .01, x1 - .01, y, y + .86, z - .03, z + .03, WOOD_D, null, false);
-  wall(x0, x1, y, y + .96, z0, z1);
-}
 /* пролёт ступенек-дощечек на двух тетивах вдоль x или z, под ними невидимый скат для предметов.
    a0..a1 — откуда докуда по оси (снизу вверх), w0..w1 — ширина поперёк, y0 — высота внизу, rise — подъём, n — ступенек */
 function flight(axis, a0, a1, w0, w1, y0, rise, n) {
@@ -1119,13 +1113,26 @@ function flight(axis, a0, a1, w0, w1, y0, rise, n) {
   for (const x of [d0 - .06, d1]) hbox(x, x + .06, HF, HF + 2.02, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false);   // коробка
   hbox(d0 - .06, d1 + .06, HF + 1.96, HF + 2.06, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false);
   for (const [x, z] of [[0, 0], [6 - wt, 0], [1, WALL_Z - wt], [4 - wt, WALL_Z - wt]]) hbox(x - .02, x + .16, HF - .16, top + .05, z - .02, z + .16, WOOD_D, null, false);   // угловые столбы стен
-  // перила только по внешним краям: открытые края комнаты и балкона
-  rail(5.92, 6, wt, 4, HF, false); rail(4, 6, 3.92, 4, HF, true);
-  rail(0, 4, 5.92, 6, HF, true); rail(3.92, 4, WALL_Z, 5.92, HF, false); rail(0, .08, 5, 5.92, HF, false);
+  // перил нет; по открытым краям комнаты и балкона — только невидимые бортики, чтобы предметы не падали вниз
+  for (const [x0, x1, z0, z1] of [[5.95, 6, wt, 4], [4, 6, 3.95, 4], [0, 4, 5.95, 6], [3.95, 4, WALL_Z, 6], [0, .05, 5, 6]]) wall(x0, x1, HF, HF + .96, z0, z1);
 }
-houseG.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true });   // тень Кирью ложится на доски, а не на землю внизу
-const HOUSE = { under: false };
-function stepHouse() { HOUSE.under = underHouse() }
+/* дом теней от солнца не отбрасывает и не принимает. Пока Кирью стоит на лестнице, площадке или в доме, его солнечная тень
+   выключена (иначе она падала бы сквозь доски на землю внизу) — вместо неё под ногами пятно, наклонённое по ступенькам */
+const kShadow = new THREE.Mesh(shGeo, new THREE.MeshBasicMaterial({ map: shTex, color: 0x000000, transparent: true, opacity: .38, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+kShadow.visible = false; kShadow.scale.set(.56, 1, .56); scene.add(kShadow);
+const HOUSE = { under: false, on: false, held: null };
+const _n = new THREE.Vector3(), _Y = new THREE.Vector3(0, 1, 0);
+function stepHouse() {
+  HOUSE.under = underHouse();
+  const h = groundAt(CH.x, CH.z, CH.y), on = CH.state === 'walk' && h !== null && h > .05;
+  if (on !== HOUSE.on) { HOUSE.on = on; chG.traverse(o => { if (o.isMesh) o.castShadow = !on }) }
+  if (HOUSE.held && HOUSE.held !== CH.held) HOUSE.held.g.traverse(o => { if (o.isMesh) o.castShadow = true });   // поставленный предмет снова с тенью
+  HOUSE.held = CH.held; if (CH.held) CH.held.g.traverse(o => { if (o.isMesh) o.castShadow = !on });
+  kShadow.visible = on; if (!on) return;
+  const e = .12, g = (dx, dz) => { const v = groundAt(CH.x + dx, CH.z + dz, h); return v === null || Math.abs(v - h) > .5 ? h : v };
+  _n.set((g(-e, 0) - g(e, 0)) / (2 * e), 1, (g(0, -e) - g(0, e)) / (2 * e)).normalize();   // наклон поверхности под ногами
+  kShadow.quaternion.setFromUnitVectors(_Y, _n); kShadow.position.set(CH.x, h + .015, CH.z);
+}
 function stepChar(dt) {
   let ix = joy.x, iy = joy.y;
   if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
@@ -1657,7 +1664,7 @@ function frame(now) {
   for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
   placeCam(dt); stepHouse();
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
-  const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 30); sun.target.updateMatrixWorld();
+  const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
   const T2 = performance.now();
   renderer.render(scene, cam); perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
