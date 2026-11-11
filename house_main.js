@@ -1079,6 +1079,12 @@ function hbox(x0, x1, y0, y1, z0, z1, mat = WOOD, rot = null, body = true, paren
 }
 function wall(x0, x1, y0, y1, z0, z1) { const b = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });   // невидимый бортик для предметов
   b.addShape(new CANNON.Box(new CANNON.Vec3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2))); b.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); world.addBody(b) }
+function rail(x0, x1, z0, z1, y, alongX) {                     // перила: брус сверху и балясины
+  hbox(x0, x1, y + .86, y + .96, z0, z1, WOOD);
+  if (alongX) for (let x = x0 + .12; x < x1 - .05; x += .38) hbox(x - .03, x + .03, y, y + .86, z0 + .01, z1 - .01, WOOD_D, null, false);
+  else for (let z = z0 + .12; z < z1 - .05; z += .38) hbox(x0 + .01, x1 - .01, y, y + .86, z - .03, z + .03, WOOD_D, null, false);
+  wall(x0, x1, y, y + .96, z0, z1);
+}
 /* пролёт ступенек-дощечек на двух тетивах вдоль x или z, под ними невидимый скат для предметов.
    a0..a1 — откуда докуда по оси (снизу вверх), w0..w1 — ширина поперёк, y0 — высота внизу, rise — подъём, n — ступенек */
 function flight(axis, a0, a1, w0, w1, y0, rise, n) {
@@ -1109,29 +1115,59 @@ function flight(axis, a0, a1, w0, w1, y0, rise, n) {
   hbox(0, wt, HF - .16, top, 0, WALL_Z);                       // дальняя стена вдоль z (x = 0) — до стены с дверью
   // стена с дверью (z = 4) во всю ширину комнаты: за ней комната, перед ней балкон и выход с крутого пролёта
   const [d0, d1] = DOOR_X;
-  hbox(wt, d0, HF, top, WALL_Z - wt, WALL_Z); hbox(d1, 4, HF, top, WALL_Z - wt, WALL_Z); hbox(d0, d1, HF + 2, top, WALL_Z - wt, WALL_Z);
+  hbox(wt, d0, HF, top, WALL_Z - wt, WALL_Z); const w0 = 2.85, w1 = 3.65;                                  // окно справа от двери, как в дальней стене
+  hbox(d1, w0, HF, top, WALL_Z - wt, WALL_Z); hbox(w0, w1, HF, HF + .9, WALL_Z - wt, WALL_Z); hbox(w0, w1, HF + 1.7, top, WALL_Z - wt, WALL_Z); hbox(w1, 4, HF, top, WALL_Z - wt, WALL_Z);
+  hbox(w0, w1, HF + .86, HF + .94, WALL_Z - wt - .06, WALL_Z + .06, WOOD_D, null, false); hbox(w0, w1, HF + 1.66, HF + 1.74, WALL_Z - wt - .06, WALL_Z + .06, WOOD_D, null, false);
+  hbox((w0 + w1) / 2 - .03, (w0 + w1) / 2 + .03, HF + .9, HF + 1.7, WALL_Z - wt - .02, WALL_Z + .02, WOOD_D, null, false);
+  for (const x of [w0 - .06, w1]) hbox(x, x + .06, HF + .86, HF + 1.74, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false); hbox(d0, d1, HF + 2, top, WALL_Z - wt, WALL_Z);
   for (const x of [d0 - .06, d1]) hbox(x, x + .06, HF, HF + 2.02, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false);   // коробка
   hbox(d0 - .06, d1 + .06, HF + 1.96, HF + 2.06, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false);
   for (const [x, z] of [[0, 0], [6 - wt, 0], [0, WALL_Z - wt], [4 - wt, WALL_Z - wt]]) hbox(x - .02, x + .16, HF - .16, top + .05, z - .02, z + .16, WOOD_D, null, false);   // угловые столбы стен
-  // перил нет; по открытым краям комнаты и балкона — только невидимые бортики, чтобы предметы не падали вниз
-  for (const [x0, x1, z0, z1] of [[5.95, 6, wt, 4], [4, 6, 3.95, 4], [0, 4, 5.95, 6], [3.95, 4, WALL_Z, 6], [0, .05, 5, 6]]) wall(x0, x1, HF, HF + .96, z0, z1);
+  // перила — только у балкона; по открытым краям комнаты — невидимые бортики, чтобы предметы не падали вниз
+  rail(0, 4, 5.92, 6, HF, true); rail(3.92, 4, WALL_Z, 5.92, HF, false); rail(0, .08, 5, 5.92, HF, false);
+  for (const [x0, x1, z0, z1] of [[5.95, 6, wt, 4], [4, 6, 3.95, 4]]) wall(x0, x1, HF, HF + .96, z0, z1);
 }
-/* дом теней от солнца не отбрасывает и не принимает. Пока Кирью стоит на лестнице, площадке или в доме, его солнечная тень
-   выключена (иначе она падала бы сквозь доски на землю внизу) — вместо неё под ногами пятно, наклонённое по ступенькам */
-const kShadow = new THREE.Mesh(shGeo, new THREE.MeshBasicMaterial({ map: shTex, color: 0x000000, transparent: true, opacity: .38, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-kShadow.visible = false; kShadow.scale.set(.56, 1, .56); scene.add(kShadow);
-const HOUSE = { under: false, on: false, held: null };
-const _n = new THREE.Vector3(), _Y = new THREE.Vector3(0, 1, 0);
+/* ---------- тени на досках ----------
+   дом сам теней не отбрасывает и солнечных теней не принимает (иначе он затенял бы весь участок).
+   Кирью и предметы, пока они на лестнице, площадке или в доме, отбрасывают тень только на доски: их отдельно рисуем
+   глубиной с солнца в маленькую карту, и материал досок по ней темнеет. На землю внизу такая тень не попадает */
+const KL = 5, KS = { rt: new THREE.WebGLRenderTarget(512, 512, { magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter }),
+  cam: new THREE.OrthographicCamera(-3.5, 3.5, 3.5, -3.5, .5, 40), mat: new THREE.Matrix4(), on: new Set(), held: null };
+KS.cam.layers.set(KL);
+const KS_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+const KS_U = { kMap: { value: KS.rt.texture }, kMat: { value: KS.mat }, kOn: { value: 0 },
+  kDark: { value: (AMB + FILL * FILL_DIR.y) / (AMB + SUN * SUN_DIR.y + FILL * FILL_DIR.y) } };   // насколько темнее в тени, как у солнечной
+for (const m of [WOOD, WOOD_D]) m.onBeforeCompile = sh => {
+  Object.assign(sh.uniforms, KS_U);
+  sh.vertexShader = 'uniform mat4 kMat;\nvarying vec4 vKS;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvKS = kMat * modelMatrix * vec4(transformed, 1.0);');
+  sh.fragmentShader = 'uniform sampler2D kMap;\nuniform float kOn;\nuniform float kDark;\nvarying vec4 vKS;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `#include <opaque_fragment>
+    if (kOn > .5) { vec3 kc = vKS.xyz / vKS.w * .5 + .5;
+      if (kc.x > 0. && kc.x < 1. && kc.y > 0. && kc.y < 1. && kc.z < 1.) { float kd = unpackRGBAToDepth(texture2D(kMap, kc.xy)); if (kc.z - .004 > kd) gl_FragColor.rgb *= kDark; } }`);
+};
+function ksMark(g, on) { g.traverse(o => { if (o.isMesh) { o.castShadow = !on; if (on) o.layers.enable(KL); else o.layers.disable(KL) } }) }   // обычная тень или тень на доски
+const HOUSE = { under: false, on: false };
+const _cc = new THREE.Color(), _sp = new THREE.Vector3();
 function stepHouse() {
   HOUSE.under = underHouse();
   const h = groundAt(CH.x, CH.z, CH.y), on = CH.state === 'walk' && h !== null && h > .05;
-  if (on !== HOUSE.on) { HOUSE.on = on; chG.traverse(o => { if (o.isMesh) o.castShadow = !on }) }
-  if (HOUSE.held && HOUSE.held !== CH.held) HOUSE.held.g.traverse(o => { if (o.isMesh) o.castShadow = true });   // поставленный предмет снова с тенью
-  HOUSE.held = CH.held; if (CH.held) CH.held.g.traverse(o => { if (o.isMesh) o.castShadow = !on });
-  kShadow.visible = on; if (!on) return;
-  const e = .12, g = (dx, dz) => { const v = groundAt(CH.x + dx, CH.z + dz, h); return v === null || Math.abs(v - h) > .5 ? h : v };
-  _n.set((g(-e, 0) - g(e, 0)) / (2 * e), 1, (g(0, -e) - g(0, e)) / (2 * e)).normalize();   // наклон поверхности под ногами
-  kShadow.quaternion.setFromUnitVectors(_Y, _n); kShadow.position.set(CH.x, h + .015, CH.z);
+  if (on !== HOUSE.on) { HOUSE.on = on; ksMark(chG, on) }
+  // предметы над досками (лежат в доме, на площадке, в руках у Кирью наверху)
+  const now = new Set();
+  for (const t of trash) { if (!t.g || !t.body || !t.active && !t.held) continue; const p = t.body.position, gh = groundAt(p.x, p.z, p.y);
+    if (t === CH.held ? on : (p.y > .1 && gh !== null && gh > .05)) now.add(t) }
+  for (const t of KS.on) if (!now.has(t)) ksMark(t.g, false);
+  for (const t of now) if (!KS.on.has(t)) ksMark(t.g, true);
+  KS.on = now;
+  KS_U.kOn.value = on || now.size ? 1 : 0; if (!KS_U.kOn.value) return;
+  // карта глубины с солнца вокруг Кирью — только то, что сейчас отбрасывает тень на доски
+  _sp.set(Math.round(CH.x * 8) / 8, Math.round(CH.y * 8) / 8, Math.round(CH.z * 8) / 8);
+  KS.cam.position.copy(_sp).addScaledVector(SUN_DIR, 20); KS.cam.lookAt(_sp); KS.cam.updateMatrixWorld();
+  KS.mat.multiplyMatrices(KS.cam.projectionMatrix, KS.cam.matrixWorldInverse);
+  const prt = renderer.getRenderTarget(), pa = renderer.getClearAlpha(); renderer.getClearColor(_cc);
+  const om = scene.overrideMaterial, sm = renderer.shadowMap.needsUpdate;
+  scene.overrideMaterial = KS_DEPTH; renderer.shadowMap.needsUpdate = false;
+  renderer.setRenderTarget(KS.rt); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, KS.cam);
+  renderer.setRenderTarget(prt); renderer.setClearColor(_cc, pa); scene.overrideMaterial = om; renderer.shadowMap.needsUpdate = sm;
 }
 function stepChar(dt) {
   let ix = joy.x, iy = joy.y;
