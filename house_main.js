@@ -1130,23 +1130,45 @@ function flight(axis, a0, a1, w0, w1, y0, rise, n) {
 /* ---------- тени на досках ----------
    дом сам теней не отбрасывает и солнечных теней не принимает (иначе он затенял бы весь участок).
    Кирью и предметы, пока они на лестнице, площадке или в доме, отбрасывают тень только на доски: их отдельно рисуем
-   глубиной с солнца в маленькую карту, и материал досок по ней темнеет. На землю внизу такая тень не попадает */
-const KL = 5, KS = { rt: new THREE.WebGLRenderTarget(512, 512, { magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter }),
-  cam: new THREE.OrthographicCamera(-3.5, 3.5, 3.5, -3.5, .5, 40), mat: new THREE.Matrix4(), on: new Set(), held: null };
-KS.cam.layers.set(KL);
+   глубиной с солнца в карту, и материал досок по ней темнеет. На землю внизу такая тень не попадает.
+   Вторая карта — глубина ближайшей доски дома, которая лежит уже ниже предмета (доски выше предмета отбрасываются):
+   если между предметом и доской есть другая доска (полка, площадка), тень сквозь неё не проходит.
+   Для этой карты все доски дома слиты в один меш — один вызов отрисовки за кадр */
+const KL = 5, KH = 6, RTO = { magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter };
+const KS = { rt: new THREE.WebGLRenderTarget(1024, 1024, RTO), hrt: new THREE.WebGLRenderTarget(1024, 1024, RTO),
+  cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2), mat: new THREE.Matrix4(), on: new Set() };
+{ // камера с солнца стоит неподвижно и охватывает весь дом с лестницами
+  const C = new THREE.Vector3(3, (HF + 2.4) / 2, 3), c = KS.cam; c.position.copy(C).addScaledVector(SUN_DIR, 40); c.lookAt(C); c.updateMatrixWorld();
+  const v = new THREE.Vector3(), mn = new THREE.Vector3(1e9, 1e9, 1e9), mx = new THREE.Vector3(-1e9, -1e9, -1e9);
+  for (const x of [0, 6]) for (const y of [-.2, HF + 2.6]) for (const z of [0, 6]) { v.set(x, y, z).applyMatrix4(c.matrixWorldInverse); mn.min(v); mx.max(v) }
+  c.left = mn.x - .3; c.right = mx.x + .3; c.bottom = mn.y - .3; c.top = mx.y + .3; c.near = -mx.z - .5; c.far = -mn.z + .5; c.updateProjectionMatrix();
+  KS.mat.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse);
+}
 const KS_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
-const KS_U = { kMap: { value: KS.rt.texture }, kMat: { value: KS.mat }, kOn: { value: 0 },
+const KS_U = { kMap: { value: KS.rt.texture }, hMap: { value: KS.hrt.texture }, kMat: { value: KS.mat }, kOn: { value: 0 },
   kDark: { value: (AMB + FILL * FILL_DIR.y) / (AMB + SUN * SUN_DIR.y + FILL * FILL_DIR.y) } };   // насколько темнее в тени, как у солнечной
 for (const m of [WOOD, WOOD_D]) m.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, KS_U);
   sh.vertexShader = 'uniform mat4 kMat;\nvarying vec4 vKS;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvKS = kMat * modelMatrix * vec4(transformed, 1.0);');
-  sh.fragmentShader = 'uniform sampler2D kMap;\nuniform float kOn;\nuniform float kDark;\nvarying vec4 vKS;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `#include <opaque_fragment>
+  sh.fragmentShader = 'uniform sampler2D kMap;\nuniform sampler2D hMap;\nuniform float kOn;\nuniform float kDark;\nvarying vec4 vKS;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `#include <opaque_fragment>
     if (kOn > .5) { vec3 kc = vKS.xyz / vKS.w * .5 + .5;
-      if (kc.x > 0. && kc.x < 1. && kc.y > 0. && kc.y < 1. && kc.z < 1.) { float kd = unpackRGBAToDepth(texture2D(kMap, kc.xy)); if (kc.z - .004 > kd) gl_FragColor.rgb *= kDark; } }`);
+      if (kc.x > 0. && kc.x < 1. && kc.y > 0. && kc.y < 1. && kc.z < 1.) { float kd = unpackRGBAToDepth(texture2D(kMap, kc.xy));
+        if (kc.z - .003 > kd && unpackRGBAToDepth(texture2D(hMap, kc.xy)) > kc.z - .003) gl_FragColor.rgb *= kDark; } }`);
 };
+{ // доски дома одним мешем: видна только камере с солнца, рисует глубину досок, которые дальше ближайшего предмета
+  houseG.updateMatrixWorld(true); const pos = [];
+  houseG.traverse(o => { if (!o.isMesh || !o.visible) return; const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); g.applyMatrix4(o.matrixWorld); pos.push(...g.attributes.position.array) });
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const mat = new THREE.ShaderMaterial({ uniforms: { kMap: KS_U.kMap },
+    vertexShader: 'void main() { gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `#include <packing>
+      uniform sampler2D kMap;
+      void main() { float kd = unpackRGBAToDepth(texture2D(kMap, gl_FragCoord.xy / 1024.)); if (gl_FragCoord.z <= kd + .002) discard; gl_FragColor = packDepthToRGBA(gl_FragCoord.z); }` });
+  const hm = new THREE.Mesh(geo, mat); hm.frustumCulled = false; hm.layers.set(KH); scene.add(hm);
+}
 function ksMark(g, on) { g.traverse(o => { if (o.isMesh) { o.castShadow = !on; if (on) o.layers.enable(KL); else o.layers.disable(KL) } }) }   // обычная тень или тень на доски
 const HOUSE = { under: false, on: false };
-const _cc = new THREE.Color(), _sp = new THREE.Vector3();
+const _cc = new THREE.Color();
 
 /* ---------- сохранение вещей в доме ----------
    запоминаем только то, что лежит в доме (комната, дверной проём, балкон); всё остальное при перезапуске обнуляется как обычно.
@@ -1203,14 +1225,13 @@ function stepHouse() {
   for (const t of now) if (!KS.on.has(t)) ksMark(t.g, true);
   KS.on = now;
   KS_U.kOn.value = on || now.size ? 1 : 0; if (!KS_U.kOn.value) return;
-  // карта глубины с солнца вокруг Кирью — только то, что сейчас отбрасывает тень на доски
-  _sp.set(Math.round(CH.x * 8) / 8, Math.round(CH.y * 8) / 8, Math.round(CH.z * 8) / 8);
-  KS.cam.position.copy(_sp).addScaledVector(SUN_DIR, 20); KS.cam.lookAt(_sp); KS.cam.updateMatrixWorld();
-  KS.mat.multiplyMatrices(KS.cam.projectionMatrix, KS.cam.matrixWorldInverse);
   const prt = renderer.getRenderTarget(), pa = renderer.getClearAlpha(); renderer.getClearColor(_cc);
   const om = scene.overrideMaterial, sm = renderer.shadowMap.needsUpdate;
   scene.overrideMaterial = KS_DEPTH; renderer.shadowMap.needsUpdate = false;
-  renderer.setRenderTarget(KS.rt); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, KS.cam);
+  renderer.setClearColor(0xffffff, 1);
+  KS.cam.layers.set(KL); renderer.setRenderTarget(KS.rt); renderer.clear(); renderer.render(scene, KS.cam);   // Кирью и предметы
+  scene.overrideMaterial = null;
+  KS.cam.layers.set(KH); renderer.setRenderTarget(KS.hrt); renderer.clear(); renderer.render(scene, KS.cam);   // доски под ними
   renderer.setRenderTarget(prt); renderer.setClearColor(_cc, pa); scene.overrideMaterial = om; renderer.shadowMap.needsUpdate = sm;
 }
 function stepChar(dt) {
