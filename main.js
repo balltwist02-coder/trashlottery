@@ -1147,8 +1147,52 @@ for (const m of [WOOD, WOOD_D]) m.onBeforeCompile = sh => {
 function ksMark(g, on) { g.traverse(o => { if (o.isMesh) { o.castShadow = !on; if (on) o.layers.enable(KL); else o.layers.disable(KL) } }) }   // обычная тень или тень на доски
 const HOUSE = { under: false, on: false };
 const _cc = new THREE.Color(), _sp = new THREE.Vector3();
+
+/* ---------- сохранение вещей в доме ----------
+   запоминаем только то, что лежит в доме (комната, дверной проём, балкон); всё остальное при перезапуске обнуляется как обычно.
+   в Телеграме — облачное хранилище бота (своё у каждого игрока, видно с любого устройства), в браузере — localStorage.
+   формат с номером версии: {v:1, n: число кусков}, куски house_0..: «тип,x,y,z,qx,qy,qz,qw;…» (у значения предел 4096 символов) */
+const SAVE_V = 1, SAVE = { loaded: false, sig: '', t: 0, busy: false };
+const cloud = tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
+const stGet = (keys, cb) => { if (cloud) { try { cloud.getItems(keys, (e, v) => cb(e ? null : v || {})) } catch (_) { cb(null) } return }
+  const v = {}; try { for (const k of keys) v[k] = localStorage.getItem('tl_' + k) || '' } catch (_) { return cb(null) } cb(v) };
+const stSet = (key, val, cb) => { if (cloud) { try { cloud.setItem(key, val, e => cb && cb(!e)) } catch (_) { cb && cb(false) } return }
+  try { localStorage.setItem('tl_' + key, val); cb && cb(true) } catch (_) { cb && cb(false) } };
+const inHouse = p => p.y > HF - .4 && p.y < HF + 2.4 && INSIDE.some(r => inR(r, p.x, p.z, .1));
+function houseItems() { return trash.filter(t => t.active && t.body && !t.held && TYPES[t.type] && inHouse(t.body.position)) }
+const r3 = v => Math.round(v * 1000) / 1000;
+function saveHouse(force) {
+  if (!SAVE.loaded || SAVE.busy) return;
+  const items = houseItems(); if (!force && items.some(t => t.body.sleepState !== CANNON.Body.SLEEPING)) return;   // ждём, пока всё уляжется
+  const recs = items.map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') });
+  const sig = recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');   // сдвиг меньше 5 см не считаем
+  if (sig === SAVE.sig) return;
+  const parts = []; let cur = '';
+  for (const r of recs) { if (cur.length + r.length + 1 > 4000) { parts.push(cur); cur = '' } cur += (cur ? ';' : '') + r }
+  if (cur) parts.push(cur);
+  SAVE.busy = true; let left = parts.length + 1, ok = true;
+  const done = good => { ok = ok && good; if (--left) return; SAVE.busy = false; if (ok) SAVE.sig = sig };
+  parts.forEach((p, i) => stSet('house_' + i, p, done));
+  stSet('house', JSON.stringify({ v: SAVE_V, n: parts.length }), done);
+}
+function loadHouse() {
+  stGet(['house'], v => {
+    let head = null; try { head = v && v.house ? JSON.parse(v.house) : null } catch (_) { }
+    if (!head || head.v !== SAVE_V || !head.n) { SAVE.loaded = true; return }   // сохранения нет (или чужой версии) — начинаем с пустого дома
+    stGet([...Array(head.n).keys()].map(i => 'house_' + i), w => {
+      if (w) for (let i = 0; i < head.n; i++) for (const r of (w['house_' + i] || '').split(';')) {
+        const [type, ...n] = r.split(','), a = n.map(Number); if (!TYPES[type] || a.length !== 7 || a.some(isNaN)) continue;
+        const t = makeTrash(type, a[0], a[1], a[2], 0, -1); t.g.quaternion.set(a[3], a[4], a[5], a[6]).normalize(); t.g.updateMatrixWorld(true); activate(t);
+      }
+      SAVE.loaded = true; SAVE.sig = ''; SAVE.t = performance.now();
+    });
+  });
+}
+setTimeout(loadHouse, 0);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveHouse(true) });   // свернули или закрыли — сохраняем сразу
+function saveTick() { const now = performance.now(); if (now - SAVE.t < 2000) return; SAVE.t = now; saveHouse(false) }
 function stepHouse() {
-  HOUSE.under = underHouse();
+  HOUSE.under = underHouse(); saveTick();
   const h = groundAt(CH.x, CH.z, CH.y), on = CH.state === 'walk' && h !== null && h > .05;
   if (on !== HOUSE.on) { HOUSE.on = on; ksMark(chG, on) }
   // предметы над досками (лежат в доме, на площадке, в руках у Кирью наверху)
