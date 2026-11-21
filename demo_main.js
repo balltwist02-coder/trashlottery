@@ -1259,6 +1259,7 @@ const PH_WALL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGwAAADqCAIAAADI7
   -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 #po.on{transform:none}
 #po *{box-sizing:border-box}
+#po canvas{position:static;left:auto;top:auto;transform:none;display:block;flex:none}
 #po .po-home{position:absolute;inset:0;background:#141a2a var(--wall) center top/cover no-repeat;image-rendering:pixelated;transition:transform .3s,opacity .3s}
 #po .po-home::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,11,20,.5),rgba(8,11,20,0) 24%,rgba(8,11,20,0) 75%,rgba(8,11,20,.4));pointer-events:none}
 #po.inapp .po-home{transform:scale(.94);opacity:.4}
