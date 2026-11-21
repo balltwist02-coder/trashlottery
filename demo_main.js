@@ -1235,7 +1235,7 @@ function stepHouse() {
   renderer.setRenderTarget(prt); renderer.setClearColor(_cc, pa); scene.overrideMaterial = om; renderer.shadowMap.needsUpdate = sm;
 }
 /* ---------- телефон: Кирью поворачивается к нам, потом камера пролетает от вида сверху к его лицу ----------
-   интерфейс телефона пока убран — его спроектируем отдельно. Закрыть: тап по экрану или по телефону в сумке.
+   когда камера подлетела, справа выезжает экран телефона. Закрыть: тап мимо телефона или по телефону в сумке.
    поворот к зрителю нужен, чтобы камера не влетала в стенки: со стороны зрителя всегда пусто (иначе Кирью не был бы виден) */
 const PHT = window.__PHT = { ang: 1.05, el: .25, vh: 1.3, sh: .32, fov: 34, fy: 0 };   // ракурс крупного плана: угол от лица вбок, снизу, высота кадра, сдвиг вбок, угол обзора
 const PH = { on: false, k: 0, turn: false, cam: new THREE.PerspectiveCamera(30, 1, .03, 300) };
@@ -1246,12 +1246,51 @@ phTap.style.cssText = 'position:fixed;inset:0;z-index:40;display:none';
 phTap.addEventListener('click', e => { e.stopPropagation(); closePhone() });
 document.body.appendChild(phTap);
 { const st = document.createElement('style'); st.textContent = 'body.phon .coins,body.phon .depth,body.phon .mapbtn,body.phon .supbtn,body.phon .pouch{opacity:0;pointer-events:none;transition:opacity .2s}'; document.head.appendChild(st) }
+/* ---------- экран телефона: занимает правую половину, Кирью с телефоном остаётся слева ----------
+   обои — пиксельная переработка картинки с собакой; одно приложение знакомств (внутренности сделаем после утверждения вида) */
+const PH_WALL = 'data:image/png;base64,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';
+{ const st = document.createElement('style'); st.textContent = `
+#phs{position:fixed;z-index:41;top:50%;right:max(10px,2vw);height:min(calc(100vh - 32px),calc((50vw - 18px) * 19.5 / 9));aspect-ratio:9/19.5;
+  transform:translate(130%,-50%) rotate(4deg);transition:transform .45s cubic-bezier(.2,1.1,.35,1);
+  background:#0b0f17;border-radius:7% / 3.3%;padding:2.2%;box-shadow:0 0 0 2px #2b3342,0 0 0 5px #0b0f17,0 14px 30px rgba(0,0,0,.55);font-family:ui-monospace,Menlo,Consolas,monospace}
+#phs.on{transform:translate(0,-50%) rotate(0)}
+#phs .scr{position:relative;width:100%;height:100%;border-radius:5.5% / 2.6%;overflow:hidden;background:#141a2a url(${PH_WALL}) center top/cover no-repeat;image-rendering:pixelated}
+#phs .scr::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,14,24,.55),rgba(10,14,24,0) 22%,rgba(10,14,24,0) 70%,rgba(10,14,24,.45));pointer-events:none}
+#phs .bar{position:absolute;z-index:2;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:center;padding:6% 8% 0;color:#f3ead6;font-weight:800;font-size:clamp(10px,3.2vh,15px);text-shadow:0 1px 0 #000}
+#phs .bar i{display:inline-flex;gap:5px;align-items:center;font-style:normal}
+#phs .bar canvas{height:1.05em;width:auto;image-rendering:pixelated}
+#phs .notch{position:absolute;z-index:3;left:50%;top:1.6%;width:28%;height:2.6%;transform:translateX(-50%);background:#0b0f17;border-radius:999px}
+#phs .apps{position:absolute;z-index:2;left:0;right:0;top:15%;display:grid;grid-template-columns:repeat(4,1fr);padding:0 6%}
+#phs .app{grid-column:1 / span 2;display:flex;flex-direction:column;align-items:flex-start;gap:7px;background:none;border:0;padding:0;cursor:pointer;text-align:left;color:#fff}
+#phs .app canvas{width:clamp(38px,11vh,64px);height:auto;aspect-ratio:1;border-radius:24%;image-rendering:pixelated;box-shadow:0 3px 0 rgba(0,0,0,.45)}
+#phs .app span{font:700 clamp(9px,2.1vh,12px)/1.2 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-shadow:0 1px 2px #000,0 0 2px #000;max-width:15em}
+#phs .app:active canvas{transform:scale(.94)}
+#phs .home{position:absolute;z-index:2;left:50%;bottom:1.8%;width:34%;height:.9%;transform:translateX(-50%);background:#f3ead6;border-radius:999px;opacity:.85}
+`; document.head.appendChild(st) }
+const phS = document.createElement('div'); phS.id = 'phs';
+phS.innerHTML = '<div class="scr"><div class="notch"></div><div class="bar"><b class="clk">00:00</b><i class="ind"></i></div>' +
+  '<div class="apps"><button class="app" aria-label="Знакомства без интимных фото верифицирующих личность"><span class="ic"></span><span>Знакомства без интимных фото верифицирующих личность</span></button></div><div class="home"></div></div>';
+document.body.appendChild(phS);
+phS.addEventListener('click', e => e.stopPropagation());
+{ // значки статуса: связь и батарея, иконка приложения — белое сердце на розово-красном
+  const ind = phS.querySelector('.ind');
+  icon(["..........","........kk","........kk","......kkkk","......kkkk","....kkkkkk","....kkkkkk","..kkkkkkkk","..kkkkkkkk","kkkkkkkkkk"], { k: '#f3ead6' }, ind);
+  icon(["............","............","kkkkkkkkkk..","k........k..","k.gggggg.kk.","k.gggggg.kk.","k.gggggg.kk.","k........k..","kkkkkkkkkk..","............","............","............"], { k: '#f3ead6', g: '#7fd36b' }, ind);
+  const ic = phS.querySelector('.ic'), c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d');
+  for (let y = 0; y < 16; y++) for (let i = 0; i < 16; i++) { const t = (i + y) / 30; x.fillStyle = `rgb(${255 - t * 40 | 0},${70 + t * 20 | 0},${120 - t * 50 | 0})`; x.fillRect(i, y, 1, 1) }
+  const H = ["................","................","................","...WW.....WW....","..WWWW...WWWW...",".WWWWWW.WWWWWW..",".WWWWWWWWWWWWW..",".WWWWWWWWWWWWW..","..WWWWWWWWWWW...","...WWWWWWWWW....","....WWWWWWW.....",".....WWWWW......","......WWW.......",".......W........","................","................"];
+  H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#fff6f8'; x.fillRect(i + 1, y, 1, 1) } }));
+  x.fillStyle = 'rgba(255,255,255,.55)'; x.fillRect(4, 4, 2, 1); x.fillRect(3, 5, 1, 2);
+  ic.replaceWith(c);
+}
+phS.querySelector('.app').addEventListener('click', () => { haptic('light'); toast('Приложение откроется в следующей версии') });
+function phTick() { const d = new Date(); phS.querySelector('.clk').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') }
 function openPhone() {
   if (PH.on) return closePhone();
   if (CH.state !== 'walk' || CH.held) { shakeTool('phone'); toast(CH.held ? 'Руки заняты' : 'Не сейчас'); return }
-  PH.on = true; PH.turn = true; haptic('medium'); document.body.classList.add('phon'); phTap.style.display = 'block';
+  PH.on = true; PH.turn = true; phTick(); haptic('medium'); document.body.classList.add('phon'); phTap.style.display = 'block';
 }
-function closePhone() { if (!PH.on) return; PH.on = false; PH.turn = false; phTap.style.display = 'none'; document.body.classList.remove('phon'); haptic('light') }
+function closePhone() { if (!PH.on) return; PH.on = false; PH.turn = false; phS.classList.remove('on'); phTap.style.display = 'none'; document.body.classList.remove('phon'); haptic('light') }
 /* ракурс крупного плана всегда один и тот же (слева спереди, чуть снизу). Всё, что оказалось между камерой и Кирью
    (стенки ямы, блоки, невидимые стены), просто срезается ближней плоскостью камеры — видно только Кирью и то, что за ним */
 const phDir = (ang, el, fw, sd) => fw.clone().multiplyScalar(Math.cos(ang)).addScaledVector(sd, -Math.sin(ang)).multiplyScalar(Math.cos(el)).addScaledVector(_UP, -Math.sin(el)).normalize();
@@ -1265,6 +1304,7 @@ function stepPhone(dt) {
     if (Math.abs(dy) < .06) PH.turn = false;
   }
   PH.k = Math.max(0, Math.min(1, PH.k + (PH.on && !PH.turn ? dt / .85 : PH.on ? 0 : -dt / .5)));
+  if (PH.on && PH.k > .8 && !phS.classList.contains('on')) phS.classList.add('on');   // камера почти у лица — выезжает экран
   if (PH.k <= 0) { VCAM = cam; return }
   const e = ease3(PH.k), yaw = CH.yaw;
   KIRYU.head.localToWorld(_hp.set(0, .1, .1));
@@ -1273,9 +1313,10 @@ function stepPhone(dt) {
   const d0 = VIEW.clone(), dir = d0.lerp(d1, e).normalize();
   const t0 = cam.position.clone().addScaledVector(VIEW, -60);
   const right = new THREE.Vector3().crossVectors(_UP, d1).normalize();
-  const t1 = _hp.clone().addScaledVector(right, PHT.sh).add(new THREE.Vector3(0, -PHT.fy * 10, 0));
+  const asp = W / H, vhT = Math.max(PHT.vh, .9 / asp), shT = vhT * asp / 4;   // лицо — в середине левой половины кадра, правая под экран
+  const t1 = _hp.clone().addScaledVector(right, shT).add(new THREE.Vector3(0, -PHT.fy * 10, 0));
   const tgt = t0.lerp(t1, e);
-  const h0 = cam.top - cam.bottom, h1 = PHT.vh, vh = h0 * Math.pow(h1 / h0, e), fov = 2 + (PHT.fov - 2) * e;
+  const h0 = cam.top - cam.bottom, h1 = vhT, vh = h0 * Math.pow(h1 / h0, e), fov = 2 + (PHT.fov - 2) * e;
   const dist = vh / 2 / Math.tan(fov * Math.PI / 360), c = PH.cam;
   c.fov = fov; c.aspect = W / H; c.near = Math.max(.03, dist - (40 + (PH_CLIP - 40) * e)); c.far = dist + 120; c.updateProjectionMatrix();
   c.position.copy(tgt).addScaledVector(dir, dist); c.lookAt(tgt); c.updateMatrixWorld();
