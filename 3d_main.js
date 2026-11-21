@@ -1784,3 +1784,39 @@ genTrash();
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
 window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
+
+/* ---------- поддержать автора: оплата звёздами Telegram через наш сервер ----------
+   сервер создаёт ссылку на оплату и сам записывает прошедшие платежи; игра только открывает окно оплаты
+   и спрашивает у сервера, сколько звёзд игрок уже подарил (значок сторонника) */
+const PAY_API = 'https://trashlottery-pay.balltwist02.workers.dev';
+const SUP_TERMS = `1. «Поддержать автора» — добровольное пожертвование разработчику. За него — благодарность и значок сторонника в игре, других товаров и преимуществ нет.
+2. Оплата — только звёздами Telegram, цена видна в окне оплаты до подтверждения.
+3. Платёж прошёл по ошибке — напиши в течение 14 дней через /paysupport в боте, вернём звёзды.
+4. Поддержка Telegram с покупками в этом боте не помогает — по оплате пиши через /paysupport.
+5. Игра в разработке, возможны ошибки и изменения.`;
+{
+  const canPay = !!(tg && tg.initData && tg.openInvoice && tg.isVersionAtLeast && tg.isVersionAtLeast('6.1'));
+  const btn = document.getElementById('supbtn'), wrap = document.getElementById('supwrap'), close = document.getElementById('supclose');
+  const fan = document.getElementById('supfan'), terms = document.getElementById('supterms'), opts = [...wrap.querySelectorAll('.opt')];
+  icon(XI, { k: '#10141f', x: '#e9f0ee' }, close); terms.textContent = SUP_TERMS;
+  const api = (path, body) => fetch(PAY_API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData, ...body }) }).then(r => r.json());
+  const showFan = n => { btn.classList.toggle('fan', n > 0); fan.hidden = !(n > 0); fan.textContent = `⭐ Ты сторонник игры — подарено ${n} ⭐. Спасибо!` };
+  const refresh = () => api('/api/me').then(r => { if (typeof r.stars === 'number') showFan(r.stars) }).catch(() => { });
+  if (canPay) { btn.hidden = false; refresh() }
+  btn.addEventListener('click', () => { wrap.hidden = false; close.focus(); haptic('light') });
+  close.addEventListener('click', () => { wrap.hidden = true; btn.focus(); haptic('light') });
+  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.hidden = true });
+  document.getElementById('suptermsbtn').addEventListener('click', () => { terms.hidden = !terms.hidden });
+  for (const o of opts) o.addEventListener('click', async () => {
+    opts.forEach(b => b.disabled = true);
+    try {
+      const r = await api('/api/invoice', { product: o.dataset.p });
+      if (!r.link) throw new Error(r.error || 'нет ссылки');
+      tg.openInvoice(r.link, status => {
+        if (status === 'paid') { haptic('medium'); toast('Спасибо за поддержку! ⭐'); setTimeout(refresh, 1500); setTimeout(refresh, 5000) }
+        else if (status === 'failed') toast('Оплата не прошла');
+      });
+    } catch (e) { toast('Не получилось открыть оплату — попробуй позже') }
+    opts.forEach(b => b.disabled = false);
+  });
+}
