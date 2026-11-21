@@ -925,6 +925,7 @@ function digCell(a) {
   const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.k : 'З';
   removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
   d[a]++; ensureBodies(); settle(); updateTrash(); haptic('light'); CH.swing = .3;
+  if (z === 1) DATING.unlock('rozovye');                       // начали второй слой — в телефоне новая взаимная симпатия
   if (!SHOP.revealed && ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) revealShop();
 }
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
@@ -1408,10 +1409,11 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { if (PH.on && !PHONE.root.contains(e.target)) e.stopImmediatePropagation() }, true);
 
 /* ---------- приложение «Знакомства без интимных фото верифицирующих личность» ----------
-   При первом запуске — «верификация» селфи с лопатой. Дальше две вкладки: «Анкеты» (свайп влево — нет, вправо — лайк)
-   и «Пары». Если лайк взаимный — открывается переписка: девушка пишет, игрок выбирает ответ, от выбора зависят
-   симпатия и ветка; в конце — свидание или она удаляет из пар. Портреты пока пиксельные силуэты.
-   Сохранение: ключ dating (облако Телеграма / localStorage): {v, ver, seen:[id], m:{id:{c:[номера ответов], aff, res, nw}}} */
+   Две вкладки: «Анкеты» (свайп влево — нет, вправо — лайк; пока закрыта замком) и «Чаты».
+   Сюжет: когда Кирью начинает копать второй слой, телефон дважды вибрирует — в чатах появляется
+   «Розовые» с пометкой «Найдена взаимная симпатия». Переписка идёт по сценарию из редактора диалогов
+   (DT_SCRIPTS): она пишет реплики, игрок выбирает ответ, ответ ведёт к следующему узлу.
+   Сохранение: ключ dating (облако Телеграма / localStorage): {v:2, m:{id:{c:[номера ответов], nw}}} */
 { const st = document.createElement('style'); st.textContent = `
 #po .dt-wrap{position:absolute;inset:0;display:flex;flex-direction:column}
 #po .dt-main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
@@ -1434,77 +1436,35 @@ addEventListener('keyup', e => { if (PH.on && !PHONE.root.contains(e.target)) e.
 #po .dt-btns .n{color:#ff5a6e}#po .dt-btns .y{color:#fff;background:var(--acc)}
 #po .dt-btns button:active{transform:scale(.9)}
 #po .dt-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.6em;padding:2em;text-align:center;opacity:.75}
+#po .dt-empty .big{font-size:2.6em;opacity:.9}
 #po .dt-tabs{flex:none;display:flex;border-top:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03)}
 #po .dt-tabs button{flex:1;position:relative;border:0;background:none;color:inherit;opacity:.55;padding:.75em 0;font:600 .9em inherit;cursor:pointer}
 #po .dt-tabs button.on{opacity:1;color:var(--acc)}
 #po .dt-tabs sup{position:absolute;top:.35em;margin-left:.3em;min-width:1.3em;padding:0 .3em;border-radius:1em;background:var(--acc);color:#fff;font-size:.72em;line-height:1.3em}
-#po .dt-match{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1em;padding:2em;text-align:center;background:rgba(18,8,20,.94);animation:po-pop .3s ease-out}
-#po .dt-match h2{margin:0;font-size:1.9em;font-weight:900;color:var(--acc);transform:rotate(-4deg)}
-#po .dt-match canvas{width:7em;height:auto;aspect-ratio:3/4;border-radius:.8em;border:.2em solid var(--acc);image-rendering:pixelated}
-#po .dt-match .po-btn{max-width:14em}
-#po .dt-ver{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1em;padding:1.5em;text-align:center}
-#po .dt-cam{position:relative;width:9em;height:11em;border-radius:1em;background:#0c0a10;border:.15em dashed rgba(255,255,255,.25);display:grid;place-items:center;overflow:hidden}
-#po .dt-cam span{font-size:3em}
-#po .dt-cam.flash::after{content:'';position:absolute;inset:0;background:#fff;animation:dt-flash .5s ease-out forwards}
-@keyframes dt-flash{from{opacity:1}to{opacity:0}}
-#po .dt-hearts{font-size:.8em;letter-spacing:.05em;color:var(--acc);white-space:nowrap}
 #po .po-row i{image-rendering:pixelated}
-#po .dt-new{display:inline-block;vertical-align:middle;width:.55em;height:.55em;border-radius:50%;background:var(--acc);margin-left:.4em;vertical-align:middle}
+#po .dt-new{display:inline-block;vertical-align:middle;width:.55em;height:.55em;border-radius:50%;background:var(--acc);margin-left:.4em}
+#po .po-row.dt-fresh small{color:var(--acc);opacity:1;font-weight:600}
+#po .po-ic{position:relative}
+#po .po-ic sup{position:absolute;top:-.3em;right:.9em;min-width:1.4em;padding:0 .35em;border-radius:1em;background:#ff3b5c;color:#fff;font:700 .7em/1.4em inherit;box-shadow:0 0 0 .15em rgba(0,0,0,.35)}
+.tool .ph-dot{position:absolute;top:2px;right:2px;width:11px;height:11px;border-radius:50%;background:#ff3b5c;box-shadow:0 0 0 2px #2a1a10;animation:ph-dot 1s ease-in-out infinite;pointer-events:none}
+@keyframes ph-dot{50%{transform:scale(1.25)}}
 `; document.head.appendChild(st) }
 
-const DT_GIRLS = [
-  { id: 'alina', name: 'Алина', ins: 'Алиной', age: 23, hair: 'long', bg: ['#ff9a8b', '#6d2f63'], match: true,
-    bio: 'Ищу того, кто не боится грязной работы. Буквально.', tags: ['кофе', 'винил', 'ночные прогулки'] },
-  { id: 'vika', name: 'Вика', ins: 'Викой', age: 25, hair: 'bob', bg: ['#8fd3f4', '#33427e'], match: false,
-    bio: 'Свайпай вправо, если умеешь чинить велосипед. Мой сломался в 2019-м.', tags: ['велосипеды', 'сериалы'] },
-  { id: 'sonya', name: 'Соня', ins: 'Соней', age: 22, hair: 'pony', bg: ['#c2e59c', '#2a6150'], match: true,
-    bio: 'Коллекционирую странные находки. Покажи свою самую странную.', tags: ['барахолки', 'кошки', 'плёнка'] },
-  { id: 'lera', name: 'Лера', ins: 'Лерой', age: 26, hair: 'bun', bg: ['#fbc2eb', '#5e4384'], match: false,
-    bio: 'Без фото с рыбой, пожалуйста. И с лопатой тоже.', tags: ['йога', 'путешествия'] },
-  { id: 'marina', name: 'Марина', ins: 'Мариной', age: 27, hair: 'bob', bg: ['#f6d365', '#8a3f24'], match: true,
-    bio: 'Работаю в архиве. Люблю, когда вещи лежат на своих местах.', tags: ['книги', 'порядок', 'чай'] },
-  { id: 'dasha', name: 'Даша', ins: 'Дашей', age: 24, hair: 'long', bg: ['#a1c4fd', '#283764'], match: false,
-    bio: 'Ищу человека с домом. Хоть каким-нибудь.', tags: ['уют', 'растения'] },
-];
-/* переписки: узел {say:[реплики], ask:[[ответ, следующий узел, симпатия]]} или {say?, end:'auto'|'lost'};
-   'auto' — итог по симпатии: от 2 и выше свидание; win/lose — финальные реплики */
-const DT_TALK = {
-  alina: {
-    s: { say: ['Привет! У тебя на аватарке лопата… это метафора?'], ask: [['Нет, я правда копаю участок', 'dig', 1], ['Это для фото, я просто красивый', 'pose', -1], ['Метафора моей жизни', 'meta', 0]] },
-    dig: { say: ['Серьёзно? И что находишь?'], ask: [['В основном мусор. Но иногда — сокровища', 'treas', 1], ['Тебя ищу, если честно', 'flirt', 0]] },
-    pose: { say: ['Хм. Ну ладно, красивый.', 'А чем вообще занимаешься?'], ask: [['Копаю участок, если честно', 'dig', 1], ['Работаю, сплю, повторяю', 'bore', -1]] },
-    meta: { say: ['Глубоко 😅', 'А если без метафор — что делаешь целыми днями?'], ask: [['Копаю. Без метафор', 'dig', 1], ['Ищу смысл', 'bore', -1]] },
-    bore: { say: ['Понятно…'], ask: [['Ладно, на самом деле я копаю участок и нахожу странные вещи', 'dig', 1], ['Да, я скучный', 'gone', -2]] },
-    treas: { say: ['Звучит как приключение. Я бы посмотрела на твой самый странный клад'], ask: [['Как-нибудь покажу. За кофе?', 'end', 2], ['Он слишком странный, лучше не надо', 'cold', -1]] },
-    flirt: { say: ['Ого, прямо с порога 🙈', 'И как, нашёл?'], ask: [['Пока только мусор. Но надежды не теряю', 'treas', 1], ['Кажется, да', 'end', 1]] },
-    cold: { say: ['Загадочно. Ладно, как хочешь'], ask: [['Шучу! Давай встретимся, покажу', 'end', 1], ['Угу', 'gone', -1]] },
-    gone: { say: ['Ладно, удачи тебе'], end: 'lost' },
-    end: { end: 'auto' },
-    win: ['Давай! Только без интимных фото 😄', 'Напиши, когда будешь свободен'],
-    lose: ['Слушай, кажется, мы не совпадаем. Удачи с участком!'],
-  },
-  sonya: {
-    s: { say: ['Привет! Раз уж лайкнул — какая твоя самая странная находка?'], ask: [['Бутылка с запиской внутри', 'note', 1], ['Носок. Один', 'sock', 0], ['Ты, например', 'flirt', -1]] },
-    note: { say: ['Что там было написано?!'], ask: [['«Копай глубже»', 'deep', 2], ['Не прочитал, побоялся', 'shy', 0]] },
-    sock: { say: ['Классика. Второй где-то там, глубже 😄'], ask: [['Найду — подарю тебе пару', 'deep', 1], ['Мне и одного хватает', 'shy', -1]] },
-    flirt: { say: ['Банально. Давай ещё раз'], ask: [['Бутылка с запиской', 'note', 1], ['Носок', 'sock', 0]] },
-    deep: { say: ['Мне нравится. По выходным я хожу по барахолкам — возьмёшь меня копать?'], ask: [['Конечно, лопату дам', 'end', 2], ['Там грязно, тебе не понравится', 'shy', -1]] },
-    shy: { say: ['Хм, ты какой-то осторожный'], ask: [['Просто стесняюсь. Пойдём на барахолку вместе?', 'end', 1], ['Такой уж я', 'end', -1]] },
-    end: { end: 'auto' },
-    win: ['Договорились! В субботу, в семь утра, у входа. Не проспи'],
-    lose: ['Ладно, кажется, у нас разные раскопки. Пока!'],
-  },
-  marina: {
-    s: { say: ['Добрый вечер. Сразу вопрос: у тебя дома порядок?'], ask: [['Идеальный. Всё по полочкам', 'tidy', 1], ['Ну… там лежит всё, что я выкопал', 'mess', 0], ['А что такое «дом»?', 'nohome', -1]] },
-    tidy: { say: ['Не верю. Докажи: где лежит твоя лопата?'], ask: [['На своём крючке у двери', 'hook', 2], ['Где-то в яме', 'mess', -1]] },
-    mess: { say: ['То есть склад находок. Хотя бы подписываешь их?'], ask: [['Пока нет. Научишь?', 'teach', 2], ['Зачем, я и так помню', 'nohome', -1]] },
-    nohome: { say: ['…'], ask: [['Шучу, дом есть. Маленький, но свой', 'tidy', 1], ['Я живу в яме', 'end', -2]] },
-    hook: { say: ['Достойно. Пожалуй, мы можем выпить чаю'], ask: [['С удовольствием', 'end', 1]] },
-    teach: { say: ['Научу. У меня отличная система карточек'], ask: [['Звучит как свидание', 'end', 1], ['Звучит как работа', 'end', -1]] },
-    end: { end: 'auto' },
-    win: ['Четверг, 19:00, чайная у архива. Не опаздывай'],
-    lose: ['Боюсь, мы не сойдёмся характерами. Всего доброго'],
-  },
+/* анкеты для свайпов — пока пусто, вкладка закрыта */
+const DT_DECK = [], DT_DECK_LOCKED = true;
+/* собеседницы: ник, портрет-заглушка */
+const DT_PEOPLE = {
+  rozovye: { id: 'rozovye', name: 'Розовые', hair: 'long', bg: ['#ffc2dc', '#a8406f'] },
+};
+/* сценарии переписки — их собирает редактор диалогов («Скопировать для игры»).
+   узел: {say:[реплики собеседницы], ask:[{t:текст ответа, to:следующий узел}]}; без ask или с пустым to — пока конец */
+const DT_SCRIPTS = {
+  rozovye: { start: 'n1', nodes: {
+    n1: { say: ['Кирью, значит...'], ask: [
+      { t: 'Привет, я помню как лайкал тебя!', to: '' },
+      { t: 'а?', to: '' },
+      { t: 'Имя не имеет значения, у меня есть своя земля', to: '' } ] },
+  } },
 };
 
 /* пиксельный портрет-силуэт: фон-градиент с дизерингом, волосы, голова и плечи, подсветка контура */
@@ -1516,9 +1476,9 @@ function dtPortrait(g) {
   const el = (q, cx, cy, rx, ry) => { q.moveTo(cx + rx, cy); q.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2) };
   const back = { long: q => { el(q, 16, 19, 7.3, 7.7); q.rect(8.7, 19, 14.6, 16); el(q, 16, 35, 7.3, 2.6) }, bob: q => { el(q, 16, 19, 7.6, 7.6); q.rect(8.4, 19, 15.2, 7.5) },
     pony: q => { el(q, 16, 19, 6.5, 7.3); el(q, 23.4, 24.5, 2.5, 6.8) }, bun: q => { el(q, 16, 19, 6.3, 7.1); el(q, 16, 10.6, 3.4, 3.2) } }[g.hair];
-  layer(1, back);                                                          // волосы сзади
-  layer(2, q => { el(q, 16, 52, 15, 15); q.rect(13.8, 24, 4.4, 8); el(q, 16, 20.5, 5.3, 6.6) });   // плечи, шея, голова
-  layer(1, q => el(q, g.hair === 'bob' ? 15 : 16.5, 15.6, 5.9, 3.8), 17);   // чёлка
+  layer(1, back);
+  layer(2, q => { el(q, 16, 52, 15, 15); q.rect(13.8, 24, 4.4, 8); el(q, 16, 20.5, 5.3, 6.6) });
+  layer(1, q => el(q, g.hair === 'bob' ? 15 : 16.5, 15.6, 5.9, 3.8), 17);
   const hex = s => [1, 3, 5].map(k => parseInt(s.slice(k, k + 2), 16)), c1 = hex(g.bg[0]), c2 = hex(g.bg[1]);
   const BY = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], img = x.createImageData(W, H);
   const nb = (i, j) => i < 0 || j < 0 || i >= W || j >= H ? 0 : lab[j * W + i];
@@ -1527,14 +1487,14 @@ function dtPortrait(g) {
     if (!v) { const q = Math.round(Math.min(1, Math.max(0, j / H + (BY[j % 4][i % 4] / 16 - .5) / 8)) * 7) / 7; col = c1.map((a, n) => a + (c2[n] - a) * q) }
     else {
       col = v === 1 ? [18, 12, 26] : [52, 40, 70];
-      if (!nb(i + 1, j - 1) || !nb(i + 1, j) || v === 2 && nb(i + 1, j) === 1) col = col.map((a, n) => a + (c1[n] - a) * (v === 1 ? .45 : .6));   // свет справа сверху
+      if (!nb(i + 1, j - 1) || !nb(i + 1, j) || v === 2 && nb(i + 1, j) === 1) col = col.map((a, n) => a + (c1[n] - a) * (v === 1 ? .45 : .6));
     }
     img.data.set([col[0], col[1], col[2], 255], k * 4);
   }
   x.putImageData(img, 0, 0); return c;
 }
 
-PHONE.register({
+const DATING = PHONE.register({
   id: 'dating', name: 'Знакомства без интимных фото верифицирующих личность',
   theme: { bg: '#15101a', acc: '#ff4f7b', bar: 'rgba(255,79,123,.06)' },
   icon(x) {                                          // белое пиксельное сердце на розово-красном
@@ -1543,65 +1503,72 @@ PHONE.register({
     H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#fff6f8'; x.fillRect(i + 1, y, 1, 1) } }));
     x.fillStyle = 'rgba(255,255,255,.55)'; x.fillRect(4, 4, 2, 1); x.fillRect(3, 5, 1, 2);
   },
-  st: null,
-  save() { try { stSet('dating', JSON.stringify(this.st)) } catch (_) { } },
-  start(ctx) {
-    const app = this;
-    if (app.st) return app.home(ctx);
+  st: null, wait: [],
+  load(cb) {                                          // состояние грузим один раз при запуске игры
+    if (this.st) return cb && cb();
+    if (cb) this.wait.push(cb); if (this.loading) return; this.loading = true;
     stGet(['dating'], v => {
       let s = null; try { s = v && v.dating ? JSON.parse(v.dating) : null } catch (_) { }
-      app.st = s && s.v === 1 ? s : { v: 1, ver: false, seen: [], m: {} };
-      app.home(ctx);
+      this.st = s && s.v === 2 ? s : { v: 2, m: {} };
+      this.badge(); this.wait.splice(0).forEach(f => f());
     });
   },
-  home(ctx) { if (this.st.ver) this.main(ctx); else this.verify(ctx) },
-
-  /* «верификация личности»: только селфи с рабочим инструментом */
-  verify(ctx) {
-    const app = this, u = ctx.ui;
-    ctx.push({ title: 'Подтверждение личности', render(body) {
-      const w = u.h('div', 'dt-ver'), cam = u.h('div', 'dt-cam'); cam.append(u.h('span', '', '📷'));
-      const t = u.h('div', '', 'Мы не принимаем интимные фото.'); t.style.cssText = 'font-weight:800;font-size:1.15em';
-      const s = u.h('div', '', 'Для верификации подходит только селфи с рабочим инструментом.'); s.style.opacity = '.7';
-      const b = u.btn('Сделать селфи с лопатой', () => {
-        b.disabled = true; cam.classList.add('flash'); cam.firstChild.textContent = '🧍‍♂️⛏'; haptic('medium');
-        setTimeout(() => { t.textContent = 'Личность подтверждена ✓'; s.textContent = 'Вы — человек с лопатой. Добро пожаловать.'; b.remove();
-          w.append(u.btn('Смотреть анкеты', () => { app.st.ver = true; app.save(); app.main(ctx, true) })) }, 700);
-      });
-      w.append(cam, t, s, b); body.append(w);
-    } });
+  save() { try { stSet('dating', JSON.stringify(this.st)) } catch (_) { } },
+  unread() { return this.st ? Object.values(this.st.m).filter(m => m.nw).length : 0 },
+  badge() {                                          // счётчик на значке приложения и точка на кнопке телефона
+    const n = this.unread(), ic = PHONE.root.querySelector('.po-ic'); if (!ic) return;
+    let s = ic.querySelector('sup'); if (n && !s) { s = document.createElement('sup'); ic.append(s) } if (s) { if (n) s.textContent = n; else s.remove() }
+    const tb = toolBtns[TOOLS.indexOf('phone')]; if (!tb) return;
+    let dot = tb.querySelector('.ph-dot');
+    if (n && !dot) { if (getComputedStyle(tb).position === 'static') tb.style.position = 'relative'; dot = document.createElement('span'); dot.className = 'ph-dot'; tb.append(dot) }
+    if (!n && dot) dot.remove();
   },
+  /* новая взаимная симпатия: телефон дважды вибрирует, в чатах появляется собеседница */
+  unlock(id) {
+    this.load(() => {
+      if (this.st.m[id]) return;
+      this.st.m[id] = { c: [], nw: true }; this.save(); this.badge();
+      const buzz = () => {
+        try { if (tg && tg.HapticFeedback) { tg.HapticFeedback.notificationOccurred('success'); setTimeout(() => tg.HapticFeedback.impactOccurred('heavy'), 140) } else if (navigator.vibrate) navigator.vibrate([180, 90, 180]) } catch (_) { }
+        if (iconFx.phone) iconFx.phone.shake = 1;
+      };
+      buzz(); setTimeout(buzz, 900);
+      if (this.page && this.page.refresh && !this.page.gone) this.page.refresh();
+    });
+  },
+  start(ctx) { this.load(() => this.main(ctx)) },
 
-  main(ctx, replace) {
-    const app = this, u = ctx.ui; let tab = 'deck';
-    const page = ctx.push({ title: this.name, replace, render(body, page) {
+  main(ctx) {
+    const app = this, u = ctx.ui; let tab = 'chats';
+    app.page = ctx.push({ title: this.name, render(body, page) {
       body.style.overflow = 'hidden'; body.style.position = 'relative';
       const wrap = u.h('div', 'dt-wrap'), main = u.h('div', 'dt-main'), tabs = u.h('div', 'dt-tabs');
-      const tDeck = u.h('button', 'on', 'Анкеты'), tPairs = u.h('button', '', 'Пары');
-      tabs.append(tDeck, tPairs); wrap.append(main, tabs); body.append(wrap);
-      const show = t => { tab = t; tDeck.classList.toggle('on', t === 'deck'); tPairs.classList.toggle('on', t === 'pairs'); main.textContent = ''; t === 'deck' ? deck() : pairs() };
-      tDeck.onclick = () => { haptic('light'); show('deck') }; tPairs.onclick = () => { haptic('light'); show('pairs') };
-      page.badge = () => { const n = Object.values(app.st.m).filter(m => m.nw).length; tPairs.innerHTML = 'Пары' + (n ? `<sup>${n}</sup>` : '') };
-      page.refresh = () => show(tab);
-      page.badge();
+      const tDeck = u.h('button', '', DT_DECK_LOCKED ? 'Анкеты 🔒' : 'Анкеты'), tChats = u.h('button', 'on', 'Чаты');
+      tabs.append(tDeck, tChats); wrap.append(main, tabs); body.append(wrap);
+      const show = t => { tab = t; tDeck.classList.toggle('on', t === 'deck'); tChats.classList.toggle('on', t === 'chats'); main.textContent = ''; t === 'deck' ? deck() : chats() };
+      tDeck.onclick = () => { haptic('light'); show('deck') }; tChats.onclick = () => { haptic('light'); show('chats') };
+      page.badge = () => { const n = app.unread(); tChats.innerHTML = 'Чаты' + (n ? `<sup>${n}</sup>` : ''); app.badge() };
+      page.refresh = () => { page.badge(); show(tab) };
 
       function deck() {
-        const left = DT_GIRLS.filter(g => !app.st.seen.includes(g.id));
-        if (!left.length) { const e = u.h('div', 'dt-empty'); e.append(u.h('div', '', '🕳'), u.h('div', '', 'Анкеты закончились.'), u.h('div', '', 'Новые появятся, когда в городе станет больше одиноких сердец.')); e.firstChild.style.fontSize = '2.5em'; main.append(e); return }
+        const empty = (big, a, b) => { const e = u.h('div', 'dt-empty'); e.append(u.h('div', 'big', big), u.h('div', '', a), u.h('div', '', b)); main.append(e) };
+        if (DT_DECK_LOCKED) return empty('🔒', 'Анкеты временно недоступны.', 'Загляни в чаты — кажется, там кто-то есть.');
+        const left = DT_DECK.filter(g => !(app.st.seen || []).includes(g.id));
+        if (!left.length) return empty('🕳', 'Анкеты закончились.', 'Новые появятся позже.');
         const dk = u.h('div', 'dt-deck'), btns = u.h('div', 'dt-btns'), no = u.h('button', 'n', '✕'), yes = u.h('button', 'y', '♥');
         no.setAttribute('aria-label', 'Нет'); yes.setAttribute('aria-label', 'Лайк');
         btns.append(no, yes); main.append(dk, btns);
         const card = g => {
           const c = u.h('div', 'dt-card'), info = u.h('div', 'dt-info'), name = u.h('b'), tg = u.h('div', 'dt-tags');
-          name.append(g.name + ', '); name.append(u.h('span', '', String(g.age)));
-          g.tags.forEach(s => tg.append(u.h('i', '', s)));
-          info.append(name, u.h('p', '', g.bio), tg);
+          name.append(g.name + (g.age ? ', ' : '')); if (g.age) name.append(u.h('span', '', String(g.age)));
+          (g.tags || []).forEach(s => tg.append(u.h('i', '', s)));
+          info.append(name, u.h('p', '', g.bio || ''), tg);
           c.append(dtPortrait(g), info, u.h('div', 'dt-stamp yes', 'ЛАЙК'), u.h('div', 'dt-stamp no', 'НЕТ'));
           c.g = g; return c;
         };
         let top = null, under = null;
         const fill = () => {
-          const l = DT_GIRLS.filter(g => !app.st.seen.includes(g.id));
+          const l = DT_DECK.filter(g => !(app.st.seen || []).includes(g.id));
           if (!l.length) { main.textContent = ''; deck(); return }
           if (!top) { top = card(l[0]); dk.append(top) }
           if (!under && l[1]) { under = card(l[1]); under.classList.add('under'); dk.prepend(under) }
@@ -1610,88 +1577,76 @@ PHONE.register({
         const decide = like => {
           if (!top || top.busy) return; top.busy = true; const c = top, g = c.g;
           c.style.transform = `translateX(${like ? 140 : -140}%) rotate(${like ? 24 : -24}deg)`; haptic(like ? 'medium' : 'light');
-          app.st.seen.push(g.id);
-          const matched = like && g.match;
-          if (matched) app.st.m[g.id] = { c: [], aff: 0, res: null, nw: true };
-          app.save(); page.badge();
-          setTimeout(() => { c.remove(); top = under; under = null; if (top) top.classList.remove('under'); fill(); if (matched) app.matchShow(ctx, page, g) }, 260);
+          (app.st.seen = app.st.seen || []).push(g.id);
+          if (like && g.match) app.unlock(g.id); else app.save();
+          setTimeout(() => { c.remove(); top = under; under = null; if (top) top.classList.remove('under'); fill() }, 260);
         };
         const drag = c => {
           if (!c || c.dr) return; c.dr = true; let x0 = 0, dx = 0, id = null;
           const yS = c.querySelector('.yes'), nS = c.querySelector('.no');
           c.addEventListener('pointerdown', e => { if (c.busy) return; id = e.pointerId; x0 = e.clientX; dx = 0; c.classList.add('drag'); try { c.setPointerCapture(id) } catch (_) { } });
           c.addEventListener('pointermove', e => { if (e.pointerId !== id) return; dx = e.clientX - x0; c.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`; yS.style.opacity = Math.max(0, Math.min(1, dx / 80)); nS.style.opacity = Math.max(0, Math.min(1, -dx / 80)) });
-          const up = e => { if (e.pointerId !== id) return; id = null; c.classList.remove('drag'); const w = c.offsetWidth;
-            if (Math.abs(dx) > w * .28) decide(dx > 0); else { c.style.transform = ''; yS.style.opacity = nS.style.opacity = 0 } };
+          const up = e => { if (e.pointerId !== id) return; id = null; c.classList.remove('drag');
+            if (Math.abs(dx) > c.offsetWidth * .28) decide(dx > 0); else { c.style.transform = ''; yS.style.opacity = nS.style.opacity = 0 } };
           c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
         };
         no.onclick = () => decide(false); yes.onclick = () => decide(true);
         fill();
       }
-      function pairs() {
-        const ids = Object.keys(app.st.m);
-        if (!ids.length) { const e = u.h('div', 'dt-empty'); e.append(u.h('div', '', 'Пока нет пар.'), u.h('div', '', 'Лайкай анкеты — если симпатия взаимная, девушка появится здесь.')); main.append(e); return }
+      function chats() {
+        const ids = Object.keys(app.st.m).filter(id => DT_PEOPLE[id]);
+        if (!ids.length) { const e = u.h('div', 'dt-empty'); e.append(u.h('div', 'big', '💬'), u.h('div', '', 'Пока никто не написал.')); main.append(e); return }
         const list = u.h('div'); list.style.cssText = 'flex:1;overflow-y:auto';
         for (const id of ids) {
-          const g = DT_GIRLS.find(x => x.id === id), m = app.st.m[id]; if (!g) continue;
-          const sub = m.res === 'date' ? 'Свидание назначено ♥' : m.res === 'lost' ? 'Удалила вас из пар' : m.c.length ? 'Ждёт твоего ответа' : 'Новая пара! Она уже пишет…';
-          const r = u.row({ title: g.name + ', ' + g.age, sub, avatar: dtPortrait(g).toDataURL(), on: () => app.chat(ctx, g, page) });
-          if (m.nw) r.querySelector('span div').append(u.h('b', 'dt-new'));
-          if (m.res === 'lost') r.style.opacity = '.5';
+          const g = DT_PEOPLE[id], m = app.st.m[id];
+          const sub = m.nw ? 'Найдена взаимная симпатия' : app.lastLine(id) || 'Найдена взаимная симпатия';
+          const r = u.row({ title: g.name, sub, avatar: dtPortrait(g).toDataURL(), on: () => app.chat(ctx, g, page) });
+          if (m.nw) { r.classList.add('dt-fresh'); r.querySelector('span div').append(u.h('b', 'dt-new')) }
           list.append(r);
         }
         main.append(list);
       }
-      show('deck');
+      page.badge(); show('chats');
     } });
-    return page;
   },
 
-  matchShow(ctx, page, g) {
-    const u = ctx.ui, o = u.h('div', 'dt-match'), p = dtPortrait(g);
-    const t = u.h('div', '', `Вы понравились друг другу с ${g.ins}`); t.style.opacity = '.8';
-    o.append(u.h('h2', '', 'Это взаимно!'), p, t,
-      u.btn('Написать', () => { o.remove(); this.chat(ctx, g, page) }),
-      u.btn('Смотреть дальше', () => o.remove(), true));
-    page.el.append(o); haptic('heavy');
+  /* последняя реплика в переписке — для подписи в списке чатов */
+  lastLine(id) {
+    const S = DT_SCRIPTS[id], m = this.st.m[id]; if (!S) return '';
+    let n = S.nodes[S.start], last = '';
+    for (let k = 0; n; k++) {
+      if (n.say && n.say.length) last = n.say[n.say.length - 1];
+      const a = (n.ask || []).filter(a => a && a.t)[m.c[k]]; if (!a) break;
+      last = 'Вы: ' + a.t; n = S.nodes[a.to];
+    }
+    return last;
   },
 
-  /* переписка: прошлые ответы проигрываются сразу, новые реплики девушки — с «печатает…» */
+  /* переписка: уже выбранные ответы проигрываются сразу, новые реплики собеседницы — с «печатает…» */
   chat(ctx, g, parent) {
-    const app = this, m = app.st.m[g.id], S = DT_TALK[g.id]; if (!m || !S) return;
+    const app = this, m = app.st.m[g.id], S = DT_SCRIPTS[g.id]; if (!m || !S) return;
     m.nw = false; app.save(); parent.badge && parent.badge();
-    let hearts;
-    const page = ctx.push({
-      top: bar => { const t = ctx.ui.h('div', 'po-title', g.name); hearts = ctx.ui.h('div', 'dt-hearts'); bar.append(t, hearts) },
-      render() { }, onBack() { parent.refresh && parent.refresh(); return false },
-    });
+    const page = ctx.push({ title: g.name, render() { }, onBack() { parent.refresh && parent.refresh(); return false } });
     const chat = ctx.ui.chat(page);
-    const setH = a => { const n = Math.max(0, Math.min(5, a + 2)); hearts.textContent = '♥'.repeat(n) + '♡'.repeat(5 - n) };
-    setH(m.aff);
-    chat.say('sys', 'Вы понравились друг другу');
+    chat.say('sys', 'Найдена взаимная симпатия');
     (async () => {
-      let id = 's', k = 0, aff = 0;
+      let id = S.start, k = 0;
       while (!page.gone) {
-        const n = S[id]; if (!n) break;
-        const kind = n.end === 'auto' ? (aff >= 2 ? 'date' : 'lost') : n.end;
-        const lines = (n.say || []).concat(kind ? (kind === 'date' ? S.win : S.lose) : []);
-        const live = k >= m.c.length && !m.res;
-        for (const t of lines) { if (live) await chat.typing(Math.min(1800, 500 + t.length * 28)); if (page.gone) return; chat.say('them', t) }
-        if (kind) {
-          chat.say('sys', kind === 'date' ? 'Она согласилась на свидание! Свидания появятся в следующих версиях' : `${g.name} удалила вас из пар`);
-          if (!m.res) { m.res = kind; app.save(); haptic(kind === 'date' ? 'heavy' : 'light') }
-          return;
-        }
-        let i;
-        if (k < m.c.length) { i = m.c[k]; chat.say('me', n.ask[i][0]) }
-        else { i = await chat.ask(n.ask.map(a => a[0])); m.c.push(i) }
-        aff += n.ask[i][2]; m.aff = aff; setH(aff); app.save();
-        id = n.ask[i][1]; k++;
+        const n = S.nodes[id]; if (!n) break;
+        const live = k >= m.c.length;
+        for (const t of n.say || []) { if (live) await chat.typing(Math.min(1800, 500 + t.length * 28)); if (page.gone) return; chat.say('them', t) }
+        const ask = (n.ask || []).filter(a => a && a.t);
+        if (!ask.length) break;                          // конец написанного сценария
+        let i = k < m.c.length ? m.c[k] : -1;
+        if (i >= 0 && ask[i]) chat.say('me', ask[i].t);
+        else { m.c.length = k; i = await chat.ask(ask.map(a => a.t)); m.c.push(i); app.save() }
+        id = ask[i].to; k++;
+        if (!id || !S.nodes[id]) break;
       }
     })();
   },
 });
-
+DATING.load();
 
 function openPhone() {
   if (PH.on) return closePhone();
