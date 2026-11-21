@@ -1246,51 +1246,194 @@ phTap.style.cssText = 'position:fixed;inset:0;z-index:40;display:none';
 phTap.addEventListener('click', e => { e.stopPropagation(); closePhone() });
 document.body.appendChild(phTap);
 { const st = document.createElement('style'); st.textContent = 'body.phon .coins,body.phon .depth,body.phon .mapbtn,body.phon .supbtn,body.phon .pouch{opacity:0;pointer-events:none;transition:opacity .2s}'; document.head.appendChild(st) }
-/* ---------- экран телефона: занимает правую половину, Кирью с телефоном остаётся слева ----------
-   обои — пиксельная переработка картинки с собакой; одно приложение знакомств (внутренности сделаем после утверждения вида) */
 const PH_WALL = 'data:image/png;base64,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';
+/* ---------- телефон: отдельная среда со своими приложениями (как телефон в GTA) ----------
+   Экран — во всю высоту окна справа, без рамок и строки состояния. Всё внутри — в единицах em от ширины экрана,
+   поэтому при любом размере окна раскладка одна и та же. Приложения регистрируются через PHONE.register и живут
+   в своих окнах со стопкой страниц: «назад» снимает страницу, с первой страницы — на главный экран, с главного — закрыть телефон.
+   Для будущих приложений есть готовые куски: страница со списком, переписка с кнопками ответа, страница сайта. */
 { const st = document.createElement('style'); st.textContent = `
-#phs{position:fixed;z-index:41;top:50%;right:max(10px,2vw);height:min(calc(100vh - 32px),calc((50vw - 18px) * 19.5 / 9));aspect-ratio:9/19.5;
-  transform:translate(130%,-50%) rotate(4deg);transition:transform .45s cubic-bezier(.2,1.1,.35,1);
-  background:#0b0f17;border-radius:7% / 3.3%;padding:2.2%;box-shadow:0 0 0 2px #2b3342,0 0 0 5px #0b0f17,0 14px 30px rgba(0,0,0,.55);font-family:ui-monospace,Menlo,Consolas,monospace}
-#phs.on{transform:translate(0,-50%) rotate(0)}
-#phs .scr{position:relative;width:100%;height:100%;border-radius:5.5% / 2.6%;overflow:hidden;background:#141a2a url(${PH_WALL}) center top/cover no-repeat;image-rendering:pixelated}
-#phs .scr::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,14,24,.55),rgba(10,14,24,0) 22%,rgba(10,14,24,0) 70%,rgba(10,14,24,.45));pointer-events:none}
-#phs .bar{position:absolute;z-index:2;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:center;padding:6% 8% 0;color:#f3ead6;font-weight:800;font-size:clamp(10px,3.2vh,15px);text-shadow:0 1px 0 #000}
-#phs .bar i{display:inline-flex;gap:5px;align-items:center;font-style:normal}
-#phs .bar canvas{height:1.05em;width:auto;image-rendering:pixelated}
-#phs .notch{position:absolute;z-index:3;left:50%;top:1.6%;width:28%;height:2.6%;transform:translateX(-50%);background:#0b0f17;border-radius:999px}
-#phs .apps{position:absolute;z-index:2;left:0;right:0;top:15%;display:grid;grid-template-columns:repeat(4,1fr);padding:0 6%}
-#phs .app{grid-column:1 / span 2;display:flex;flex-direction:column;align-items:flex-start;gap:7px;background:none;border:0;padding:0;cursor:pointer;text-align:left;color:#fff}
-#phs .app canvas{width:clamp(38px,11vh,64px);height:auto;aspect-ratio:1;border-radius:24%;image-rendering:pixelated;box-shadow:0 3px 0 rgba(0,0,0,.45)}
-#phs .app span{font:700 clamp(9px,2.1vh,12px)/1.2 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-shadow:0 1px 2px #000,0 0 2px #000;max-width:15em}
-#phs .app:active canvas{transform:scale(.94)}
-#phs .home{position:absolute;z-index:2;left:50%;bottom:1.8%;width:34%;height:.9%;transform:translateX(-50%);background:#f3ead6;border-radius:999px;opacity:.85}
+#po{position:fixed;z-index:41;top:0;bottom:0;right:0;width:var(--pw,50vw);font-size:var(--pf,15px);overflow:hidden;
+  transform:translateX(104%);transition:transform .42s cubic-bezier(.2,.9,.3,1);background:#0d1220;color:#eef1f6;
+  box-shadow:-10px 0 28px rgba(0,0,0,.45);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+#po.on{transform:none}
+#po *{box-sizing:border-box}
+#po .po-home{position:absolute;inset:0;background:#141a2a var(--wall) center top/cover no-repeat;image-rendering:pixelated;transition:transform .3s,opacity .3s}
+#po .po-home::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,11,20,.5),rgba(8,11,20,0) 24%,rgba(8,11,20,0) 75%,rgba(8,11,20,.4));pointer-events:none}
+#po.inapp .po-home{transform:scale(.94);opacity:.4}
+#po .po-grid{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,1fr);gap:1.4em .4em;padding:3.2em 1.2em 0;image-rendering:auto}
+#po .po-ic{display:flex;flex-direction:column;align-items:center;gap:.4em;min-width:0;background:none;border:0;padding:0;margin:0;color:#fff;cursor:pointer;font:inherit}
+#po .po-ic canvas,#po .po-ic .po-gl{width:3.9em;height:3.9em;border-radius:23%;image-rendering:pixelated;box-shadow:0 .15em .4em rgba(0,0,0,.45);transition:transform .12s}
+#po .po-ic:active canvas{transform:scale(.9)}
+#po .po-ic b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;width:100%;font-size:.72em;font-weight:500;line-height:1.2;text-align:center;
+  text-shadow:0 1px 2px rgba(0,0,0,.9);word-break:break-word}
+#po .po-app{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;background:var(--bg,#10151f);color:var(--fg,#eef1f6);
+  transform:scale(.2);opacity:0;transition:transform .32s cubic-bezier(.2,.9,.3,1),opacity .2s}
+#po .po-app.on{transform:none;opacity:1}
+#po .po-page{position:absolute;inset:0;display:flex;flex-direction:column;background:inherit;transition:transform .28s cubic-bezier(.2,.9,.3,1)}
+#po .po-page.in{transform:translateX(100%)}
+#po .po-page.under{transform:translateX(-25%)}
+#po .po-top{flex:none;display:flex;align-items:center;gap:.3em;height:3.4em;padding:0 .6em;border-bottom:1px solid rgba(255,255,255,.08);background:var(--bar,rgba(255,255,255,.03))}
+#po .po-back{flex:none;width:2.4em;height:2.4em;border:0;border-radius:50%;background:none;color:var(--acc,#ff5a7a);font:400 1.6em/1 inherit;cursor:pointer;padding:0 0 .12em}
+#po .po-back:active{background:rgba(255,255,255,.08)}
+#po .po-title{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#po .po-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+#po .po-pad{padding:1em}
+#po .po-btn{display:block;width:100%;border:0;border-radius:.8em;padding:.85em 1em;background:var(--acc,#ff5a7a);color:#fff;font:600 1em inherit;cursor:pointer}
+#po .po-btn.ghost{background:rgba(255,255,255,.08);color:inherit}
+#po .po-btn:active{filter:brightness(.9)}
+#po .po-row{display:flex;align-items:center;gap:.8em;width:100%;padding:.75em 1em;border:0;border-bottom:1px solid rgba(255,255,255,.06);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+#po .po-row:active{background:rgba(255,255,255,.05)}
+#po .po-row i{flex:none;width:2.6em;height:2.6em;border-radius:50%;background:#2a3346 center/cover;font-style:normal;display:grid;place-items:center;font-weight:700}
+#po .po-row span{flex:1;min-width:0}
+#po .po-row small{display:block;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#po .po-chat{display:flex;flex-direction:column;gap:.4em;padding:1em .8em}
+#po .po-msg{max-width:80%;padding:.55em .8em;border-radius:1.1em;line-height:1.3;white-space:pre-wrap;word-break:break-word;animation:po-pop .18s ease-out}
+#po .po-msg.them{align-self:flex-start;background:#262e3e;border-bottom-left-radius:.3em}
+#po .po-msg.me{align-self:flex-end;background:var(--acc,#ff5a7a);color:#fff;border-bottom-right-radius:.3em}
+#po .po-msg.sys{align-self:center;background:none;opacity:.55;font-size:.8em}
+#po .po-dots{display:inline-flex;gap:.25em}#po .po-dots i{width:.45em;height:.45em;border-radius:50%;background:currentColor;opacity:.5;animation:po-dot 1s infinite}
+#po .po-dots i:nth-child(2){animation-delay:.15s}#po .po-dots i:nth-child(3){animation-delay:.3s}
+#po .po-ans{flex:none;display:flex;flex-direction:column;gap:.4em;padding:.6em .8em .9em;border-top:1px solid rgba(255,255,255,.08)}
+#po .po-ans:empty{display:none}
+#po .po-ans button{border:1px solid var(--acc,#ff5a7a);border-radius:1.2em;padding:.6em .9em;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+#po .po-ans button:active{background:var(--acc,#ff5a7a);color:#fff}
+#po .po-url{flex:1;min-width:0;padding:.45em .8em;border-radius:.7em;background:rgba(255,255,255,.08);font-size:.85em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.85}
+@keyframes po-pop{from{transform:scale(.85);opacity:0}}
+@keyframes po-dot{50%{opacity:1;transform:translateY(-.15em)}}
 `; document.head.appendChild(st) }
-const phS = document.createElement('div'); phS.id = 'phs';
-phS.innerHTML = '<div class="scr"><div class="notch"></div><div class="bar"><b class="clk">00:00</b><i class="ind"></i></div>' +
-  '<div class="apps"><button class="app" aria-label="Знакомства без интимных фото верифицирующих личность"><span class="ic"></span><span>Знакомства без интимных фото верифицирующих личность</span></button></div><div class="home"></div></div>';
-document.body.appendChild(phS);
-phS.addEventListener('click', e => e.stopPropagation());
-{ // значки статуса: связь и батарея, иконка приложения — белое сердце на розово-красном
-  const ind = phS.querySelector('.ind');
-  icon(["..........","........kk","........kk","......kkkk","......kkkk","....kkkkkk","....kkkkkk","..kkkkkkkk","..kkkkkkkk","kkkkkkkkkk"], { k: '#f3ead6' }, ind);
-  icon(["............","............","kkkkkkkkkk..","k........k..","k.gggggg.kk.","k.gggggg.kk.","k.gggggg.kk.","k........k..","kkkkkkkkkk..","............","............","............"], { k: '#f3ead6', g: '#7fd36b' }, ind);
-  const ic = phS.querySelector('.ic'), c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d');
-  for (let y = 0; y < 16; y++) for (let i = 0; i < 16; i++) { const t = (i + y) / 30; x.fillStyle = `rgb(${255 - t * 40 | 0},${70 + t * 20 | 0},${120 - t * 50 | 0})`; x.fillRect(i, y, 1, 1) }
-  const H = ["................","................","................","...WW.....WW....","..WWWW...WWWW...",".WWWWWW.WWWWWW..",".WWWWWWWWWWWWW..",".WWWWWWWWWWWWW..","..WWWWWWWWWWW...","...WWWWWWWWW....","....WWWWWWW.....",".....WWWWW......","......WWW.......",".......W........","................","................"];
-  H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#fff6f8'; x.fillRect(i + 1, y, 1, 1) } }));
-  x.fillStyle = 'rgba(255,255,255,.55)'; x.fillRect(4, 4, 2, 1); x.fillRect(3, 5, 1, 2);
-  ic.replaceWith(c);
-}
-phS.querySelector('.app').addEventListener('click', () => { haptic('light'); toast('Приложение откроется в следующей версии') });
-function phTick() { const d = new Date(); phS.querySelector('.clk').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') }
+
+const PHONE = window.__PHONE = (() => {
+  const root = document.createElement('div'); root.id = 'po';
+  root.style.setProperty('--wall', `url(${PH_WALL})`);
+  root.innerHTML = '<div class="po-home"><div class="po-grid"></div></div>';
+  document.body.appendChild(root);
+  const grid = root.querySelector('.po-grid');
+  ['click', 'pointerdown', 'touchstart', 'wheel', 'keydown', 'keyup'].forEach(t => root.addEventListener(t, e => e.stopPropagation(), { passive: true }));
+  const apps = new Map(); let cur = null;            // cur = {app, el, pages:[{page, el}]}
+  const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e };
+
+  function layout() {                                // ширина экрана: как у телефона во всю высоту окна, но не больше 60% окна
+    const vw = innerWidth, vh = innerHeight, pw = Math.round(Math.max(Math.min(vh * .4625, vw * .6), Math.min(vw, 240)));
+    root.style.setProperty('--pw', pw + 'px'); root.style.setProperty('--pf', (pw / 23).toFixed(2) + 'px');
+    return pw;
+  }
+  addEventListener('resize', layout); layout();
+
+  function register(app) {                           // app: {id, name, icon: (ctx2d, size) => void, theme:{bg,fg,acc,bar}, start(ctx)}
+    apps.set(app.id, app);
+    const b = h('button', 'po-ic'); b.setAttribute('aria-label', app.name);
+    const c = document.createElement('canvas'); c.width = c.height = 16; app.icon(c.getContext('2d'), 16);
+    b.append(c, h('b', '', app.name)); b.onclick = () => { haptic('light'); open(app.id, b) };
+    grid.appendChild(b); return app;
+  }
+  function open(id, from) {
+    const app = apps.get(id); if (!app) return; if (cur) closeApp(true);
+    const el = h('div', 'po-app'); const t = app.theme || {};
+    for (const k in t) el.style.setProperty('--' + k, t[k]);
+    if (from) { const r = from.getBoundingClientRect(), R = root.getBoundingClientRect(); el.style.transformOrigin = `${r.left + r.width / 2 - R.left}px ${r.top + r.height / 3 - R.top}px` }
+    root.appendChild(el); cur = { app, el, pages: [] }; root.classList.add('inapp');
+    const ctx = { app, os: PHONE, ui: UI, push, pop: back, home, el };
+    app.start(ctx);
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('on')));
+  }
+  function push(page) {                              // page: {title, render(body, page), onBack?() => true чтобы не уходить, top?(bar) — своя шапка}
+    if (!cur) return;
+    const el = h('div', 'po-page'), top = h('div', 'po-top'), body = h('div', 'po-body');
+    const bk = h('button', 'po-back', '‹'); bk.setAttribute('aria-label', 'Назад'); bk.onclick = () => { haptic('light'); back() };
+    top.append(bk); if (page.top) page.top(top); else top.append(h('div', 'po-title', page.title || cur.app.name));
+    el.append(top, body); page.el = el; page.body = body;
+    const prev = cur.pages[cur.pages.length - 1];
+    if (prev) { el.classList.add('in'); requestAnimationFrame(() => requestAnimationFrame(() => { el.classList.remove('in'); prev.el.classList.add('under') })) }
+    cur.el.appendChild(el); cur.pages.push(page); page.render && page.render(body, page);
+    return page;
+  }
+  function back() {                                  // назад: страница → главный экран → закрыть телефон
+    if (!cur) { closePhone(); return }
+    const p = cur.pages[cur.pages.length - 1];
+    if (p && p.onBack && p.onBack()) return;
+    if (cur.pages.length > 1) {
+      cur.pages.pop(); const q = cur.pages[cur.pages.length - 1];
+      p.el.classList.add('in'); q.el.classList.remove('under'); setTimeout(() => p.el.remove(), 300); p.gone = true; return;
+    }
+    closeApp();
+  }
+  function closeApp(now) {
+    if (!cur) return; const { el, pages } = cur; pages.forEach(p => p.gone = true); cur = null; root.classList.remove('inapp');
+    if (now) { el.remove(); return }
+    el.classList.remove('on'); setTimeout(() => el.remove(), 330);
+  }
+  function home() { closeApp() }
+  function reset() { closeApp(true) }                // телефон закрыли — в следующий раз откроется главный экран
+
+  /* готовые куски для приложений */
+  const UI = {
+    h,
+    btn(text, on, ghost) { const b = h('button', 'po-btn' + (ghost ? ' ghost' : ''), text); b.onclick = () => { haptic('light'); on && on() }; return b },
+    row({ title, sub, avatar, on }) {                // строка списка: аватар, заголовок, подпись
+      const b = h('button', 'po-row'), i = h('i'); if (avatar && /^(data:|https?:|blob:)/.test(avatar)) i.style.backgroundImage = `url(${avatar})`; else i.textContent = avatar || (title || '?')[0];
+      const s = h('span'); s.append(h('div', '', title)); if (sub) s.append(h('small', '', sub));
+      b.append(i, s); b.onclick = () => { haptic('light'); on && on() }; return b;
+    },
+    /* переписка: chat.say('them'|'me'|'sys', текст), await chat.typing(мс), const n = await chat.ask(['вариант 1', 'вариант 2']) → номер выбранного */
+    chat(page) {
+      const log = h('div', 'po-chat'), ans = h('div', 'po-ans'); page.body.append(log); page.el.append(ans);
+      const down = () => page.body.scrollTop = page.body.scrollHeight;
+      const wait = ms => new Promise(r => setTimeout(r, ms));
+      return {
+        say(who, text) { const m = h('div', 'po-msg ' + who, text); log.append(m); down(); if (who === 'them') haptic('light'); return m },
+        async typing(ms = 900) { if (page.gone) return; const m = h('div', 'po-msg them'); m.innerHTML = '<span class="po-dots"><i></i><i></i><i></i></span>'; log.append(m); down(); await wait(ms); m.remove() },
+        ask(opts) {
+          ans.textContent = '';
+          return new Promise(res => opts.forEach((o, n) => { const b = h('button', '', o); b.onclick = () => { haptic('light'); ans.textContent = ''; this.say('me', o); res(n) }; ans.append(b) }));
+        },
+        clear() { log.textContent = ''; ans.textContent = '' },
+      };
+    },
+    /* страница сайта: шапка с адресом вместо заголовка */
+    site(url, render) { return push({ top: bar => bar.append(h('div', 'po-url', url)), render }) },
+  };
+
+  return { root, layout, register, open, push, back, home, reset, apps, ui: UI, get app() { return cur && cur.app.id } };
+})();
+/* клавиатура при открытом телефоне: игра её не получает; Esc — «назад» */
+addEventListener('keydown', e => {
+  if (!PH.on) return;
+  if (e.code === 'Escape') { e.preventDefault(); PHONE.back() }
+  if (!PHONE.root.contains(e.target)) e.stopImmediatePropagation();
+}, true);
+addEventListener('keyup', e => { if (PH.on && !PHONE.root.contains(e.target)) e.stopImmediatePropagation() }, true);
+
+/* приложение знакомств — пока только заставка; внутренности после утверждения вида */
+PHONE.register({
+  id: 'dating', name: 'Знакомства без интимных фото верифицирующих личность',
+  theme: { bg: '#15101a', acc: '#ff4f7b', bar: 'rgba(255,79,123,.06)' },
+  icon(x) {                                          // белое пиксельное сердце на розово-красном
+    for (let y = 0; y < 16; y++) for (let i = 0; i < 16; i++) { const t = (i + y) / 30; x.fillStyle = `rgb(${255 - t * 40 | 0},${70 + t * 20 | 0},${120 - t * 50 | 0})`; x.fillRect(i, y, 1, 1) }
+    const H = ["................", "................", "................", "...WW.....WW....", "..WWWW...WWWW...", ".WWWWWW.WWWWWW..", ".WWWWWWWWWWWWW..", ".WWWWWWWWWWWWW..", "..WWWWWWWWWWW...", "...WWWWWWWWW....", "....WWWWWWW.....", ".....WWWWW......", "......WWW.......", ".......W........", "................", "................"];
+    H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#fff6f8'; x.fillRect(i + 1, y, 1, 1) } }));
+    x.fillStyle = 'rgba(255,255,255,.55)'; x.fillRect(4, 4, 2, 1); x.fillRect(3, 5, 1, 2);
+  },
+  start(ctx) {
+    ctx.push({
+      title: this.name,
+      render(body) {
+        const u = ctx.ui, w = u.h('div', 'po-pad'); w.style.cssText = 'min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1em;text-align:center';
+        const c = document.createElement('canvas'); c.width = c.height = 16; ctx.app.icon(c.getContext('2d')); c.style.cssText = 'width:6em;height:6em;border-radius:23%;image-rendering:pixelated;box-shadow:0 .3em 1em rgba(255,79,123,.35)';
+        const t = u.h('div', '', ctx.app.name); t.style.cssText = 'font-size:1.25em;font-weight:800;line-height:1.25';
+        const s = u.h('div', '', 'Приложение скоро заработает'); s.style.opacity = '.6';
+        w.append(c, t, s); body.append(w);
+      },
+    });
+  },
+});
 function openPhone() {
   if (PH.on) return closePhone();
   if (CH.state !== 'walk' || CH.held) { shakeTool('phone'); toast(CH.held ? 'Руки заняты' : 'Не сейчас'); return }
-  PH.on = true; PH.turn = true; phTick(); haptic('medium'); document.body.classList.add('phon'); phTap.style.display = 'block';
+  PH.on = true; PH.turn = true; PHONE.layout(); haptic('medium'); document.body.classList.add('phon'); phTap.style.display = 'block';
 }
-function closePhone() { if (!PH.on) return; PH.on = false; PH.turn = false; phS.classList.remove('on'); phTap.style.display = 'none'; document.body.classList.remove('phon'); haptic('light') }
+function closePhone() { if (!PH.on) return; PH.on = false; PH.turn = false; PHONE.root.classList.remove('on'); setTimeout(() => { if (!PH.on) PHONE.reset() }, 450); phTap.style.display = 'none'; document.body.classList.remove('phon'); haptic('light') }
 /* ракурс крупного плана всегда один и тот же (слева спереди, чуть снизу). Всё, что оказалось между камерой и Кирью
    (стенки ямы, блоки, невидимые стены), просто срезается ближней плоскостью камеры — видно только Кирью и то, что за ним */
 const phDir = (ang, el, fw, sd) => fw.clone().multiplyScalar(Math.cos(ang)).addScaledVector(sd, -Math.sin(ang)).multiplyScalar(Math.cos(el)).addScaledVector(_UP, -Math.sin(el)).normalize();
@@ -1304,7 +1447,7 @@ function stepPhone(dt) {
     if (Math.abs(dy) < .06) PH.turn = false;
   }
   PH.k = Math.max(0, Math.min(1, PH.k + (PH.on && !PH.turn ? dt / .85 : PH.on ? 0 : -dt / .5)));
-  if (PH.on && PH.k > .8 && !phS.classList.contains('on')) phS.classList.add('on');   // камера почти у лица — выезжает экран
+  if (PH.on && PH.k > .8 && !PHONE.root.classList.contains('on')) PHONE.root.classList.add('on');   // камера почти у лица — выезжает экран
   if (PH.k <= 0) { VCAM = cam; return }
   const e = ease3(PH.k), yaw = CH.yaw;
   KIRYU.head.localToWorld(_hp.set(0, .1, .1));
@@ -1313,7 +1456,8 @@ function stepPhone(dt) {
   const d0 = VIEW.clone(), dir = d0.lerp(d1, e).normalize();
   const t0 = cam.position.clone().addScaledVector(VIEW, -60);
   const right = new THREE.Vector3().crossVectors(_UP, d1).normalize();
-  const asp = W / H, vhT = Math.max(PHT.vh, .9 / asp), shT = vhT * asp / 4;   // лицо — в середине левой половины кадра, правая под экран
+  const asp = W / H, fr = Math.min(.8, PHONE.root.offsetWidth / Math.max(1, innerWidth));   // доля окна под экран телефона
+  const vhT = Math.max(PHT.vh, .45 / (asp * (1 - fr))), shT = vhT * asp * fr / 2;   // лицо — посередине свободной слева части
   const t1 = _hp.clone().addScaledVector(right, shT).add(new THREE.Vector3(0, -PHT.fy * 10, 0));
   const tgt = t0.lerp(t1, e);
   const h0 = cam.top - cam.bottom, h1 = vhT, vh = h0 * Math.pow(h1 / h0, e), fov = 2 + (PHT.fov - 2) * e;
