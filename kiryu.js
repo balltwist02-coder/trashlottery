@@ -171,6 +171,12 @@ export function createKiryu(THREE) {
       const k = 1 - st.swing / .3;
       p.ux0 = k < .25 ? -3 : -3 + 3.4 * Math.min(1, (k - .25) / .4); p.uy0 = 0; p.uz0 = -.15; p.fx0 = -.2; p.fz0 = 0; p.chRx += .3 * k; p.hdRx = -.1;
     }
+    if (st.phone > 0) {                                             // смотрит в телефон: правая рука подносит его к лицу, голова опущена к экрану
+      const q = Object.assign({}, p);
+      q.spRx = .12; q.chRx = .2; q.chRy = 0; q.spRy = 0; q.hipRy = 0; q.hdRx = .38; q.hdRy = -.2; q.hdRz = .05;
+      q.ux0 = -(q.spRx + q.chRx) - .55; q.uy0 = 0; q.uz0 = .5; q.fx0 = -1.35; q.fz0 = .45; pocket(q, 1);
+      for (const n of K) p[n] += (q[n] - p[n]) * st.phone;
+    }
     if (st.land > 0) { const l = st.land; p.th0 -= 2.4 * l; p.th1 -= 2.4 * l; p.kn0 += 4 * l; p.kn1 += 4 * l; p.chRx += 1.5 * l }
     return p;
   }
@@ -209,5 +215,14 @@ export function createKiryu(THREE) {
   for (const [A, b] of buckets) { const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nrm, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
     A.add(new THREE.Mesh(g, VC)) }
-  return { root, update, height: 1.5 };
+  // телефон в правой руке и голубой свет экрана (добавлены после склейки: двигаются вместе с кистью)
+  const ph = G(arms[0].hd, 0, -.16, .03); ph.rotation.set(-.3, 0, 0);
+  ph.add(new THREE.Mesh(B(.1, .19, .02), new THREE.MeshLambertMaterial({ color: 0x15181f, flatShading: true })));
+  const scr = new THREE.MeshBasicMaterial({ color: 0x9fe8ff }); scr.userData.glow = true;
+  const sm = new THREE.Mesh(B(.084, .165, .004), scr); sm.position.z = .011; ph.add(sm);
+  const phL = new THREE.PointLight(0x8fdcff, 0, .7, 1.5); phL.position.set(0, 0, .12); ph.add(phL);
+  ph.visible = false;
+  const upd0 = update;
+  function update2(dt, st) { upd0(dt, st); const v = st.phone || 0; ph.visible = v > .02; phL.intensity = 2.5 * v * Math.PI }
+  return { root, update: update2, height: 1.5, head };
 }
