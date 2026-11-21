@@ -1238,7 +1238,7 @@ function stepHouse() {
    интерфейс телефона пока убран — его спроектируем отдельно. Закрыть: тап по экрану или по телефону в сумке.
    поворот к зрителю нужен, чтобы камера не влетала в стенки: со стороны зрителя всегда пусто (иначе Кирью не был бы виден) */
 const PHT = window.__PHT = { ang: 1.05, el: .25, vh: 1.3, sh: .32, fov: 34, fy: 0 };   // ракурс крупного плана: угол от лица вбок, снизу, высота кадра, сдвиг вбок, угол обзора
-const PH = { on: false, k: 0, turn: false, ang: 1.05, el: .25, cam: new THREE.PerspectiveCamera(30, 1, .03, 300) };
+const PH = { on: false, k: 0, turn: false, cam: new THREE.PerspectiveCamera(30, 1, .03, 300) };
 let VCAM = cam;
 const PH_FACE = new THREE.Vector3(VIEW.x, 0, VIEW.z).normalize(), PH_YAW = Math.atan2(PH_FACE.x, PH_FACE.z);
 const phTap = document.createElement('div');                   // прозрачный слой поверх игры: тап закрывает телефон
@@ -1252,46 +1252,32 @@ function openPhone() {
   PH.on = true; PH.turn = true; haptic('medium'); document.body.classList.add('phon'); phTap.style.display = 'block';
 }
 function closePhone() { if (!PH.on) return; PH.on = false; PH.turn = false; phTap.style.display = 'none'; document.body.classList.remove('phon'); haptic('light') }
-/* камера всегда заходит слева (как задумано), но если по пути блоки — плавно уводим её ближе к обычному виду сверху:
-   со стороны зрителя всегда пусто, иначе Кирью не был бы виден */
-function phSolid(x, y, z) {
-  if (y >= 0) return false;
-  const i = Math.floor(x), j = Math.floor(z), l = Math.floor(-y / BH);
-  return i < PIT0 || j < PIT0 || i >= PIT1 || j >= PIT1 || solidAt(i, j, l);
-}
+/* ракурс крупного плана всегда один и тот же (слева спереди, чуть снизу). Всё, что оказалось между камерой и Кирью
+   (стенки ямы, блоки, невидимые стены), просто срезается ближней плоскостью камеры — видно только Кирью и то, что за ним */
 const phDir = (ang, el, fw, sd) => fw.clone().multiplyScalar(Math.cos(ang)).addScaledVector(sd, -Math.sin(ang)).multiplyScalar(Math.cos(el)).addScaledVector(_UP, -Math.sin(el)).normalize();
-function phAim() {
-  KIRYU.head.localToWorld(_hp.set(0, .1, .1));
-  const fw = new THREE.Vector3(Math.sin(PH_YAW), 0, Math.cos(PH_YAW)), sd = new THREE.Vector3(Math.cos(PH_YAW), 0, -Math.sin(PH_YAW));
-  const dist = PHT.vh / 2 / Math.tan(PHT.fov * Math.PI / 360), up = -Math.asin(VIEW.y);   // вид сверху: камера выше головы
-  for (let t = 0; t <= 1.001; t += .1) {
-    const ang = PHT.ang * (1 - t), el = PHT.el + (up - PHT.el) * t, d = phDir(ang, el, fw, sd); let free = true;
-    for (let s = .2; s <= dist + .3 && free; s += .08) { const p = _hp.clone().addScaledVector(d, s); if (phSolid(p.x, p.y, p.z)) free = false }
-    if (free || t > .99) { PH.ang = ang; PH.el = el; return }
-  }
-}
+const PH_CLIP = .5;                                           // насколько перед точкой у лица начинается видимое
 const ease3 = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
 const _hp = new THREE.Vector3(), _UP = new THREE.Vector3(0, 1, 0);
 function stepPhone(dt) {
   if (PH.on && PH.turn) {                                      // сначала разворот к зрителю, камера ждёт
     CH.face.copy(PH_FACE);
     let dy = PH_YAW - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-    if (Math.abs(dy) < .06) { PH.turn = false; phAim() }
+    if (Math.abs(dy) < .06) PH.turn = false;
   }
   PH.k = Math.max(0, Math.min(1, PH.k + (PH.on && !PH.turn ? dt / .85 : PH.on ? 0 : -dt / .5)));
   if (PH.k <= 0) { VCAM = cam; return }
   const e = ease3(PH.k), yaw = CH.yaw;
   KIRYU.head.localToWorld(_hp.set(0, .1, .1));
   const fw = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), sd = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-  const d1 = phDir(PH.ang, PH.el, fw, sd);
+  const d1 = phDir(PHT.ang, PHT.el, fw, sd);
   const d0 = VIEW.clone(), dir = d0.lerp(d1, e).normalize();
   const t0 = cam.position.clone().addScaledVector(VIEW, -60);
   const right = new THREE.Vector3().crossVectors(_UP, d1).normalize();
-  const t1 = _hp.clone().addScaledVector(right, PHT.sh * PH.ang / PHT.ang).add(new THREE.Vector3(0, -PHT.fy * 10, 0));
+  const t1 = _hp.clone().addScaledVector(right, PHT.sh).add(new THREE.Vector3(0, -PHT.fy * 10, 0));
   const tgt = t0.lerp(t1, e);
   const h0 = cam.top - cam.bottom, h1 = PHT.vh, vh = h0 * Math.pow(h1 / h0, e), fov = 2 + (PHT.fov - 2) * e;
   const dist = vh / 2 / Math.tan(fov * Math.PI / 360), c = PH.cam;
-  c.fov = fov; c.aspect = W / H; c.near = Math.max(.03, dist - 40); c.far = dist + 120; c.updateProjectionMatrix();
+  c.fov = fov; c.aspect = W / H; c.near = Math.max(.03, dist - (40 + (PH_CLIP - 40) * e)); c.far = dist + 120; c.updateProjectionMatrix();
   c.position.copy(tgt).addScaledVector(dir, dist); c.lookAt(tgt); c.updateMatrixWorld();
   VCAM = c;
 }
