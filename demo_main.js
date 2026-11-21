@@ -1452,6 +1452,7 @@ addEventListener('keyup', e => { if (PH.on && !PHONE.root.contains(e.target)) e.
 
 /* анкеты для свайпов — пока пусто, вкладка закрыта */
 const DT_DECK = [], DT_DECK_LOCKED = true;
+const DT_PERSIST = false;                    // пока сценарий отрабатывается — переписка каждый запуск начинается заново (вернуть true, чтобы сохранять)
 /* собеседницы: ник, портрет-заглушка */
 const DT_PEOPLE = {
   rozovye: { id: 'rozovye', name: 'Розовые', hair: 'long', bg: ['#ffc2dc', '#a8406f'] },
@@ -1506,6 +1507,7 @@ const DATING = PHONE.register({
   st: null, wait: [],
   load(cb) {                                          // состояние грузим один раз при запуске игры
     if (this.st) return cb && cb();
+    if (!DT_PERSIST) { this.st = { v: 2, m: {} }; this.badge(); return cb && cb() }
     if (cb) this.wait.push(cb); if (this.loading) return; this.loading = true;
     stGet(['dating'], v => {
       let s = null; try { s = v && v.dating ? JSON.parse(v.dating) : null } catch (_) { }
@@ -1513,7 +1515,7 @@ const DATING = PHONE.register({
       this.badge(); this.wait.splice(0).forEach(f => f());
     });
   },
-  save() { try { stSet('dating', JSON.stringify(this.st)) } catch (_) { } },
+  save() { if (!DT_PERSIST) return; try { stSet('dating', JSON.stringify(this.st)) } catch (_) { } },
   unread() { return this.st ? Object.values(this.st.m).filter(m => m.nw).length : 0 },
   badge() {                                          // счётчик на значке приложения и точка на кнопке телефона
     const n = this.unread(), ic = PHONE.root.querySelector('.po-ic'); if (!ic) return;
