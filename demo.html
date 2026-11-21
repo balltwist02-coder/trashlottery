@@ -67,6 +67,19 @@ canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-renderi
 .mapbtn canvas,.cell canvas,.close canvas{position:static;transform:none}
 .mapbtn canvas{width:32px;height:32px}
 .mapbtn:focus-visible,.close:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.supbtn{position:absolute;left:max(10px,env(safe-area-inset-left,0px));top:62px;width:44px;height:44px;padding:0;display:grid;place-items:center;background:var(--slot);border:0;border-radius:2px;cursor:pointer;font-size:22px;line-height:1;
+  box-shadow:inset 0 0 0 2px var(--slot-edge),inset 0 -4px 0 0 var(--slot-dark)}
+.supbtn.fan{box-shadow:inset 0 0 0 2px var(--active),inset 0 -4px 0 0 var(--slot-dark),0 0 10px var(--active-glow)}
+.supbtn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.sup p{margin:0 0 10px;font-size:13px;line-height:1.4;color:var(--fg)}
+.sup .opts{display:grid;gap:8px;margin:12px 0}
+.sup .opt{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--slot);border:0;border-radius:2px;color:var(--fg);font:600 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;cursor:pointer;box-shadow:inset 0 0 0 2px var(--slot-edge),inset 0 -3px 0 0 var(--slot-dark)}
+.sup .opt b{color:var(--active)}
+.sup .opt:disabled{opacity:.5;cursor:default}
+.sup .fine{font-size:11.5px;color:var(--muted)}
+.sup .fine button{background:none;border:0;padding:0;color:var(--active);font:inherit;text-decoration:underline;cursor:pointer}
+.sup .terms{max-height:38vh;overflow:auto;white-space:pre-wrap;font-size:11.5px;color:var(--muted);background:var(--slot-dark);padding:8px;border-radius:2px;margin-top:8px}
+.sup .fanline{color:var(--active);font-weight:700}
 .mapwrap{position:fixed;inset:0;z-index:5;display:grid;place-items:center;background:rgba(6,10,16,.6);padding:16px}
 .map{position:relative;background:var(--bar);box-shadow:inset 0 0 0 2px var(--slot-edge),0 0 0 2px var(--slot-dark);border-radius:2px;padding:14px;width:min(100%,340px)}
 .map h2{margin:0 0 12px;font:600 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);padding-right:40px}
@@ -88,6 +101,7 @@ canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-renderi
     <div class="depth" id="depth">0 / 30</div>
     <div class="toast" id="toast" role="status" hidden></div>
     <button class="mapbtn" id="mapbtn" aria-label="Карта участков" aria-haspopup="dialog"></button>
+    <button class="supbtn" id="supbtn" aria-label="Поддержать автора" aria-haspopup="dialog" hidden>⭐</button>
     <div class="pouch" role="toolbar" aria-label="Инструменты">
       <canvas class="bagbg" width="80" height="90" aria-hidden="true"></canvas>
       <div class="tools">
@@ -105,6 +119,21 @@ canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-renderi
       <div id="shoplist"></div>
     </div>
   </div>
+  <div class="mapwrap" id="supwrap" hidden>
+    <div class="map sup" role="dialog" aria-modal="true" aria-labelledby="suptitle">
+      <h2 id="suptitle">Поддержать автора</h2>
+      <button class="close" id="supclose" aria-label="Закрыть"></button>
+      <p>Игру делает один человек. Если нравится копать — поддержи разработку звёздами Telegram. В благодарность — значок сторонника в игре.</p>
+      <p class="fanline" id="supfan" hidden></p>
+      <div class="opts">
+        <button class="opt" data-p="support_10">Немного <b>10 ⭐</b></button>
+        <button class="opt" data-p="support_50">Хорошо <b>50 ⭐</b></button>
+        <button class="opt" data-p="support_250">Очень сильно <b>250 ⭐</b></button>
+      </div>
+      <p class="fine">Это добровольное пожертвование, других товаров оно не даёт. Нажимая на сумму, ты принимаешь <button id="suptermsbtn">правила покупок</button>. Вопросы по оплате — команда /paysupport в боте.</p>
+      <div class="terms" id="supterms" hidden></div>
+    </div>
+  </div>
   <div class="mapwrap" id="mapwrap" hidden>
     <div class="map" role="dialog" aria-modal="true" aria-labelledby="maptitle">
       <h2 id="maptitle">Участки</h2>
@@ -114,6 +143,6 @@ canvas{position:absolute;left:50%;top:0;transform:translateX(-50%);image-renderi
   </div>
 </div>
 
-<script type="module" src="demo_main.js?v=1"></script>
+<script type="module" src="demo_main.js?v=2"></script>
 </body>
 </html>

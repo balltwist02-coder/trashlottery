@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu_demo.js?v=1';
+import { createKiryu } from './kiryu_demo.js?v=2';
 import { createMerchant } from './merchant.js?v=1';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
@@ -552,7 +552,7 @@ function genTrash() {
     else { const [i, j] = ACT[Math.random() * ACT.length | 0]; if (!cellOk(i, j, z)) return false; x = i + .5 + rnd(-.15, .15); zz = j + .5 + rnd(-.15, .15); ry = rnd(0, 6.28) }
     const t = makeTrash(type, x, -(z + 1) * BH + .01, zz, ry, z); t.g.visible = false;
     const cells = new Set();                                     // какие клетки ямы задевает предмет
-    t.g.traverse(o => { if (!o.isMesh) return; const bb = new THREE.Box3().setFromObject(o);
+    t.g.traverse(o => { if (!o.isMesh) return; const bb = new THREE.Box3().setFromObject(o, true);
       for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a]; if (bb.max.x > i + .03 && bb.min.x < i + .97 && bb.max.z > j + .03 && bb.min.z < j + .97) cells.add(a) } });
     t.cells = [...cells]; return true;
   };
@@ -684,7 +684,7 @@ function updateLight() {
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
   { const mb = Math.min(1.7, .07 + 2.5 * lightAt(MERCH.x, SHOP.floor + .7, MERCH.z));
     if (shopG.br === undefined || Math.abs(shopG.br - mb) > .004) { shopG.br = mb; dimGroup(shopG.userData.mer.root, mb, merBase) } }
-  const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z));    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
+  const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z)) * (HOUSE.under ? .62 : 1);   // под полом дома — в тени    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
   if (CH.br === undefined || Math.abs(CH.br - cb) > .004) { CH.br = cb; dimGroup(chG, cb, chBase) }
 }
 function removeTrash(t) { scene.remove(t.g); if (t.body) world.removeBody(t.body); trash.splice(trash.indexOf(t), 1) }
@@ -847,11 +847,11 @@ function stepHeld(g) {
 function depenetrate(t) {
   // срабатывает, только если СЕРЕДИНА предмета оказалась внутри блока; край, свисающий со ступеньки, — это нормально
   const b = t.body; if (b.sleepState === CANNON.Body.SLEEPING) return;
-  const c = t.local.getCenter(new THREE.Vector3()), w = b.pointToWorldFrame(new CANNON.Vec3(c.x, c.y, c.z));
+  const c = new CANNON.Vec3(); for (const o of b.shapeOffsets) c.vadd(o, c); c.scale(1 / b.shapeOffsets.length, c);
+  const w = b.pointToWorldFrame(c);
   const a = ACT.findIndex(([i, j]) => w.x >= i && w.x < i + 1 && w.z >= j && w.z < j + 1); if (a < 0) return;
   const f = floorY(a); if (w.y >= f - .03) return;
-  const bb = worldBox(t, new THREE.Vector3(b.position.x, b.position.y, b.position.z));
-  b.position.y += f + .01 - bb.min.y; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+  b.updateAABB(); b.position.y += f + .01 - b.aabb.lowerBound.y; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
 }
 
 /* ---------- контур мусора: 1 пиксель тёмной обводки, чтобы предметы не сливались в куче ----------
@@ -884,6 +884,7 @@ function drawOutlines() {
   const vis = [];
   for (const c of chunks) if (c) { saved.push([c.mesh, c.mesh.material]); c.mesh.material = ID_BLOCK; const z = c.mesh.userData.chunk; if (c.mesh.visible && (z < lo - 1 || z > hi + 1) && z > SHOP.z1 + 1) { c.mesh.visible = false; vis.push(c.mesh) } }
   shopG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = o.userData.merchant ? MERCH_ID : DECO_ID } });
+  houseG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
   const uv = under.visible; under.visible = false;
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
@@ -968,21 +969,34 @@ const PRICE = { tin: 1, coffee: 2, beer: 1, glass: 1, milk: 1, pipeHalf: 4, worm
 function heldFree(x, y, z, sell) {                             // можно ли держать предмет в этой точке
   const inPit = x > PIT0 + .12 && x < PIT1 - .12 && z > PIT0 + .12 && z < PIT1 - .12;
   const inWin = sell && SHOP.revealed && x > WIN.x0 + .08 && x < WIN.x1 - .08 && z > BASKET.z - BASKET.r + .1 && z <= PIT0 + .06 && y > SHOP.floor + .12 && y < SHOP.ceil - .12;
-  return (inPit || inWin) && !solidAt(Math.floor(x), Math.floor(z), Math.floor(-y / BH));
+  return ((inPit || inWin) && !solidAt(Math.floor(x), Math.floor(z), Math.floor(-y / BH))) || outerHoldFree(x, y, z);
+}
+function poseFree(t, x, y, z, yaw, sell) {                    // весь предмет (его углы и середины сторон) не в стене и не за краем
+  const c = Math.cos(yaw), s = Math.sin(yaw), L = t.local, m = .06;
+  for (const lx of [L.min.x + m, 0, L.max.x - m]) for (const lz of [L.min.z + m, 0, L.max.z - m])
+    if (!heldFree(x + lx * c + lz * s, y, z - lx * s + lz * c, sell)) return false;
+  return true;
 }
 function carryPose(t) {
   const b = t.body, up = t.local.max.y - t.local.min.y, y = CH.y + .95 + up * .3, sell = !!PRICE[t.type];
-  let k = 1; for (; k > 0; k -= .125) if (heldFree(CH.x + CH.face.x * .42 * k, y, CH.z + CH.face.z * .42 * k, sell)) break;   // упёрлись — подтягиваем к себе
+  let k = 1, rot = t.carryRot || 0, found = false;               // упёрлись — подтягиваем к себе; поперёк не влезает — разворачиваем вдоль
+  for (const r of [rot, rot ? 0 : ZR]) { for (k = 1; k >= 0; k -= .125) if (poseFree(t, CH.x + CH.face.x * .42 * k, y, CH.z + CH.face.z * .42 * k, CH.yaw + r, sell)) { found = true; break }
+    if (found) { rot = r; break } }
+  let sx = 0, sz = 0;                                            // в углу не влезает никак — сдвигаем вдоль длинной стороны к середине ямы
+  if (!found) for (const r of [rot, rot ? 0 : ZR]) { const ax = Math.cos(CH.yaw + r), az = -Math.sin(CH.yaw + r);
+    for (const sh of [.25, -.25, .5, -.5, .75, -.75, 1, -1]) if (poseFree(t, CH.x + ax * sh, y, CH.z + az * sh, CH.yaw + r, sell)) { found = true; rot = r; sx = ax * sh; sz = az * sh; break }
+    if (found) break }
+  if (!found) rot = t.carryRot || 0; if (sx || sz || !found) k = 0; t.carryRot = rot;
   if (k < 1 && !sell && !t.hinted && heldFree(CH.x + CH.face.x * .42, y, CH.z + CH.face.z * .42, true)) {   // несёт к корзине то, что не продаётся
     t.hinted = true; toast(t.type === 'pipe' ? 'Целиком не влезет — сначала разломай ломом' : TYPES[t.type].light ? 'Фонарь лучше оставить себе' : 'Это торговцу не нужно') }
-  b.position.set(CH.x + CH.face.x * .42 * Math.max(0, k), y, CH.z + CH.face.z * .42 * Math.max(0, k));
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw, 0));   // длинные вещи держит поперёк себя
+  b.position.set(CH.x + sx + CH.face.x * .42 * Math.max(0, k), y, CH.z + sz + CH.face.z * .42 * Math.max(0, k));
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw + rot, 0));   // длинные вещи держит поперёк себя
   b.quaternion.set(q.x, q.y, q.z, q.w); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
 }
 /* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
 function lostItem(t) {
   const p = t.body.position, out = p.x < PIT0 - .2 || p.x > PIT1 + .2 || p.z < PIT0 - .2 || p.z > PIT1 + .2;
-  return (out && p.y < -.5) || p.y < CH.y - 4;
+  return (out && p.y < -.5) || p.y < Math.min(CH.y, 0) - 4;   // персонаж наверху в доме — вещи внизу не «потерялись»
 }
 function returnItem(t) {
   const b = t.body; b.position.set(CH.x, Math.min(1.5, CH.y + 9), CH.z);
@@ -1003,13 +1017,288 @@ function dropItem() {
   t.held = false; CH.held = null; haptic('light');
   if (charHits(t)) { t.ghost = true; b.collisionFilterMask = G_BLOCK }
 }
+/* ---------- дом на сваях над участком: постоянная часть мира, одинаковая для всех участков ----------
+   схема из редактора: первый пролёт с правой стенки на площадку в дальнем углу, второй — вдоль задней правой стенки к дальнему углу,
+   площадка вдоль задней левой стенки, крутой пролёт (два блока на клетку) — на балкон у левой лицевой стороны.
+   пол дома — на 9 блоков выше стенок; проём только над верхней клеткой крутого пролёта (нижняя — под полом комнаты), вырез в ближнем к нам углу.
+   стена с дверью стоит на блок глубже края проёма: крутой пролёт выходит на балкон, снаружи дома */
+const LV = n => n * BH, HF = LV(9);
+const inR = (r, x, z, m = 0) => x >= r[0] - m && x <= r[1] + m && z >= r[2] - m && z <= r[3] + m;   // r = [x0, x1, z0, z1]
+/* где можно стоять: [x0, x1, z0, z1, высота(x, z)] — по точке, куда шагает край Кирью */
+const SURF = [
+  [.25, 2, .25, 5.75, () => 0], [2, 3, .25, 2, () => 0], [3, 5, 1, 2, () => 0],   // верх декоративных стенок (кроме клеток под низкими пролётами)
+  [5, 5.75, 1, 2, (x, z) => LV(2 - z)],                       // пролёт 1: клетка (5,1), вверх к дальней стенке
+  [5, 5.75, .25, 1, () => LV(1)],                             // площадка (5,0)
+  [1, 5, .25, 1, x => LV(6 - x)],                             // пролёт 2: вдоль дальней правой стенки, вверх к углу
+  [.25, 1, .25, 3, () => LV(5)],                              // площадка вдоль дальней левой стенки
+  [.25, 1, 3, 5, (x, z) => LV(5 + 2 * (z - 3))],              // крутой пролёт: по два блока на клетку, до пола дома
+];
+const WALL_Z = 4, DOOR_X = [1.6, 2.4];
+const ROOM = [[.25, 5.75, .25, 3.75]];                          // комната: клетки z 0..3 целиком
+const BALC = [[1, 3.85, 4.1, 5.75], [.25, 3.85, 5, 5.75]], DOOR = [1.65, 2.35, 3.7, 4.15];   // балкон снаружи стены с дверью
+const INSIDE = [...ROOM, ...BALC, DOOR];
+for (const r of INSIDE) SURF.push([...r, () => HF]);
+const STEP_UP = .45;                                           // на сколько можно шагнуть вверх-вниз (крутой пролёт круче обычного)
+function outerSurfaces(x, z) { const s = []; for (const r of SURF) if (inR(r, x, z)) s.push(r[4](x, z)); return s }
+function groundAt(x, z, yRef) {                                // на какой высоте стоять в точке; null — там пусто или не залезть
+  const s = outerSurfaces(x, z), a = cellAt(x, z); if (a >= 0) s.push(floorY(a)); if (!s.length) return null;
+  let best = -Infinity; for (const h of s) if (h <= yRef + STEP_UP && h > best) best = h;
+  if (best > -Infinity) return best;
+  const lo = Math.min(...s); return lo - yRef < BH + .1 ? lo : null;
+}
+const underHouse = () => CH.y > .3 && CH.y < HF - .3 && cellAt(CH.x, CH.z) < 0;   // под полом дома
+function outerHoldFree(x, y, z) {                              // держать предмет снаружи ямы: над лестницей, балконом, стенками, в доме
+  const s = outerSurfaces(x, z); if (!s.length) return false;
+  if (y > HF - .2 && !INSIDE.some(r => inR(r, x, z, .05))) return false;   // сквозь стены дома
+  return s.some(h => y > h + .15);
+}
+/* доски тёмного дуба: широкие, с тёмными стыками и прожилками (своя текстура, не из Майнкрафта) */
+function plankTex(seed, base, dark, light) {
+  const c = document.createElement('canvas'); c.width = c.height = 32; const x = c.getContext('2d');
+  const rnd = (k => () => (k = (k * 16807) % 2147483647) / 2147483647)(seed);
+  for (let b = 0; b < 4; b++) { const sh = (rnd() - .5) * 18, col = n => `rgb(${n[0] + sh | 0},${n[1] + sh * .7 | 0},${n[2] + sh * .45 | 0})`;
+    x.fillStyle = col(base); x.fillRect(0, b * 8, 32, 8);
+    for (let k = 0; k < 5; k++) { x.fillStyle = col(rnd() < .5 ? dark : light); x.fillRect(rnd() * 32 | 0, b * 8 + 1 + (rnd() * 6 | 0), 5 + (rnd() * 12 | 0), 1) }
+    x.fillStyle = `rgb(${dark[0] - 14},${dark[1] - 10},${dark[2] - 6})`; x.fillRect(0, b * 8 + 7, 32, 1);
+    const j = (b * 13 + 5) % 32; x.fillRect(j, b * 8, 1, 7) }
+  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const WOOD = new THREE.MeshLambertMaterial({ map: plankTex(7, [74, 50, 28], [52, 34, 18], [92, 64, 38]) });
+const WOOD_D = new THREE.MeshLambertMaterial({ map: plankTex(19, [54, 36, 20], [38, 25, 13], [68, 46, 26]) });
+const houseG = new THREE.Group(); scene.add(houseG);
+const TX = .5;                                                 // текстура: 1 клетка = 2 повтора по 32 пикселя
+function hbox(x0, x1, y0, y1, z0, z1, mat = WOOD, rot = null, body = true, parent = houseG) {   // доска/брус; текстура тянется по размеру
+  const w = x1 - x0, h = y1 - y0, dd = z1 - z0, g = new THREE.BoxGeometry(w, h, dd), uv = g.attributes.uv;
+  const fs = [[dd, h], [dd, h], [w, dd], [w, dd], [w, h], [w, h]];
+  for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * fs[f][0] / TX, uv.getY(i) * fs[f][1] / TX) }
+  const m = new THREE.Mesh(g, mat); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); if (rot) m.rotation.set(...rot); parent.add(m);
+  if (body) { const b = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });
+    b.addShape(new CANNON.Box(new CANNON.Vec3(w / 2, h / 2, dd / 2))); b.position.set(m.position.x, m.position.y, m.position.z);
+    if (rot) b.quaternion.setFromEuler(...rot); world.addBody(b) }
+  return m;
+}
+function wall(x0, x1, y0, y1, z0, z1) { const b = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });   // невидимый бортик для предметов
+  b.addShape(new CANNON.Box(new CANNON.Vec3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2))); b.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); world.addBody(b) }
+function rail(x0, x1, z0, z1, y, alongX) {                     // перила: брус сверху и балясины
+  hbox(x0, x1, y + .86, y + .96, z0, z1, WOOD);
+  if (alongX) for (let x = x0 + .12; x < x1 - .05; x += .38) hbox(x - .03, x + .03, y, y + .86, z0 + .01, z1 - .01, WOOD_D, null, false);
+  else for (let z = z0 + .12; z < z1 - .05; z += .38) hbox(x0 + .01, x1 - .01, y, y + .86, z - .03, z + .03, WOOD_D, null, false);
+  wall(x0, x1, y, y + .96, z0, z1);
+}
+/* пролёт ступенек-дощечек на двух тетивах вдоль x или z, под ними невидимый скат для предметов.
+   a0..a1 — откуда докуда по оси (снизу вверх), w0..w1 — ширина поперёк, y0 — высота внизу, rise — подъём, n — ступенек */
+function flight(axis, a0, a1, w0, w1, y0, rise, n) {
+  const run = a1 - a0, len = Math.abs(run), Ls = Math.hypot(len, rise), ang = Math.atan2(rise, len), ca = (a0 + a1) / 2, cy = y0 + rise / 2, d = len / n;
+  const B = (u0, u1, yy0, yy1, v0, v1, mat, rot, body) => axis === 'x' ? hbox(u0, u1, yy0, yy1, v0, v1, mat, rot, body) : hbox(v0, v1, yy0, yy1, u0, u1, mat, rot, body);
+  const rot = axis === 'x' ? [0, 0, run > 0 ? ang : -ang] : [run > 0 ? -ang : ang, 0, 0];
+  for (let k = 0; k < n; k++) { const t = (k + .5) / n, a = a0 + run * t; B(a - d / 2 - .015, a + d / 2 + .015, y0 + t * rise - .05, y0 + t * rise, w0, w1, WOOD, null, false) }
+  for (const v of [w0 + .02, w1 - .02]) B(ca - Ls / 2, ca + Ls / 2, cy - .14, cy - .02, v - .025, v + .025, WOOD_D, rot, false);
+  B(ca - Ls / 2, ca + Ls / 2, cy - .1, cy - .02, w0, w1, WOOD, rot, true).visible = false;
+}
+{ /* лестница и площадки (сваи и балки пока убраны — расставим потом) */
+  flight('z', 2, 1, 5, 6, 0, LV(1), 4);                        // пролёт 1: клетка (5,1), снизу у ямы вверх к дальней стенке
+  hbox(5, 6, LV(1) - .08, LV(1), 0, 1);                        // площадка (5,0)
+  flight('x', 5, 1, 0, 1, LV(1), LV(4), 16);                   // пролёт 2: вдоль дальней правой стенки, с 1 до 5 блоков
+  hbox(0, 1, LV(5) - .08, LV(5), 0, 3);                        // площадка вдоль дальней левой стенки
+  flight('z', 3, 5, 0, 1, LV(5), LV(4), 16);                   // крутой пролёт: две клетки, по два блока на клетку — до пола дома
+  wall(1, 1.05, LV(5), LV(5) + .5, 1, 3);                      // бортик площадки над пустотой: предметы не падают вниз
+}
+{ /* дом */
+  const top = HF + 2.3, wt = .14;
+  // пол: всё, кроме проёма над верхней клеткой крутого пролёта (x 0..1, z 4..5) и выреза в ближнем углу (x 4..6, z 4..6)
+  hbox(0, 6, HF - .16, HF, 0, 4); hbox(1, 4, HF - .16, HF, 4, 5); hbox(0, 4, HF - .16, HF, 5, 6);
+  // дальняя стена вдоль x (z = 0) с окном и полками
+  const wz = (x0, x1, y0, y1) => hbox(x0, x1, y0, y1, 0, wt);
+  wz(0, 2.6, HF, top); wz(2.6, 4, HF, HF + .9); wz(2.6, 4, HF + 1.7, top); wz(4, 6, HF, top);
+  hbox(2.6, 4, HF + .86, HF + .94, .08, .2, WOOD_D, null, false); hbox(2.6, 4, HF + 1.66, HF + 1.74, .08, .2, WOOD_D, null, false); hbox(3.27, 3.33, HF + .9, HF + 1.7, .08, .2, WOOD_D, null, false);
+  for (const y of [HF + .8, HF + 1.5]) hbox(4.3, 5.6, y - .05, y, wt, .5, WOOD_D);   // полки
+  hbox(0, wt, HF - .16, top, 0, WALL_Z);                       // дальняя стена вдоль z (x = 0) — до стены с дверью
+  // стена с дверью (z = 4) во всю ширину комнаты: за ней комната, перед ней балкон и выход с крутого пролёта
+  const [d0, d1] = DOOR_X;
+  hbox(wt, d0, HF, top, WALL_Z - wt, WALL_Z); const w0 = 2.85, w1 = 3.65;                                  // окно справа от двери, как в дальней стене
+  hbox(d1, w0, HF, top, WALL_Z - wt, WALL_Z); hbox(w0, w1, HF, HF + .9, WALL_Z - wt, WALL_Z); hbox(w0, w1, HF + 1.7, top, WALL_Z - wt, WALL_Z); hbox(w1, 4, HF, top, WALL_Z - wt, WALL_Z);
+  hbox(w0, w1, HF + .86, HF + .94, WALL_Z - wt - .06, WALL_Z + .06, WOOD_D, null, false); hbox(w0, w1, HF + 1.66, HF + 1.74, WALL_Z - wt - .06, WALL_Z + .06, WOOD_D, null, false);
+  hbox((w0 + w1) / 2 - .03, (w0 + w1) / 2 + .03, HF + .9, HF + 1.7, WALL_Z - wt - .02, WALL_Z + .02, WOOD_D, null, false);
+  for (const x of [w0 - .06, w1]) hbox(x, x + .06, HF + .86, HF + 1.74, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false); hbox(d0, d1, HF + 2, top, WALL_Z - wt, WALL_Z);
+  for (const x of [d0 - .06, d1]) hbox(x, x + .06, HF, HF + 2.02, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false);   // коробка
+  hbox(d0 - .06, d1 + .06, HF + 1.96, HF + 2.06, WALL_Z - wt - .03, WALL_Z + .03, WOOD_D, null, false);
+  for (const [x, z] of [[0, 0], [6 - wt, 0], [0, WALL_Z - wt], [4 - wt, WALL_Z - wt]]) hbox(x - .02, x + .16, HF - .16, top + .05, z - .02, z + .16, WOOD_D, null, false);   // угловые столбы стен
+  // перила — только у балкона; по открытым краям комнаты — невидимые бортики, чтобы предметы не падали вниз
+  rail(0, 4, 5.92, 6, HF, true); rail(3.92, 4, WALL_Z, 5.92, HF, false); rail(0, .08, 5, 5.92, HF, false);
+  for (const [x0, x1, z0, z1] of [[5.95, 6, wt, 4], [4, 6, 3.95, 4]]) wall(x0, x1, HF, HF + .96, z0, z1);
+}
+/* ---------- тени на досках ----------
+   дом сам теней не отбрасывает и солнечных теней не принимает (иначе он затенял бы весь участок).
+   Кирью и предметы, пока они на лестнице, площадке или в доме, отбрасывают тень только на доски: их отдельно рисуем
+   глубиной с солнца в карту, и материал досок по ней темнеет. На землю внизу такая тень не попадает.
+   Вторая карта — глубина ближайшей доски дома, которая лежит уже ниже предмета (доски выше предмета отбрасываются):
+   если между предметом и доской есть другая доска (полка, площадка), тень сквозь неё не проходит.
+   Для этой карты все доски дома слиты в один меш — один вызов отрисовки за кадр */
+const KL = 5, KH = 6, RTO = { magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter };
+const KS = { rt: new THREE.WebGLRenderTarget(1024, 1024, RTO), hrt: new THREE.WebGLRenderTarget(1024, 1024, RTO),
+  cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2), mat: new THREE.Matrix4(), on: new Set() };
+{ // камера с солнца стоит неподвижно и охватывает весь дом с лестницами
+  const C = new THREE.Vector3(3, (HF + 2.4) / 2, 3), c = KS.cam; c.position.copy(C).addScaledVector(SUN_DIR, 40); c.lookAt(C); c.updateMatrixWorld();
+  const v = new THREE.Vector3(), mn = new THREE.Vector3(1e9, 1e9, 1e9), mx = new THREE.Vector3(-1e9, -1e9, -1e9);
+  for (const x of [0, 6]) for (const y of [-.2, HF + 2.6]) for (const z of [0, 6]) { v.set(x, y, z).applyMatrix4(c.matrixWorldInverse); mn.min(v); mx.max(v) }
+  c.left = mn.x - .3; c.right = mx.x + .3; c.bottom = mn.y - .3; c.top = mx.y + .3; c.near = -mx.z - .5; c.far = -mn.z + .5; c.updateProjectionMatrix();
+  KS.mat.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse);
+}
+const KS_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+const KS_U = { kMap: { value: KS.rt.texture }, hMap: { value: KS.hrt.texture }, kMat: { value: KS.mat }, kOn: { value: 0 },
+  kDark: { value: (AMB + FILL * FILL_DIR.y) / (AMB + SUN * SUN_DIR.y + FILL * FILL_DIR.y) } };   // насколько темнее в тени, как у солнечной
+for (const m of [WOOD, WOOD_D]) m.onBeforeCompile = sh => {
+  Object.assign(sh.uniforms, KS_U);
+  sh.vertexShader = 'uniform mat4 kMat;\nvarying vec4 vKS;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvKS = kMat * modelMatrix * vec4(transformed, 1.0);');
+  sh.fragmentShader = 'uniform sampler2D kMap;\nuniform sampler2D hMap;\nuniform float kOn;\nuniform float kDark;\nvarying vec4 vKS;\n' + sh.fragmentShader.replace('#include <opaque_fragment>', `#include <opaque_fragment>
+    if (kOn > .5) { vec3 kc = vKS.xyz / vKS.w * .5 + .5;
+      if (kc.x > 0. && kc.x < 1. && kc.y > 0. && kc.y < 1. && kc.z < 1.) { float kd = unpackRGBAToDepth(texture2D(kMap, kc.xy));
+        if (kc.z - .003 > kd && unpackRGBAToDepth(texture2D(hMap, kc.xy)) > kc.z - .003) gl_FragColor.rgb *= kDark; } }`);
+};
+{ // доски дома одним мешем: видна только камере с солнца, рисует глубину досок, которые дальше ближайшего предмета
+  houseG.updateMatrixWorld(true); const pos = [];
+  houseG.traverse(o => { if (!o.isMesh || !o.visible) return; const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); g.applyMatrix4(o.matrixWorld); pos.push(...g.attributes.position.array) });
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const mat = new THREE.ShaderMaterial({ uniforms: { kMap: KS_U.kMap },
+    vertexShader: 'void main() { gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `#include <packing>
+      uniform sampler2D kMap;
+      void main() { float kd = unpackRGBAToDepth(texture2D(kMap, gl_FragCoord.xy / 1024.)); if (gl_FragCoord.z <= kd + .002) discard; gl_FragColor = packDepthToRGBA(gl_FragCoord.z); }` });
+  const hm = new THREE.Mesh(geo, mat); hm.frustumCulled = false; hm.layers.set(KH); scene.add(hm);
+}
+function ksMark(g, on) { g.traverse(o => { if (o.isMesh) { o.castShadow = !on; if (on) o.layers.enable(KL); else o.layers.disable(KL) } }) }   // обычная тень или тень на доски
+const HOUSE = { under: false, on: false };
+const _cc = new THREE.Color();
+
+/* ---------- сохранение вещей в доме ----------
+   запоминаем только то, что лежит в доме (комната, дверной проём, балкон); всё остальное при перезапуске обнуляется как обычно.
+   в Телеграме — облачное хранилище бота (своё у каждого игрока, видно с любого устройства), в браузере — localStorage.
+   формат с номером версии: {v:1, n: число кусков}, куски house_0..: «тип,x,y,z,qx,qy,qz,qw;…» (у значения предел 4096 символов) */
+const SAVE_V = 1, SAVE = { loaded: false, sig: '', t: 0, busy: false };
+const cloud = tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
+const stGet = (keys, cb) => { if (cloud) { try { cloud.getItems(keys, (e, v) => cb(e ? null : v || {})) } catch (_) { cb(null) } return }
+  const v = {}; try { for (const k of keys) v[k] = localStorage.getItem('tl_' + k) || '' } catch (_) { return cb(null) } cb(v) };
+const stSet = (key, val, cb) => { if (cloud) { try { cloud.setItem(key, val, e => cb && cb(!e)) } catch (_) { cb && cb(false) } return }
+  try { localStorage.setItem('tl_' + key, val); cb && cb(true) } catch (_) { cb && cb(false) } };
+const inHouse = p => p.y > HF - .4 && p.y < HF + 2.4 && INSIDE.some(r => inR(r, p.x, p.z, .1));
+function houseItems() { return trash.filter(t => t.active && t.body && !t.held && TYPES[t.type] && inHouse(t.body.position)) }
+const r3 = v => Math.round(v * 1000) / 1000;
+function saveHouse(force) {
+  if (!SAVE.loaded || SAVE.busy) return;
+  const items = houseItems(); if (!force && items.some(t => t.body.sleepState !== CANNON.Body.SLEEPING)) return;   // ждём, пока всё уляжется
+  const recs = items.map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') });
+  const sig = recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');   // сдвиг меньше 5 см не считаем
+  if (sig === SAVE.sig) return;
+  const parts = []; let cur = '';
+  for (const r of recs) { if (cur.length + r.length + 1 > 4000) { parts.push(cur); cur = '' } cur += (cur ? ';' : '') + r }
+  if (cur) parts.push(cur);
+  SAVE.busy = true; let left = parts.length + 1, ok = true;
+  const done = good => { ok = ok && good; if (--left) return; SAVE.busy = false; if (ok) SAVE.sig = sig };
+  parts.forEach((p, i) => stSet('house_' + i, p, done));
+  stSet('house', JSON.stringify({ v: SAVE_V, n: parts.length }), done);
+}
+function loadHouse() {
+  stGet(['house'], v => {
+    let head = null; try { head = v && v.house ? JSON.parse(v.house) : null } catch (_) { }
+    if (!head || head.v !== SAVE_V || !head.n) { SAVE.loaded = true; return }   // сохранения нет (или чужой версии) — начинаем с пустого дома
+    stGet([...Array(head.n).keys()].map(i => 'house_' + i), w => {
+      if (w) for (let i = 0; i < head.n; i++) for (const r of (w['house_' + i] || '').split(';')) {
+        const [type, ...n] = r.split(','), a = n.map(Number); if (!TYPES[type] || a.length !== 7 || a.some(isNaN)) continue;
+        const t = makeTrash(type, a[0], a[1], a[2], 0, -1); t.g.quaternion.set(a[3], a[4], a[5], a[6]).normalize(); t.g.updateMatrixWorld(true); activate(t);
+      }
+      SAVE.loaded = true; SAVE.sig = ''; SAVE.t = performance.now();
+    });
+  });
+}
+setTimeout(loadHouse, 0);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveHouse(true) });   // свернули или закрыли — сохраняем сразу
+function saveTick() { const now = performance.now(); if (now - SAVE.t < 2000) return; SAVE.t = now; saveHouse(false) }
+function stepHouse() {
+  HOUSE.under = underHouse(); saveTick();
+  const h = groundAt(CH.x, CH.z, CH.y), on = CH.state === 'walk' && h !== null && h > .05;
+  if (on !== HOUSE.on) { HOUSE.on = on; ksMark(chG, on) }
+  // предметы над досками (лежат в доме, на площадке, в руках у Кирью наверху)
+  const now = new Set();
+  for (const t of trash) { if (!t.g || !t.body || !t.active && !t.held) continue; const p = t.body.position, gh = groundAt(p.x, p.z, p.y);
+    if (t === CH.held ? on : (p.y > .1 && gh !== null && gh > .05)) now.add(t) }
+  for (const t of KS.on) if (!now.has(t)) ksMark(t.g, false);
+  for (const t of now) if (!KS.on.has(t)) ksMark(t.g, true);
+  KS.on = now;
+  KS_U.kOn.value = on || now.size ? 1 : 0; if (!KS_U.kOn.value) return;
+  const prt = renderer.getRenderTarget(), pa = renderer.getClearAlpha(); renderer.getClearColor(_cc);
+  const om = scene.overrideMaterial, sm = renderer.shadowMap.needsUpdate;
+  scene.overrideMaterial = KS_DEPTH; renderer.shadowMap.needsUpdate = false;
+  renderer.setClearColor(0xffffff, 1);
+  KS.cam.layers.set(KL); renderer.setRenderTarget(KS.rt); renderer.clear(); renderer.render(scene, KS.cam);   // Кирью и предметы
+  scene.overrideMaterial = null;
+  KS.cam.layers.set(KH); renderer.setRenderTarget(KS.hrt); renderer.clear(); renderer.render(scene, KS.cam);   // доски под ними
+  renderer.setRenderTarget(prt); renderer.setClearColor(_cc, pa); scene.overrideMaterial = om; renderer.shadowMap.needsUpdate = sm;
+}
+/* ---------- телефон: Кирью поворачивается к нам, потом камера пролетает от вида сверху к его лицу ----------
+   интерфейс телефона пока убран — его спроектируем отдельно. Закрыть: тап по экрану или по телефону в сумке.
+   поворот к зрителю нужен, чтобы камера не влетала в стенки: со стороны зрителя всегда пусто (иначе Кирью не был бы виден) */
+const PHT = window.__PHT = { ang: 1.05, el: .25, vh: 1.3, sh: .32, fov: 34, fy: 0 };   // ракурс крупного плана: угол от лица вбок, снизу, высота кадра, сдвиг вбок, угол обзора
+const PH = { on: false, k: 0, turn: false, side: 1, cam: new THREE.PerspectiveCamera(30, 1, .03, 300) };
+let VCAM = cam;
+const PH_FACE = new THREE.Vector3(VIEW.x, 0, VIEW.z).normalize(), PH_YAW = Math.atan2(PH_FACE.x, PH_FACE.z);
+const phTap = document.createElement('div');                   // прозрачный слой поверх игры: тап закрывает телефон
+phTap.style.cssText = 'position:fixed;inset:0;z-index:40;display:none';
+phTap.addEventListener('click', e => { e.stopPropagation(); closePhone() });
+document.body.appendChild(phTap);
+{ const st = document.createElement('style'); st.textContent = 'body.phon .coins,body.phon .depth,body.phon .mapbtn,body.phon .supbtn,body.phon .pouch{opacity:0;pointer-events:none;transition:opacity .2s}'; document.head.appendChild(st) }
+function openPhone() {
+  if (PH.on) return closePhone();
+  if (CH.state !== 'walk' || CH.held) { shakeTool('phone'); toast(CH.held ? 'Руки заняты' : 'Не сейчас'); return }
+  PH.on = true; PH.turn = true; haptic('medium'); document.body.classList.add('phon'); phTap.style.display = 'block';
+}
+function closePhone() { if (!PH.on) return; PH.on = false; PH.turn = false; phTap.style.display = 'none'; document.body.classList.remove('phon'); haptic('light') }
+/* с какой стороны от лица ставить камеру: проверяем путь от головы до камеры на блоки, берём свободную сторону */
+function phSolid(x, y, z) {
+  if (y >= 0) return false;
+  const i = Math.floor(x), j = Math.floor(z), l = Math.floor(-y / BH);
+  return i < PIT0 || j < PIT0 || i >= PIT1 || j >= PIT1 || solidAt(i, j, l);
+}
+function phSide() {
+  KIRYU.head.localToWorld(_hp.set(0, .1, .1));
+  const fw = new THREE.Vector3(Math.sin(PH_YAW), 0, Math.cos(PH_YAW)), sd = new THREE.Vector3(Math.cos(PH_YAW), 0, -Math.sin(PH_YAW));
+  const dist = PHT.vh / 2 / Math.tan(PHT.fov * Math.PI / 360), hits = s => { let n = 0;
+    const d = fw.clone().multiplyScalar(Math.cos(PHT.ang)).addScaledVector(sd, -s * Math.sin(PHT.ang)).multiplyScalar(Math.cos(PHT.el)).addScaledVector(_UP, -Math.sin(PHT.el)).normalize();
+    for (let t = .2; t <= dist + .3; t += .1) { const p = _hp.clone().addScaledVector(d, t); if (phSolid(p.x, p.y, p.z)) n++ } return n };
+  const a = hits(1), b = hits(-1); return a <= b ? 1 : -1;
+}
+const ease3 = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+const _hp = new THREE.Vector3(), _UP = new THREE.Vector3(0, 1, 0);
+function stepPhone(dt) {
+  if (PH.on && PH.turn) {                                      // сначала разворот к зрителю, камера ждёт
+    CH.face.copy(PH_FACE);
+    let dy = PH_YAW - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    if (Math.abs(dy) < .06) { PH.turn = false; PH.side = phSide() }
+  }
+  PH.k = Math.max(0, Math.min(1, PH.k + (PH.on && !PH.turn ? dt / .85 : PH.on ? 0 : -dt / .5)));
+  if (PH.k <= 0) { VCAM = cam; return }
+  const e = ease3(PH.k), yaw = CH.yaw;
+  KIRYU.head.localToWorld(_hp.set(0, .1, .1));
+  const fw = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), sd = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+  const d1 = fw.clone().multiplyScalar(Math.cos(PHT.ang)).addScaledVector(sd, -PH.side * Math.sin(PHT.ang)).multiplyScalar(Math.cos(PHT.el)).addScaledVector(_UP, -Math.sin(PHT.el)).normalize();
+  const d0 = VIEW.clone(), dir = d0.lerp(d1, e).normalize();
+  const t0 = cam.position.clone().addScaledVector(VIEW, -60);
+  const right = new THREE.Vector3().crossVectors(_UP, d1).normalize();
+  const t1 = _hp.clone().addScaledVector(right, PH.side * PHT.sh).add(new THREE.Vector3(0, -PHT.fy * 10, 0));
+  const tgt = t0.lerp(t1, e);
+  const h0 = cam.top - cam.bottom, h1 = PHT.vh, vh = h0 * Math.pow(h1 / h0, e), fov = 2 + (PHT.fov - 2) * e;
+  const dist = vh / 2 / Math.tan(fov * Math.PI / 360), c = PH.cam;
+  c.fov = fov; c.aspect = W / H; c.near = Math.max(.03, dist - 40); c.far = dist + 120; c.updateProjectionMatrix();
+  c.position.copy(tgt).addScaledVector(dir, dist); c.lookAt(tgt); c.updateMatrixWorld();
+  VCAM = c;
+}
 function stepChar(dt) {
   let ix = joy.x, iy = joy.y;
   if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   if (keys.has('KeyW') || keys.has('ArrowUp')) iy -= 1; if (keys.has('KeyS') || keys.has('ArrowDown')) iy += 1;
   const dir = SCR_R.clone().multiplyScalar(ix).addScaledVector(G_UP, -iy); dir.y = 0;
+  if (PH.on) dir.set(0, 0, 0);                                // телефон открыт — стоит на месте
   const m = Math.min(1, dir.length()); if (m > 0) dir.normalize(); CH.spd = m;
-  const a = charCell(), fl = a < 0 ? CH.y : floorY(a);
+  const fl0 = groundAt(CH.x, CH.z, CH.y), fl = fl0 === null ? CH.y : fl0;   // яма, верх стенок, лестница, дом
   const p0x = CH.x, p0z = CH.z, p0y = CH.y;
   CH.moving = false;
   if (CH.state === 'jump') {
@@ -1019,7 +1308,7 @@ function stepChar(dt) {
       CH.y = A.y0 + (A.y1 + .02 - A.y0) * Math.sin(k1 * Math.PI / 2); CH.x = A.x0 + (A.x1 - A.x0) * k2; CH.z = A.z0 + (A.z1 - A.z0) * k2;
     } else { CH.x = A.x0 + (A.x1 - A.x0) * k; CH.z = A.z0 + (A.z1 - A.z0) * k; CH.y = A.y0 + (A.y1 - A.y0) * k * k + .16 * Math.sin(Math.PI * k) }
     if (k >= 1) { CH.y = A.y1; CH.state = 'walk'; CH.land = .14; haptic(A.kind === 'down' ? 'medium' : 'light') }
-  } else if (CH.y > fl + .005) {                               // под ногами выкопали блок — падаем
+  } else if (CH.y > fl + .005 && !(CH.state !== 'fall' && CH.y - fl < STEP_UP)) {   // по лестнице вниз идём, а не падаем                               // под ногами выкопали блок — падаем
     CH.state = 'fall'; CH.vy -= 22 * dt; CH.y = Math.max(fl, CH.y + CH.vy * dt);
     if (CH.y <= fl) { if (CH.vy < -4) haptic('medium'); CH.vy = 0; CH.land = .16; CH.state = 'walk' }
   } else {
@@ -1031,13 +1320,12 @@ function stepChar(dt) {
       for (const ax of ['x', 'z']) {                           // по осям отдельно — вдоль стенки можно скользить
         const dv = dir[ax] * step; if (Math.abs(dv) < 1e-6) continue;
         const nx = ax === 'x' ? CH.x + dv : CH.x, nz = ax === 'z' ? CH.z + dv : CH.z;
-        const b = cellAt(ax === 'x' ? nx + Math.sign(dv) * R : nx, ax === 'z' ? nz + Math.sign(dv) * R : nz);
-        if (b < 0) continue;                                    // край участка
-        const h = floorY(b);
-        if (Math.abs(h - fl) < .01) { CH.x = nx; CH.z = nz; CH.moving = true }
+        const h = groundAt(ax === 'x' ? nx + Math.sign(dv) * R : nx, ax === 'z' ? nz + Math.sign(dv) * R : nz, fl);
+        if (h === null) continue;                               // край мира
+        if (Math.abs(h - fl) < STEP_UP) { CH.x = nx; CH.z = nz; CH.moving = true }
         else if (Math.abs(dir[ax]) > .55) blocked = { h, ad: new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0) };
       }
-      const kind = blocked ? (blocked.h < fl ? 'edge' : blocked.h - fl < BH + .05 ? 'wall' : null) : null;
+      const kind = blocked && fl < .05 && blocked.h < .05 ? (blocked.h < fl ? 'edge' : blocked.h - fl < BH + .05 ? 'wall' : null) : null;   // прыгать и залезать — только в яме и на верх стенок
       if (kind) {
         if (CH.state !== kind) { CH.state = kind; CH.t = 0 }
         CH.t += dt; CH.face.copy(blocked.ad);
@@ -1499,78 +1787,6 @@ function perfFrame(raw, parts) {
   Object.assign(perf, { acc: {}, n: 0, t0: now, long: 0, maxDt: 0, lightN: 0 });
 }
 let last = performance.now(), acc = 0;
-/* ---------- телефон: камера пролетает от вида сверху к лицу Кирью, он смотрит в экран, поверх выезжает меню в духе Персоны ---------- */
-const PHT = window.__PHT = { ang: 1.05, el: .25, vh: 1.3, sh: .32, fov: 34, fy: 0 };   // ракурс крупного плана: угол от лица вбок, снизу, высота кадра, сдвиг вбок, угол обзора
-const PH = { on: false, k: 0, ui: false, cam: new THREE.PerspectiveCamera(30, 1, .03, 300) };
-let VCAM = cam;
-{ const st = document.createElement('style'); st.textContent = `
-#phui{position:fixed;inset:0;z-index:50;pointer-events:none;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-#phui.on{pointer-events:auto}
-#phui .ph-vig{position:absolute;inset:0;background:radial-gradient(120% 90% at 22% 45%,transparent 35%,rgba(4,10,30,.75) 100%);opacity:0;transition:opacity .35s}
-#phui.on .ph-vig{opacity:1}
-#phui .ph-bgp{position:absolute;top:-10%;bottom:-10%;right:-20%;width:78%;background:linear-gradient(160deg,#0b2a6b,#061638 70%);clip-path:polygon(22% 0,100% 0,100% 100%,0 100%);transform:translateX(110%) skewX(-8deg);transition:transform .32s cubic-bezier(.3,.9,.3,1)}
-#phui.on .ph-bgp{transform:translateX(0) skewX(-8deg)}
-#phui .ph-bgp2{position:absolute;top:-10%;bottom:-10%;right:-20%;width:84%;background:#2fd3ff;clip-path:polygon(20% 0,23% 0,3% 100%,0 100%);transform:translateX(120%) skewX(-8deg);transition:transform .38s cubic-bezier(.3,.9,.3,1) .04s}
-#phui.on .ph-bgp2{transform:translateX(0) skewX(-8deg)}
-#phui .ph-slash{position:absolute;left:-30%;top:46%;width:160%;height:10px;background:#fff;transform:rotate(-24deg) scaleX(0);transform-origin:0 50%;opacity:0}
-#phui.on .ph-slash{animation:phSlash .45s cubic-bezier(.2,.8,.3,1) forwards}
-@keyframes phSlash{0%{transform:rotate(-24deg) scaleX(0);opacity:1}55%{transform:rotate(-24deg) scaleX(1);opacity:1}100%{transform:rotate(-24deg) scaleX(1) translateY(-30px);opacity:0}}
-#phui .ph-card{position:absolute;right:5%;top:12%;width:50%;height:70%;background:#050b18;border:3px solid #fff;border-radius:16px;box-shadow:8px 8px 0 #2fd3ff,0 0 0 2px #050b18;transform:translateX(160%) rotate(-12deg);transition:transform .42s cubic-bezier(.2,1.35,.4,1) .08s;display:flex;flex-direction:column;padding:12px 10px;gap:8px;color:#fff}
-#phui.on .ph-card{transform:translateX(0) rotate(-6deg)}
-#phui .ph-top{display:flex;justify-content:space-between;align-items:baseline;font-weight:800;letter-spacing:.04em}
-#phui .ph-top b{font-size:26px;font-style:italic;color:#2fd3ff;text-shadow:2px 2px 0 #0b2a6b}
-#phui .ph-top span{font-size:11px;opacity:.8}
-#phui .ph-ttl{font:900 italic 22px/1 system-ui,sans-serif;letter-spacing:.06em;background:#fff;color:#050b18;padding:4px 8px;transform:skewX(-12deg);align-self:flex-start}
-#phui .ph-app{display:flex;align-items:center;gap:8px;padding:9px 10px;background:#0f2550;border-left:5px solid #2fd3ff;transform:skewX(-10deg) translateX(140%);opacity:0;transition:transform .3s cubic-bezier(.2,1.3,.4,1),opacity .2s;font-weight:700;font-size:14px}
-#phui .ph-app i{font-style:normal;font-size:17px}
-#phui.on .ph-app{transform:skewX(-10deg) translateX(0);opacity:1}
-#phui.on .ph-app:nth-of-type(1){transition-delay:.22s}#phui.on .ph-app:nth-of-type(2){transition-delay:.28s}#phui.on .ph-app:nth-of-type(3){transition-delay:.34s}#phui.on .ph-app:nth-of-type(4){transition-delay:.4s}
-#phui .ph-app:active{background:#2fd3ff;color:#050b18}
-#phui .ph-back{position:absolute;left:5%;bottom:calc(5% + env(safe-area-inset-bottom,0px));padding:10px 16px;background:#fff;color:#050b18;border:0;font:900 italic 15px system-ui,sans-serif;letter-spacing:.06em;transform:skewX(-12deg) translateY(200%);transition:transform .3s cubic-bezier(.2,1.3,.4,1) .3s;box-shadow:4px 4px 0 #2fd3ff}
-#phui.on .ph-back{transform:skewX(-12deg) translateY(0)}
-body.phon .coins,body.phon .depth,body.phon .mapbtn,body.phon .pouch{opacity:0;pointer-events:none;transition:opacity .2s}
-body.phon #toast{z-index:60}
-#phui:not(.on) *{transition-delay:0s!important;transition-duration:.15s!important}
-`; document.head.appendChild(st) }
-const phUI = document.createElement('div'); phUI.id = 'phui';
-phUI.innerHTML = `<div class="ph-vig"></div><div class="ph-bgp2"></div><div class="ph-bgp"></div><div class="ph-slash"></div>
-<div class="ph-card"><div class="ph-top"><b class="ph-clk">00:00</b><span class="ph-dt"></span></div><div class="ph-ttl">ТЕЛЕФОН</div>
-<div class="ph-app" data-a="Сообщения"><i>✉</i>Сообщения</div><div class="ph-app" data-a="Лотерея участков"><i>🎟</i>Лотерея участков</div>
-<div class="ph-app" data-a="Карта"><i>⌖</i>Карта</div><div class="ph-app" data-a="Канал"><i>📣</i>Канал</div></div>
-<button class="ph-back">✕ НАЗАД</button>`;
-document.body.appendChild(phUI);
-phUI.querySelector('.ph-back').addEventListener('click', e => { e.stopPropagation(); closePhone() });
-phUI.addEventListener('click', e => { if (e.target === phUI || e.target.classList.contains('ph-vig')) closePhone() });
-phUI.querySelectorAll('.ph-app').forEach(a => a.addEventListener('click', e => { e.stopPropagation(); haptic('light'); toast(a.dataset.a + ' — скоро') }));
-function openPhone() {
-  if (PH.on) return closePhone();
-  if (CH.state !== 'walk' || CH.held) { shakeTool('phone'); toast(CH.held ? 'Руки заняты' : 'Не сейчас'); return }
-  PH.on = true; haptic('medium'); document.body.classList.add('phon');
-  const d = new Date(); phUI.querySelector('.ph-clk').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  phUI.querySelector('.ph-dt').textContent = d.toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' }).toUpperCase();
-}
-function closePhone() { if (!PH.on) return; PH.on = false; PH.ui = false; phUI.classList.remove('on'); document.body.classList.remove('phon'); haptic('light') }
-const ease3 = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
-const _hp = new THREE.Vector3(), _UP = new THREE.Vector3(0, 1, 0);
-function stepPhone(dt) {
-  PH.k = Math.max(0, Math.min(1, PH.k + (PH.on ? dt / .85 : -dt / .5)));
-  if (PH.on && !PH.ui && PH.k > .55) { PH.ui = true; phUI.classList.add('on') }
-  if (PH.k <= 0) { VCAM = cam; return }
-  const e = ease3(PH.k), yaw = CH.yaw;
-  KIRYU.head.localToWorld(_hp.set(0, .1, .1));
-  const fw = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), sd = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-  const d1 = fw.clone().multiplyScalar(Math.cos(PHT.ang)).addScaledVector(sd, -Math.sin(PHT.ang)).multiplyScalar(Math.cos(PHT.el)).addScaledVector(_UP, -Math.sin(PHT.el)).normalize();
-  const d0 = VIEW.clone(), dir = d0.lerp(d1, e).normalize();
-  const t0 = cam.position.clone().addScaledVector(VIEW, -60);
-  const right = new THREE.Vector3().crossVectors(_UP, d1).normalize();
-  const t1 = _hp.clone().addScaledVector(right, PHT.sh).add(new THREE.Vector3(0, -PHT.fy * 10, 0));
-  const tgt = t0.lerp(t1, e);
-  const h0 = cam.top - cam.bottom, h1 = PHT.vh, vh = h0 * Math.pow(h1 / h0, e), fov = 2 + (PHT.fov - 2) * e;
-  const dist = vh / 2 / Math.tan(fov * Math.PI / 360), c = PH.cam;
-  c.fov = fov; c.aspect = W / H; c.near = Math.max(.03, dist - 40); c.far = dist + 120; c.updateProjectionMatrix();
-  c.position.copy(tgt).addScaledVector(dir, dist); c.lookAt(tgt); c.updateMatrixWorld();
-  VCAM = c;
-}
 function frame(now) {
   const raw = now - last, T0 = performance.now();
   const dt = Math.min(.05, (now - last) / 1000); last = now; timeU.value = now / 1000;
@@ -1605,7 +1821,7 @@ function frame(now) {
   const cl = -camF.y / BH, z0 = Math.floor(cl - 10), z1 = Math.min(BOT, Math.ceil(cl + 10), Math.max(SKY_D, maxD + 5));
   under.position.y = -(z1 + 1) * BH; clipU.value = under.position.y;
   for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
-  placeCam(dt); stepPhone(dt);
+  placeCam(dt); stepHouse(); stepPhone(dt);
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
   const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
@@ -1626,3 +1842,39 @@ genTrash();
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
 window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
+
+/* ---------- поддержать автора: оплата звёздами Telegram через наш сервер ----------
+   сервер создаёт ссылку на оплату и сам записывает прошедшие платежи; игра только открывает окно оплаты
+   и спрашивает у сервера, сколько звёзд игрок уже подарил (значок сторонника) */
+const PAY_API = 'https://trashlottery-pay.balltwist02.workers.dev';
+const SUP_TERMS = `1. «Поддержать автора» — добровольное пожертвование разработчику. За него — благодарность и значок сторонника в игре, других товаров и преимуществ нет.
+2. Оплата — только звёздами Telegram, цена видна в окне оплаты до подтверждения.
+3. Платёж прошёл по ошибке — напиши в течение 14 дней через /paysupport в боте, вернём звёзды.
+4. Поддержка Telegram с покупками в этом боте не помогает — по оплате пиши через /paysupport.
+5. Игра в разработке, возможны ошибки и изменения.`;
+{
+  const canPay = !!(tg && tg.initData && tg.openInvoice && tg.isVersionAtLeast && tg.isVersionAtLeast('6.1'));
+  const btn = document.getElementById('supbtn'), wrap = document.getElementById('supwrap'), close = document.getElementById('supclose');
+  const fan = document.getElementById('supfan'), terms = document.getElementById('supterms'), opts = [...wrap.querySelectorAll('.opt')];
+  icon(XI, { k: '#10141f', x: '#e9f0ee' }, close); terms.textContent = SUP_TERMS;
+  const api = (path, body) => fetch(PAY_API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData, ...body }) }).then(r => r.json());
+  const showFan = n => { btn.classList.toggle('fan', n > 0); fan.hidden = !(n > 0); fan.textContent = `⭐ Ты сторонник игры — подарено ${n} ⭐. Спасибо!` };
+  const refresh = () => api('/api/me').then(r => { if (typeof r.stars === 'number') showFan(r.stars) }).catch(() => { });
+  if (canPay) { btn.hidden = false; refresh() }
+  btn.addEventListener('click', () => { wrap.hidden = false; close.focus(); haptic('light') });
+  close.addEventListener('click', () => { wrap.hidden = true; btn.focus(); haptic('light') });
+  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.hidden = true });
+  document.getElementById('suptermsbtn').addEventListener('click', () => { terms.hidden = !terms.hidden });
+  for (const o of opts) o.addEventListener('click', async () => {
+    opts.forEach(b => b.disabled = true);
+    try {
+      const r = await api('/api/invoice', { product: o.dataset.p });
+      if (!r.link) throw new Error(r.error || 'нет ссылки');
+      tg.openInvoice(r.link, status => {
+        if (status === 'paid') { haptic('medium'); toast('Спасибо за поддержку! ⭐'); setTimeout(refresh, 1500); setTimeout(refresh, 5000) }
+        else if (status === 'failed') toast('Оплата не прошла');
+      });
+    } catch (e) { toast('Не получилось открыть оплату — попробуй позже') }
+    opts.forEach(b => b.disabled = false);
+  });
+}
