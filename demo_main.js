@@ -811,7 +811,7 @@ const CRUMB = { 'Т': ['#46823a', '#25562e', '#4d2b32', '#7a4836'], 'З': ['#ad7
 const ray = new THREE.Raycaster();
 const ndc = e => { const r = cv.getBoundingClientRect(); return new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1) };
 function pick(e) {
-  ray.setFromCamera(ndc(e), cam);
+  ray.setFromCamera(ndc(e), LC.k > .5 && LC.init ? LC.cam : cam);   // на лестнице смотрим через киношную камеру — и тапаем через неё
   const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g), ...(shopG.visible ? [shopG] : []), KIT.g];
   const h = ray.intersectObjects(objs, true)[0]; if (!h) return null;
   if (h.object.userData.chunk === undefined) return h;
@@ -839,7 +839,7 @@ addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space' || e
 addEventListener('keyup', e => keys.delete(e.code));
 const faceTo = (x, z) => { const v = new THREE.Vector3(x - CH.x, 0, z - CH.z); if (v.lengthSq() > 1e-4) CH.face.copy(v.normalize()) };
 function tap(e) {
-  if (CH.state === 'ladder') return;
+  if (CH.state === 'ladder') { ladPlaceTap(pick(e)); return }
   const h = pick(e);
   if (h && h.object.userData.rack) { useRack(); return }
   if (h && h.object.userData.t && h.object.userData.t.mounted) { ladTap(h.object.userData.t); return }
@@ -847,8 +847,8 @@ function tap(e) {
   if (h && h.object.userData.deco && Math.hypot(h.point.x - BASKET.x, h.point.z - BASKET.z) < BASKET.r + .12) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
   if (CH.held && CH.held.type === 'ladder' && h) {               // с лестницей в руках — тап по грани стенки вешает её туда
     if (h.object.userData.deco) { toast(LAD_WHY.shop, 0); return }
-    const L = ladFromHit(h); if (L) { const why = ladOk(L.s, L.k, L.z), ex = why === 'far' ? ladExtWhy(L.s, L.k, L.z) : null;
-      if (!why) placeLadder(L.s, L.k, L.z); else if (ex === '') startExtend(L.s, L.k, L.z); else toast(ex || LAD_WHY[why], 0); return }
+    const L = ladFromHit(h); if (L) { const why = ladOk(L.s, L.k, L.z);
+      if (!why) placeLadder(L.s, L.k, L.z); else toast(why === 'far' ? 'Не дотянуться — залезь по лестнице с этой лестницей в руках' : LAD_WHY[why], 0); return }
   }
   const t = h && h.object.userData.t;
   if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
@@ -1042,8 +1042,9 @@ function digCell(a) {
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
   if (!tool) { haptic('warn'); return }
-  if (CH.state === 'jump' || CH.state === 'fall' || CH.state === 'ladder') return;
-  if (CH.held && CH.held.type === 'ladder') { const L = ladderAhead(); if (L) { if (L.ext) startExtend(L.s, L.k, L.z); else placeLadder(L.s, L.k, L.z); return } if (tool === 'glove' && rackNear()) { useRack(); return } }
+  if (CH.state === 'ladder') { ladPlaceTap(null); return }
+  if (CH.state === 'jump' || CH.state === 'fall') return;
+  if (CH.held && CH.held.type === 'ladder') { const L = ladderAhead(); if (L) { placeLadder(L.s, L.k, L.z); return } if (tool === 'glove' && rackNear()) { useRack(); return } }
   if (CH.held && CH.held.type === 'tin') { const s = spotAhead(); if (s && s.state) { useSpot(s); return } }   // пустую банку — к разрыхлённым червям
   if (tool === 'glove') {                                      // перчатка: поднять предмет перед собой или поставить тот, что в руках
     if (CH.held) { dropItem(); return }
@@ -2278,7 +2279,6 @@ function ladderAhead() {                                         // куда п�
   else if (Math.abs(CH.y) < .05) { if (CH.x > 1.2 && CH.x < PIT0 && CH.face.x > .7) { s = 'L'; k = Math.floor(CH.z) } else if (CH.z > 1.2 && CH.z < PIT0 && CH.face.z > .7) { s = 'R'; k = Math.floor(CH.x) } zs = [0] }
   if (!s) return null;
   for (const z of zs) if (ladOk(s, k, z) === '') return { s, k, z };
-  const zt = a >= 0 ? ladBottomTop(s, k) : null; if (zt && ladExtWhy(s, k, zt - 1) === '') return { s, k, z: zt - 1, ext: true };
   return null;
 }
 /* наращивание снизу: лестница в руках, Кирью стоит под цепочкой, которая стоит на дне. Тап по блоку сразу над её верхом —
@@ -2288,19 +2288,22 @@ function ladBottomTop(s, k) {                                     // верхн�
   if (dd < 1 || !LADS.has(ladKey(s, k, dd - 1))) return null;
   let zt = dd - 1; while (zt > 0 && LADS.has(ladKey(s, k, zt - 1))) zt--; return zt;
 }
-function ladExtWhy(s, k, z) {                                     // '' — можно нарастить цепочку до блока z
-  const zt = ladBottomTop(s, k); if (zt === null || zt === 0) return null;
-  const i = s === 'L' ? 1 : k, j = s === 'L' ? k : 1;
-  if (z !== zt - 1) return z < zt - 1 ? 'Сначала — блок прямо над лестницей' : null;
-  if (inShop(i, j, z)) return LAD_WHY.shop;
-  if (!hasB(i, j, z)) return LAD_WHY.no;
-  if (charCell() !== ladCol(s, k).a || CH.state !== 'walk') return 'Встань под эту лестницу';
-  return '';
+/* лестница в руках + уже висящая цепочка снизу: Кирью закидывает лестницу на левый бок (спина — под мешок) и лезет сам.
+   Долез до верха цепочки — тап по блоку над ней (или клавиша действия): снимает лестницу с бока и вешает, остаётся на месте */
+function ladNextZ() {                                             // блок, куда сейчас можно повесить лестницу с лестницы (или null)
+  const L = CH.lad; if (!L || !L.carry || L.ph !== 'climb' || L.side !== 'bottom') return null;
+  const zt = ladBottomTop(L.C.s, L.C.k); if (!zt) return null;
+  const dd = d[L.C.a], uMax = Math.max(-3 * dd + 1, -3 * zt - 4); if (Math.abs(L.u - uMax) > .01) return null;
+  const s = L.C.s, k = L.C.k, i = s === 'L' ? 1 : k, j = s === 'L' ? k : 1, z = zt - 1;
+  return inShop(i, j, z) || !hasB(i, j, z) ? null : z;
 }
-function startExtend(s, k, z) {
-  const t = CH.held; t.held = false; CH.held = null; removeTrash(t);
-  const C = ladCol(s, k), dd = d[C.a], u0 = -3 * dd + 1;
-  ladStart(C, 'grab', { u0, y1: (u0 - .5) * LAD.S, side: 'bottom', ext: { z }, carry: true }); haptic('light');
+function ladPlaceTap(h) {                                         // тап (или действие), пока Кирью на лестнице
+  const L = CH.lad; if (!L || !L.carry || L.ph !== 'climb') return;
+  const m = h && h.object.userData.t, t = m && m.mounted ? { s: m.ls, k: m.lk, z: m.lz } : h && ladFromHit(h), z = ladNextZ();
+  if (h && (!t || t.s !== L.C.s || t.k !== L.C.k)) { toast('Тапни по блоку прямо над лестницей', 0); return }
+  if (z === null) { const zt = ladBottomTop(L.C.s, L.C.k); toast(zt === 0 ? 'Тут уже до самого верха' : 'Долезь до верха лестницы', 0); return }
+  if (t && (t.z < z - 1 || t.z > z + 1)) { toast('Тапни по блоку прямо над лестницей', 0); return }
+  Object.assign(L, { ph: 'place', t: 0, ext: { z } });
 }
 function ladderInReach() {                                       // повешенная лестница перед Кирью, до которой он дотягивается
   let best = null, bd = 9;
@@ -2310,10 +2313,10 @@ function ladderInReach() {                                       // повеше
   return best;
 }
 function ladTargets() {                                          // грани, куда сейчас можно повесить лестницу (для подсветки)
-  const out = [], z0 = Math.max(0, Math.floor(-CH.y / BH) - 2);
-  for (const s of ['L', 'R']) for (let k = PIT0; k < PIT1; k++) {
-    for (let z = z0; z < z0 + 4; z++) if (ladOk(s, k, z) === '') out.push(s === 'L' ? '1,' + k + ',' + z : k + ',1,' + z);
-    const zt = ladBottomTop(s, k); if (zt && ladExtWhy(s, k, zt - 1) === '') out.push(s === 'L' ? '1,' + k + ',' + (zt - 1) : k + ',1,' + (zt - 1)) }
+  const out = [], z0 = Math.max(0, Math.floor(-CH.y / BH) - 2), key = (s, k, z) => s === 'L' ? '1,' + k + ',' + z : k + ',1,' + z;
+  if (CH.state === 'ladder') { const z = ladNextZ(); if (z !== null) out.push(key(CH.lad.C.s, CH.lad.C.k, z)); return out }
+  for (const s of ['L', 'R']) for (let k = PIT0; k < PIT1; k++)
+    for (let z = z0; z < z0 + 4; z++) if (ladOk(s, k, z) === '') out.push(key(s, k, z));
   return out;
 }
 /* ---------- стартовый набор: стеллаж с лестницами и ящик с фонарём на верху левой стенки ---------- */
@@ -2371,12 +2374,16 @@ function ladFrom(ad) {                                           // упёрли
   return s && k >= PIT0 && k < PIT1 && LADS.has(ladKey(s, k, 0)) && d[ladCol(s, k).a] > 0 ? { s, k, from: 'top' } : null;
 }
 function tryLadder(s, k, from) {   // снизу — только по полной цепочке; сверху — по цепочке от верха
-  if (CH.held) { toast('С вещью в руках по лестнице не залезть', 1); return false }
+  const lad = CH.held && CH.held.type === 'ladder';
+  if (CH.held && !(lad && from === 'bottom')) { toast(lad ? 'С лестницей в руках — только снизу' : 'С вещью в руках по лестнице не залезть', 1); return false }
   const C = ladCol(s, k), dd = d[C.a]; if (C.a < 0 || dd < 1) return false;
   if (from === 'bottom') {
-    let miss = 0; for (let z = 0; z < dd; z++) if (!LADS.has(ladKey(s, k, z))) miss++;
-    if (miss) { toast(`До верха не хватает ${miss} ${miss === 1 ? 'лестницы' : 'лестниц'} — нужна на каждом блоке`, 1); return false }
-    const u0 = -3 * dd + 1; ladStart(C, 'grab', { u0, y1: (u0 - .5) * LAD.S, side: 'bottom' }); haptic('light'); return true;
+    if (ladBottomTop(s, k) === null) { toast('Нижней лестницы не хватает — до неё не дотянуться', 1); return false }
+    const u0 = -3 * dd + 1;
+    if (lad) { const t = CH.held; t.held = false; CH.held = null;
+      ladStart(C, 'sling', { u0, y1: (u0 - .5) * LAD.S, side: 'bottom', carry: false, sl: { p0: t.g.position.clone(), q0: t.g.quaternion.clone() } }); removeTrash(t) }
+    else ladStart(C, 'grab', { u0, y1: (u0 - .5) * LAD.S, side: 'bottom' });
+    haptic('light'); return true;
   }
   const u0 = Math.max(-3, -3 * dd + 1, -(3 * (Math.min(ladChain(s, k), dd) - 1) + 2)); ladStart(C, 'mount', { u0, yTop: CH.y, y0: (u0 - .5) * LAD.S, h3: -.25, side: 'top' }); haptic('light'); return true;
 }
@@ -2387,8 +2394,8 @@ function ladStart(C, ph, o) {
 function ladTap(t) {                                             // тап по повешенной лестнице
   if (CH.state !== 'walk') return;
   if (tool === 'glove' && !CH.held) { if (ladReach(ladFace(t.ls, t.lk, t.lz))) takeLadder(t); else toast('Не дотянуться до лестницы', 0); return }
-  if (CH.held) { if (CH.held.type === 'ladder') toast(LAD_WHY.busy, 0); else busy(); return }
   const C = ladCol(t.ls, t.lk), a = charCell();
+  if (CH.held && !(CH.held.type === 'ladder' && a >= 0 && a === C.a)) { if (CH.held.type === 'ladder') toast(LAD_WHY.busy, 0); else busy(); return }
   if (a >= 0 && a === C.a) { tryLadder(t.ls, t.lk, 'bottom'); return }
   if (a < 0 && Math.abs(CH.y) < .05) { const [x, z] = C.at(-.3); if (Math.hypot(CH.x - x, CH.z - z) < .7) { tryLadder(t.ls, t.lk, 'top'); return } }
   toast('Подойди к лестнице', 0);
@@ -2402,13 +2409,23 @@ function ladOverRoot(L, k) {                                     // путь к�
 function ladPut(L, h, y, yd = y) { const [x, z] = L.C.at(h); CH.x = x; CH.z = z; CH.y = y; CH.yd = yd }
 function ladPose(L, ph, k) { L.pose = { ph, k, u: L.u, u0: L.u0, y: CH.yd, h: (L.C.s === 'L' ? CH.x : CH.z) - PIT0, S: LAD.S, topU: L.topU || 0, hold: L.hold || null } }
 const toRoot = p => { const dx = p.x - CH.x, dy = p.y - CH.yd, dz = p.z - CH.z, c = Math.cos(CH.yaw), sn = Math.sin(CH.yaw); return [dx * c - dz * sn, dy, dx * sn + dz * c] };   // мир → координаты Кирью
-function ladEnd() { CH.state = 'walk'; CH.lad = null; CH.t = 0; CH.lt = 0 }
+function ladEnd() { const L = CH.lad; CH.state = 'walk'; CH.lad = null; CH.t = 0; CH.lt = 0;
+  if (L && L.carry) { const t = makeTrash('ladder', CH.x + CH.face.x * .35, CH.y + 1, CH.z + CH.face.z * .35, CH.yaw, -1); activate(t); grabItem(t) } }
 function ladOver(L, u0) {
   const [ex, ez] = L.C.at(-.42), g = groundAt(ex, ez, .3);
   Object.assign(L, { ph: 'over', t: 0, u0, u: u0, y0: CH.y, yTop: g === null ? 0 : g, h3: -.42 });
 }
 function stepLadder(dt, iy) {
   const L = CH.lad, C = L.C, S = LAD.S; CH.face.copy(C.n).negate(); CH.moving = false;
+  if (L.ph === 'sling') {                                       // закидывает лестницу на левый бок на ремень
+    L.t += dt / .55; const k = Math.min(1, L.t), SL = KIRYU.sideLad.userData.inner;
+    if (!LAD.tmp) { const g = new THREE.Group(); TYPES.ladder.build(g); mergeParts(g); g.traverse(o => { if (o.isMesh) o.castShadow = true }); dimGroup(g, Math.max(.15, CH.br || 1), new Map()); scene.add(g); LAD.tmp = { g } }
+    SL.updateWorldMatrix(true, false); const p1 = new THREE.Vector3(), q1 = new THREE.Quaternion(); SL.getWorldPosition(p1); SL.getWorldQuaternion(q1);
+    const e = sm01(k); LAD.tmp.g.position.lerpVectors(L.sl.p0, p1, e).y += .2 * Math.sin(Math.PI * e); LAD.tmp.g.quaternion.slerpQuaternions(L.sl.q0, q1, e);
+    ladPose(L, 'grab', 0);
+    if (k < 1) return;
+    scene.remove(LAD.tmp.g); LAD.tmp = null; L.carry = true; L.ph = 'grab'; L.t = 0; haptic('light'); return;
+  }
   if (L.ph === 'grab') {
     L.t += dt / .65; const k = Math.min(1, L.t), e = sm01(k / .4), [tx, tz] = C.at(LAD.OFF);
     CH.x = lerp(L.x0, tx, e); CH.z = lerp(L.z0, tz, e); CH.y = CH.yd = lerp(L.y0, L.y1, sm01((k - .35) / .65));
@@ -2417,7 +2434,6 @@ function stepLadder(dt, iy) {
   }
   if (L.ph === 'climb') {
     let c = -iy; c = Math.abs(c) > .35 ? Math.sign(c) : 0;
-    if (L.ext) c = 1; else if (c) L.auto = 0; else if (L.auto) c = L.auto;   // наращивает — лезет сам; после — сам спускается, пока не тронешь джойстик
     if (c) L.dir = c;
     const dd = d[C.a], uLow = -3 * dd + 1, ch = ladChain(C.s, C.k), full = ch >= dd, zt = ladBottomTop(C.s, C.k);
     const uBot = L.side === 'bottom' || full ? uLow : -(3 * (Math.min(ch, dd) - 1) + 2);
@@ -2430,8 +2446,8 @@ function stepLadder(dt, iy) {
     if (!c && v < 0 && Math.ceil(nu) < Math.ceil(L.u)) nu = Math.ceil(nu);
     if (uMax !== null && nu >= uMax) {
       nu = uMax; L.u = uMax; ladPut(L, LAD.OFF, (uMax - .5) * S);
-      if (L.ext) { Object.assign(L, { ph: 'place', t: 0 }); }
-      else { ladPose(L, 'climb', 0); return }
+      if (c > 0 && !L.topHint) { L.topHint = true; toast(L.carry ? 'Выше лестницы нет — тапни по блоку над ней, повешу' : 'Выше лестницы нет', 0) }
+      ladPose(L, 'climb', 0); return;
     }
     else if (c > 0 && nu >= -3) { L.u = Math.max(-3, Math.round(L.u)); ladPut(L, LAD.OFF, (L.u - .5) * S); ladOver(L, L.u) }
     else if (c < 0 && nu <= uBot) {
@@ -2457,7 +2473,7 @@ function stepLadder(dt, iy) {
         const p = onFace(F, 0, 0, .1); burst(p.x, p.y, p.z, ['#d9a35c', '#8c7a6a', '#5e4c42'], 8, .3) }
       if (L.hold) L.hold.w = 1 - sm01((k - .78) / .22);
     }
-    if (k >= 1) { L.hold = null; L.ext = null; L.ph = 'climb'; L.auto = -1; if (ladBottomTop(C.s, C.k) === 0) toast('Лестница до самого верха!', 1) }
+    if (k >= 1) { L.hold = null; L.ext = null; L.ph = 'climb'; L.topHint = false; if (ladBottomTop(C.s, C.k) === 0) toast('Лестница до самого верха!', 1) }
     ladPose(L, 'climb', 0); return;
   }
   if (L.ph === 'over') {
@@ -2609,7 +2625,7 @@ function frame(now) {
   const hl = new Set(); if (tool === 'pick' && !CH.held) for (let a = 0; a < ACT.length; a++) if (diggable(a, d[a]) && reach(a)) hl.add(ACT[a][0] + ',' + ACT[a][1] + ',' + d[a]);
   const tinH = !!CH.held && CH.held.type === 'tin';
   if ((tool === 'trowel' && !CH.held) || tinH) for (const s of SPOTS) if ((tinH ? s.state === 1 : s.state === 0) && spotOpen(s) && spotReach(s)) hl.add(s.i + ',' + s.j + ',' + s.z);
-  if (CH.held && CH.held.type === 'ladder' && CH.state === 'walk') for (const k of ladTargets()) hl.add(k);   // куда можно повесить лестницу
+  if ((CH.held && CH.held.type === 'ladder' && CH.state === 'walk') || (CH.state === 'ladder' && CH.lad.carry)) for (const k of ladTargets()) hl.add(k);   // куда можно повесить лестницу
   pulseU.value = hl.size || tool === 'pick' ? .12 + .1 * Math.sin(now / 260) : 0;
   setHighlight(hl);
   const T1 = performance.now();
@@ -2693,7 +2709,8 @@ const SUP_TERMS = `1. «Поддержать автора» — добровол
 const GSAVE = { sig: '', busy: false, warned: false };
 function gameItems() {
   return trash.filter(t => t.active && t.body && TYPES[t.type] && !inHouse(t.body.position))
-    .map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') });
+    .map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') })
+    .concat(CH.state === 'ladder' && (CH.lad.carry || CH.lad.ph === 'sling' || (CH.lad.ph === 'place' && !LADS.has(ladKey(CH.lad.C.s, CH.lad.C.k, CH.lad.ext.z)))) ? ['ladder,' + r3(CH.x) + ',' + r3(Math.max(.3, CH.y + .5)) + ',' + r3(CH.z) + ',0,0,0,1'] : []);   // лестница на боку
 }
 async function saveGame(force, items) {
   if (!GAME.ok) { if (!GSAVE.warned) { GSAVE.warned = true; toast('Сохранение не загрузилось — прогресс этой сессии не запишется') } return false }
