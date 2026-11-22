@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu_demo.js?v=2';
+import { createKiryu } from './kiryu_demo.js?v=3';
 import { createMerchant } from './merchant.js?v=1';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
@@ -567,6 +567,11 @@ const TYPES = {
   skull: { name: 'Череп Егора Филатова', size: 1, mass: 1, build(g) { skullPart(g) }, shapes: SKEL_SHAPES.skull },
   skelChest: { name: 'Рёбра Егора Филатова', size: 1, mass: 1.1, build(g) { chestPart(g) }, shapes: SKEL_SHAPES.skelChest },
   skelLegs: { name: 'Ноги Егора Филатова', size: 1, mass: 1, build(g) { legsPart(g) }, shapes: SKEL_SHAPES.skelLegs },
+  ladder: { name: 'Лестница', size: 2, mass: 1.2,                // высотой ровно в блок, три ступеньки
+    build(g) { const rl = M(0xd9a35c), rg = M(0xa8692f);
+      for (const z of [-.2, .2]) part(g, new THREE.BoxGeometry(BH, .045, .05), rl, 0, .0225, z);
+      for (const x of [-BH / 3, 0, BH / 3]) part(g, new THREE.BoxGeometry(.04, .032, .36), rg, x, .0225, 0) },
+    shapes: () => [[new CANNON.Box(new CANNON.Vec3(BH / 2, .0225, .225)), [0, .0225, 0]]] },
 };
 const trash = [];
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -807,7 +812,7 @@ const ray = new THREE.Raycaster();
 const ndc = e => { const r = cv.getBoundingClientRect(); return new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1) };
 function pick(e) {
   ray.setFromCamera(ndc(e), cam);
-  const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g), ...(shopG.visible ? [shopG] : [])];
+  const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g), ...(shopG.visible ? [shopG] : []), KIT.g];
   const h = ray.intersectObjects(objs, true)[0]; if (!h) return null;
   if (h.object.userData.chunk === undefined) return h;
   const p = h.point.clone().addScaledVector(h.face.normal, -.02), i = Math.floor(p.x), j = Math.floor(p.z), z = Math.floor(-p.y / BH), b = blocks.get(i + ',' + j + ',' + z);
@@ -834,9 +839,16 @@ addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space' || e
 addEventListener('keyup', e => keys.delete(e.code));
 const faceTo = (x, z) => { const v = new THREE.Vector3(x - CH.x, 0, z - CH.z); if (v.lengthSq() > 1e-4) CH.face.copy(v.normalize()) };
 function tap(e) {
+  if (CH.state === 'ladder') return;
   const h = pick(e);
+  if (h && h.object.userData.rack) { useRack(); return }
+  if (h && h.object.userData.t && h.object.userData.t.mounted) { ladTap(h.object.userData.t); return }
   if (h && h.object.userData.merchant) { if (nearShop()) openShop(); else toast('Надо подойти к лавке поближе', 0); return }
   if (h && h.object.userData.deco && Math.hypot(h.point.x - BASKET.x, h.point.z - BASKET.z) < BASKET.r + .12) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
+  if (CH.held && CH.held.type === 'ladder' && h) {               // с лестницей в руках — тап по грани стенки вешает её туда
+    if (h.object.userData.deco) { toast(LAD_WHY.shop, 0); return }
+    const L = ladFromHit(h); if (L) { const why = ladOk(L.s, L.k, L.z); if (why) toast(LAD_WHY[why], 0); else placeLadder(L.s, L.k, L.z); return }
+  }
   const t = h && h.object.userData.t;
   if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
     const p = itemPt(t);
@@ -982,6 +994,7 @@ function drawOutlines() {
   for (const c of chunks) if (c) { saved.push([c.mesh, c.mesh.material]); c.mesh.material = ID_BLOCK; const z = c.mesh.userData.chunk; if (c.mesh.visible && (z < lo - 1 || z > hi + 1) && z > SHOP.z1 + 1) { c.mesh.visible = false; vis.push(c.mesh) } }
   shopG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = o.userData.merchant ? MERCH_ID : DECO_ID } });
   houseG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
+  KIT.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
   const uv = under.visible; under.visible = false;
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
@@ -1028,11 +1041,13 @@ function digCell(a) {
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
   if (!tool) { haptic('warn'); return }
-  if (CH.state === 'jump' || CH.state === 'fall') return;
+  if (CH.state === 'jump' || CH.state === 'fall' || CH.state === 'ladder') return;
+  if (CH.held && CH.held.type === 'ladder') { const L = ladderAhead(); if (L) { placeLadder(L.s, L.k, L.z); return } if (tool === 'glove' && rackNear()) { useRack(); return } }
   if (CH.held && CH.held.type === 'tin') { const s = spotAhead(); if (s && s.state) { useSpot(s); return } }   // пустую банку — к разрыхлённым червям
   if (tool === 'glove') {                                      // перчатка: поднять предмет перед собой или поставить тот, что в руках
     if (CH.held) { dropItem(); return }
-    const t = nearItem(t => !TYPES[t.type].heavy) || nearItem(t => true); if (t) grabItem(t); else shakeTool('glove'); return }
+    const t = nearItem(t => !TYPES[t.type].heavy) || nearItem(t => true), lt = !t && ladderInReach();
+    if (t) grabItem(t); else if (rackNear()) useRack(); else if (lt) takeLadder(lt); else shakeTool('glove'); return }
   if (CH.held) { busy(); return }                              // руки заняты: ни копать, ни ломать
   if (tool === 'bar') {                                        // лом: ближайший ломаемый предмет перед персонажем
     const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
@@ -1052,7 +1067,7 @@ function charHits(t) {                                         // предмет
 }
 function nearItem(ok) {                                        // ближайший найденный предмет перед персонажем, до которого достаём
   let best = null, bd = .95;
-  for (const t of trash) { if (!t.active || t.held || !ok(t)) continue; const p = itemPt(t), dx = p.x - CH.x, dz = p.z - CH.z, dist = Math.hypot(dx, dz);
+  for (const t of trash) { if (!t.active || !t.body || t.held || !ok(t)) continue; const p = itemPt(t), dx = p.x - CH.x, dz = p.z - CH.z, dist = Math.hypot(dx, dz);
     if (Math.abs(p.y - CH.y) < .9 && dist < bd && dx * CH.face.x + dz * CH.face.z > -.1) { bd = dist; best = t } }
   return best;
 }
@@ -1146,7 +1161,7 @@ function groundAt(x, z, yRef) {                                // на како�
 }
 const underHouse = () => CH.y > .3 && CH.y < HF - .3 && cellAt(CH.x, CH.z) < 0;   // под полом дома
 function outerHoldFree(x, y, z) {                              // держать предмет снаружи ямы: над лестницей, балконом, стенками, в доме
-  const s = outerSurfaces(x, z); if (!s.length) return false;
+  const s = outerSurfaces(x, z); if (!s.length || kitHit(x, z, y)) return false;
   if (y > HF - .2 && !INSIDE.some(r => inR(r, x, z, .05))) return false;   // сквозь стены дома
   return s.some(h => y > h + .15);
 }
@@ -1792,6 +1807,7 @@ function stepChar(dt) {
   const dir = SCR_R.clone().multiplyScalar(ix).addScaledVector(G_UP, -iy); dir.y = 0;
   if (PH.on) dir.set(0, 0, 0);                                // телефон открыт — стоит на месте
   const m = Math.min(1, dir.length()); if (m > 0) dir.normalize(); CH.spd = m;
+  if (CH.state === 'ladder') { stepLadder(dt, PH.on ? 0 : iy); chP.position.set(CH.x, CH.y + .72, CH.z); chP.velocity.set(0, 0, 0); return }
   const fl0 = groundAt(CH.x, CH.z, CH.y), fl = fl0 === null ? CH.y : fl0;   // яма, верх стенок, лестница, дом
   const p0x = CH.x, p0z = CH.z, p0y = CH.y;
   CH.moving = false;
@@ -1810,16 +1826,18 @@ function stepChar(dt) {
     if (m < .15) { if (CH.state !== 'walk') CH.state = 'walk'; CH.t = 0 }
     else {
       CH.face.copy(dir);
-      const step = SPEED * m * dt * (CH.held ? (TYPES[CH.held.type].mass > 1 ? .65 : .85) : 1); let blocked = null;
+      const step = SPEED * m * dt * (CH.held ? (TYPES[CH.held.type].mass > 1 ? .65 : .85) : 1); let blocked = null, push = null;
       for (const ax of ['x', 'z']) {                           // по осям отдельно — вдоль стенки можно скользить
         const dv = dir[ax] * step; if (Math.abs(dv) < 1e-6) continue;
-        const nx = ax === 'x' ? CH.x + dv : CH.x, nz = ax === 'z' ? CH.z + dv : CH.z;
-        const h = groundAt(ax === 'x' ? nx + Math.sign(dv) * R : nx, ax === 'z' ? nz + Math.sign(dv) * R : nz, fl);
-        if (h === null) continue;                               // край мира
+        const nx = ax === 'x' ? CH.x + dv : CH.x, nz = ax === 'z' ? CH.z + dv : CH.z, px = ax === 'x' ? nx + Math.sign(dv) * R : nx, pz = ax === 'z' ? nz + Math.sign(dv) * R : nz;
+        const h = groundAt(px, pz, fl);
+        if (h === null || kitHit(px, pz, fl)) { if (Math.abs(dir[ax]) > .55) push = new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0); continue }   // край мира, высокая стенка, стеллаж, ящик
         if (Math.abs(h - fl) < STEP_UP) { CH.x = nx; CH.z = nz; CH.moving = true }
         else if (Math.abs(dir[ax]) > .55) blocked = { h, ad: new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0) };
       }
-      const kind = blocked && fl < .05 && blocked.h < .05 ? (blocked.h < fl ? 'edge' : blocked.h - fl < BH + .05 ? 'wall' : null) : null;   // прыгать и залезать — только в яме и на верх стенок
+      const pad = blocked ? blocked.ad : push, lc = pad && ladFrom(pad);                  // упёрлись в лестницу (снизу) или в край над ней (сверху) — лезем
+      if (lc) { CH.lt = (CH.lt || 0) + dt; if (CH.lt > .2 && !CH.lmsg) { CH.lmsg = true; if (tryLadder(lc.s, lc.k, lc.from)) return } } else { CH.lt = 0; CH.lmsg = false }
+      const kind = !lc && blocked && fl < .05 && blocked.h < .05 ? (blocked.h < fl ? 'edge' : blocked.h - fl < BH + .05 ? 'wall' : null) : null;   // прыгать и залезать — только в яме и на верх стенок
       if (kind) {
         if (CH.state !== kind) { CH.state = kind; CH.t = 0 }
         CH.t += dt; CH.face.copy(blocked.ad);
@@ -1836,10 +1854,10 @@ function stepChar(dt) {
 }
 const lerp = (a, b, k) => a + (b - a) * k;
 function drawChar(dt, now) {
-  chG.position.set(CH.x, CH.y, CH.z);
+  chG.position.set(CH.x, CH.state === 'ladder' ? CH.yd : CH.y, CH.z);
   let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 10); chG.rotation.y = CH.yaw;
   CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
-  KIRYU.update(dt, { state: CH.state, moving: CH.moving, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
+  KIRYU.update(dt, { state: CH.state, moving: CH.moving, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, lad: CH.state === 'ladder' ? CH.lad.pose : null, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
 }
 
 /* ---------- 3D-иконки инструментов: маленькие лоуполи-модели, рисуются отдельной камерой в пиксельный холст ----------
@@ -2198,6 +2216,234 @@ function fillTin(s) {                                           // пустая 
   toast('Банка с червями! Гнездо опустело', 2); haptic('medium');
 }
 
+/* ---------- лестницы ----------
+   лестница — предмет высотой в блок. С ней в руках тап по грани декоративной стенки (левая — грани +x блоков i=1, правая — грани +z блоков j=1)
+   вешает её на этот блок; перчаткой снимается обратно в руки. Вылезти из ямы можно, только если лестница висит на каждом блоке от дна клетки до верха.
+   ступенька U — на высоте (U − ½)·S, S = BH/3: три ступеньки на блок. На лестнице Кирью стоит в LAD.OFF от стенки, лицом к ней.
+   на верху левой стенки — стартовый набор: стеллаж с 4 лестницами и ящик с фонарём; на каждом новом участке — заново */
+const LAD = { S: BH / 3, OFF: .45, STAND: .0775, UP: 2.8, DN: 3.6, hint: false };
+const LADS = new Map();                                          // 'L3,2' -> повешенная лестница (запись в trash с t.mounted, без физики)
+const ladKey = (s, k, z) => s + k + ',' + z;
+const ladFace = (s, k, z) => s === 'L' ? faceFrame(1, k, z, 0) : faceFrame(k, 1, z, 4);
+const sm01 = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+function ladCol(s, k) {                                         // колонна стенки: нормаль в яму, направление вбок, клетка ямы перед ней, точка в h от стенки
+  const L = s === 'L';
+  return { s, k, n: L ? V3(1, 0, 0) : V3(0, 0, 1), t: L ? V3(0, 0, 1) : V3(1, 0, 0), a: isAct(L ? PIT0 : k, L ? k : PIT0), at: h => L ? [PIT0 + h, k + .5] : [k + .5, PIT0 + h] };
+}
+function ladReach(F) { const dy = F.c.y - CH.y; return dy > -1 && dy < 1.45 && Math.hypot(F.c.x - CH.x, F.c.z - CH.z) < .95 }
+const LAD_WHY = { no: 'Лестницу — только на стенку ямы', shop: 'На лавку торговца лестницу не повесить', busy: 'Тут уже висит лестница', far: 'Не дотянуться — подойди ближе' };
+function ladOk(s, k, z) {                                        // '' — можно повесить; иначе причина
+  if (k < PIT0 || k >= PIT1 || z < 0) return 'no';
+  const i = s === 'L' ? 1 : k, j = s === 'L' ? k : 1, a = ladCol(s, k).a;
+  if (inShop(i, j, z)) return 'shop';
+  if (!hasB(i, j, z) || a < 0 || d[a] <= z) return 'no';
+  if (LADS.has(ladKey(s, k, z))) return 'busy';
+  return ladReach(ladFace(s, k, z)) ? '' : 'far';
+}
+function mountLadder(s, k, z, quiet) {
+  const key = ladKey(s, k, z); if (LADS.has(key)) return null;
+  const F = ladFace(s, k, z), t = makeTrash('ladder', 0, 0, 0, 0, -1), br = M(0x3a3f45);
+  for (const x of [-1, 1]) for (const zz of [-1, 1]) {            // железные скобы до стенки
+    const m = new THREE.Mesh(new THREE.BoxGeometry(.05, LAD.STAND, .045), br); m.position.set(x * (BH / 2 - .1), -LAD.STAND / 2, zz * .2);
+    m.castShadow = m.receiveShadow = true; m.userData.t = t; t.g.add(m) }
+  t.g.position.copy(F.c).addScaledVector(F.n, LAD.STAND);
+  t.g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(V3(0, 1, 0), F.n, F.u)); t.g.updateMatrixWorld(true);
+  Object.assign(t, { active: true, mounted: key, ls: s, lk: k, lz: z }); LADS.set(key, t);
+  if (!quiet) { const sp = SPOTS.find(q => q.i === F.i && q.j === F.j && q.z === z && q.F.f === F.f);   // повесили поверх червей — гнездо пропадает
+    if (sp && sp.state !== 2) { sp.state = 2; buildWorms(); toast('Черви расползлись из-под лестницы', 0) } }
+  return t;
+}
+function placeLadder(s, k, z) {
+  const t = CH.held; t.held = false; CH.held = null; removeTrash(t);
+  const F = ladFace(s, k, z); faceTo(F.c.x, F.c.z); mountLadder(s, k, z, false);
+  CH.swing = .3; haptic('medium'); const p = onFace(F, 0, 0, .1); burst(p.x, p.y, p.z, ['#d9a35c', '#8c7a6a', '#5e4c42'], 8, .3);
+  if (!LAD.hint) { LAD.hint = true; toast('Держится. Вылезти — только если лестница на каждом блоке до верха', 1) }
+}
+function takeLadder(t) {                                         // перчаткой: лестница со стенки — в руки
+  const p = t.g.position.clone(); LADS.delete(t.mounted); removeTrash(t); faceTo(p.x, p.z);
+  const it = makeTrash('ladder', CH.x + CH.face.x * .35, CH.y + 1, CH.z + CH.face.z * .35, CH.yaw, -1); activate(it); grabItem(it);
+  burst(p.x, p.y, p.z, ['#8c7a6a', '#5e4c42'], 6, .3);
+}
+function ladFromHit(h) {                                         // тап пришёлся в грань декоративной стенки, обращённую к яме
+  const u = h && h.object.userData; if (!u || u.kind !== 'b') return null;
+  if (u.i === 1 && u.j >= PIT0 && u.j < PIT1 && h.point.x > 1.97) return { s: 'L', k: u.j, z: u.z };
+  if (u.j === 1 && u.i >= PIT0 && u.i < PIT1 && h.point.z > 1.97) return { s: 'R', k: u.i, z: u.z };
+  return null;
+}
+function ladderAhead() {                                         // куда повесить лестницу клавишей действия: стенка перед Кирью
+  const a = charCell(); let s = null, k = 0, zs = [];
+  if (a >= 0) { const [ci, cj] = ACT[a]; if (ci === PIT0 && CH.face.x < -.7) { s = 'L'; k = cj } else if (cj === PIT0 && CH.face.z < -.7) { s = 'R'; k = ci } zs = [d[a] - 1, d[a] - 2] }
+  else if (Math.abs(CH.y) < .05) { if (CH.x > 1.2 && CH.x < PIT0 && CH.face.x > .7) { s = 'L'; k = Math.floor(CH.z) } else if (CH.z > 1.2 && CH.z < PIT0 && CH.face.z > .7) { s = 'R'; k = Math.floor(CH.x) } zs = [0] }
+  if (!s) return null;
+  for (const z of zs) if (ladOk(s, k, z) === '') return { s, k, z };
+  return null;
+}
+function ladderInReach() {                                       // повешенная лестница перед Кирью, до которой он дотягивается
+  let best = null, bd = 9;
+  for (const t of LADS.values()) { const F = ladFace(t.ls, t.lk, t.lz); if (!ladReach(F)) continue;
+    const dx = F.c.x - CH.x, dz = F.c.z - CH.z; if (dx * CH.face.x + dz * CH.face.z <= 0) continue;
+    const dd = Math.abs(F.c.y - CH.y - .5); if (dd < bd) { bd = dd; best = t } }
+  return best;
+}
+function ladTargets() {                                          // грани, куда сейчас можно повесить лестницу (для подсветки)
+  const out = [], z0 = Math.max(0, Math.floor(-CH.y / BH) - 2);
+  for (const s of ['L', 'R']) for (let k = PIT0; k < PIT1; k++) for (let z = z0; z < z0 + 4; z++) if (ladOk(s, k, z) === '') out.push(s === 'L' ? '1,' + k + ',' + z : k + ',1,' + z);
+  return out;
+}
+/* ---------- стартовый набор: стеллаж с лестницами и ящик с фонарём на верху левой стенки ---------- */
+const RACK = { x0: .27, x1: .82, z0: .86, z1: 2.84, top: 1.02 }, CRATE = { x0: .3, x1: .86, z0: 3.02, z1: 3.56, top: .46 };
+const KIT = { g: new THREE.Group(), rk: 4, lads: [] }; scene.add(KIT.g);
+const kitHit = (x, z, y) => (x > RACK.x0 && x < RACK.x1 && z > RACK.z0 && z < RACK.z1 && y < RACK.top - .05) || (x > CRATE.x0 && x < CRATE.x1 && z > CRATE.z0 && z < CRATE.z1 && y < CRATE.top - .05);
+{ const kb = (g, x0, x1, y0, y1, z0, z1, c) => { const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), M(c)); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); g.add(m) };
+  const r = new THREE.Group(), D = 0x6b4424, Dd = 0x4e301a, Lc = 0x8a5a30;
+  for (const z of [RACK.z0, RACK.z1 - .07]) { kb(r, .3, .37, 0, 1, z, z + .07, D); kb(r, .7, .77, 0, .24, z, z + .07, D); kb(r, .3, .77, .02, .09, z, z + .07, Dd); kb(r, .3, .37, .45, .5, z - .005, z + .075, Dd) }
+  kb(r, .3, .4, .7, .78, RACK.z0, RACK.z1, Lc);                   // жердь: на неё опираются лестницы
+  kb(r, .3, .37, .93, 1, RACK.z0, RACK.z1, Dd);                   // верхняя связь
+  kb(r, .66, .74, .13, .21, RACK.z0, RACK.z1, Lc);                // упор для низа лестниц
+  mergeParts(r); r.traverse(o => { if (o.isMesh) { o.userData.rack = true; o.castShadow = o.receiveShadow = true } }); KIT.g.add(r);
+  const c = new THREE.Group(), W0 = 0x9a6436, W1 = 0x7a4c28, W2 = 0x553319, { x0, x1, z0, z1, top } = CRATE;
+  kb(c, x0 + .02, x1 - .02, 0, top - .02, z0 + .02, z1 - .02, W0);
+  for (const y of [.03, .2, .37]) kb(c, x0, x1, y, y + .06, z0, z1, W1);                 // планки по кругу
+  for (const [x, z] of [[x0, z0], [x1 - .05, z0], [x0, z1 - .05], [x1 - .05, z1 - .05]]) kb(c, x, x + .05, 0, top, z, z + .05, W2);   // рёбра по углам
+  kb(c, x0 + .01, x1 - .01, top - .03, top, z0 + .01, z1 - .01, W1);                       // крышка
+  mergeParts(c); c.traverse(o => { if (o.isMesh) { o.userData.crate = true; o.castShadow = o.receiveShadow = true } }); KIT.g.add(c);
+  for (const b of [RACK, CRATE]) { const body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH });
+    body.addShape(new CANNON.Box(new CANNON.Vec3((b.x1 - b.x0) / 2, b.top / 2, (b.z1 - b.z0) / 2))); body.position.set((b.x0 + b.x1) / 2, b.top / 2, (b.z0 + b.z1) / 2); world.addBody(body) } }
+function rackShow() {                                            // лестницы на стеллаже — сколько осталось
+  for (const m of KIT.lads) KIT.g.remove(m); KIT.lads = [];
+  for (let n = 0; n < KIT.rk; n++) { const g = new THREE.Group(), a = .22; TYPES.ladder.build(g); mergeParts(g);
+    g.rotation.z = Math.PI / 2 + a; g.position.set(.62 - Math.sin(a) * BH / 2, Math.cos(a) * BH / 2 + .01, RACK.z0 + .3 + n * .46);
+    g.traverse(o => { if (o.isMesh) { o.userData.rack = true; o.castShadow = o.receiveShadow = true } }); KIT.g.add(g); KIT.lads.push(g) }
+}
+const rackNear = () => Math.abs(CH.y) < .3 && CH.x > RACK.x1 - .1 && CH.x < RACK.x1 + .9 && CH.z > RACK.z0 - .3 && CH.z < RACK.z1 + .3;
+function useRack() {
+  if (!rackNear()) { toast('Надо подойти к стеллажу', 0); return }
+  faceTo(RACK.x0, Math.max(RACK.z0, Math.min(RACK.z1, CH.z)));
+  const held = CH.held;
+  if (held) {
+    if (held.type !== 'ladder') { shakeTool(tool); toast('На стеллаж — только лестницы'); return }
+    if (KIT.rk >= 4) { toast('Стеллаж полный'); return }
+    held.held = false; CH.held = null; removeTrash(held); KIT.rk++; rackShow(); haptic('light'); return }
+  if (tool !== 'glove') { shakeTool(tool); toast(KIT.rk ? 'Лестницы со стеллажа берут перчаткой' : 'Стеллаж пустой', 0); return }
+  if (!KIT.rk) { shakeTool('glove'); toast('Стеллаж пустой'); return }
+  KIT.rk--; rackShow();
+  const t = makeTrash('ladder', CH.x + CH.face.x * .35, CH.y + 1, CH.z + CH.face.z * .35, CH.yaw, -1); activate(t); grabItem(t);
+}
+/* ---------- по лестнице: хват снизу, лазание, вылезание наверх; сверху — разворот и спуск ----------
+   фазы: grab (снизу берётся за ступеньки), climb (вверх-вниз джойстиком; отпустил — встаёт на ближайшую ступеньку),
+   over (руки на край, колено на край, встал), mount (сверху: развернулся, спустил ноги — over задом наперёд), off (сошёл на дно) */
+const ladChain = (s, k) => { let z = 0; while (LADS.has(ladKey(s, k, z))) z++; return z };   // сколько блоков подряд от верха с лестницей
+function ladFrom(ad) {                                           // упёрлись джойстиком (ad — куда): в лестницу снизу или в край над лестницей сверху
+  const a = charCell();
+  if (a >= 0) { const [ci, cj] = ACT[a]; let s = null, k = 0;
+    if (ci === PIT0 && ad.x < -.5) { s = 'L'; k = cj } else if (cj === PIT0 && ad.z < -.5) { s = 'R'; k = ci }
+    for (let z = 0; s && z < d[a]; z++) if (LADS.has(ladKey(s, k, z))) return { s, k, from: 'bottom' };
+    return null }
+  if (Math.abs(CH.y) > .05) return null;
+  let s = null, k = 0;
+  if (ad.x > .5 && CH.x > 1.2 && CH.x < PIT0) { s = 'L'; k = Math.floor(CH.z) } else if (ad.z > .5 && CH.z > 1.2 && CH.z < PIT0) { s = 'R'; k = Math.floor(CH.x) }
+  return s && k >= PIT0 && k < PIT1 && LADS.has(ladKey(s, k, 0)) && d[ladCol(s, k).a] > 0 ? { s, k, from: 'top' } : null;
+}
+function tryLadder(s, k, from) {
+  if (CH.held) { toast('С вещью в руках по лестнице не залезть', 1); return false }
+  const C = ladCol(s, k), dd = d[C.a]; if (C.a < 0 || dd < 1) return false;
+  if (from === 'bottom') {
+    let miss = 0; for (let z = 0; z < dd; z++) if (!LADS.has(ladKey(s, k, z))) miss++;
+    if (miss) { toast(`До верха не хватает ${miss} ${miss === 1 ? 'лестницы' : 'лестниц'} — нужна на каждом блоке`, 1); return false }
+    const u0 = -3 * dd + 1; ladStart(C, 'grab', { u0, y1: (u0 - .5) * LAD.S }); haptic('light'); return true;
+  }
+  const u0 = Math.max(-3, -3 * dd + 1, -(3 * (Math.min(ladChain(s, k), dd) - 1) + 2)); ladStart(C, 'mount', { u0, yTop: CH.y, y0: (u0 - .5) * LAD.S, h3: -.25 }); haptic('light'); return true;
+}
+function ladStart(C, ph, o) {
+  CH.state = 'ladder'; CH.anim = null; CH.lt = 0; CH.yd = CH.y; CH.swing = 0;
+  CH.lad = Object.assign({ C, ph, t: 0, x0: CH.x, z0: CH.z, y0: CH.y, u: o.u0, dir: 1 }, o); CH.face.copy(C.n).negate();
+}
+function ladTap(t) {                                             // тап по повешенной лестнице
+  if (CH.state !== 'walk') return;
+  if (tool === 'glove' && !CH.held) { if (ladReach(ladFace(t.ls, t.lk, t.lz))) takeLadder(t); else toast('Не дотянуться до лестницы', 0); return }
+  if (CH.held) { if (CH.held.type === 'ladder') toast(LAD_WHY.busy, 0); else busy(); return }
+  const C = ladCol(t.ls, t.lk), a = charCell();
+  if (a >= 0 && a === C.a) { tryLadder(t.ls, t.lk, 'bottom'); return }
+  if (a < 0 && Math.abs(CH.y) < .05) { const [x, z] = C.at(-.3); if (Math.hypot(CH.x - x, CH.z - z) < .7) { tryLadder(t.ls, t.lk, 'top'); return } }
+  toast('Подойди к лестнице', 0);
+}
+function ladOverRoot(L, k) {                                     // путь корня при вылезании: [от стенки, высота]
+  const y1 = Math.min(L.y0 + .3, L.yTop - .5);
+  if (k < .3) { const e = sm01(k / .3); return [LAD.OFF, lerp(L.y0, y1, e)] }
+  if (k < .62) { const e = sm01((k - .3) / .32); return [lerp(LAD.OFF, .1, e), lerp(y1, L.yTop - .45, e)] }
+  const e = sm01((k - .62) / .38); return [lerp(.1, L.h3, e), lerp(L.yTop - .45, L.yTop, e)];
+}
+function ladPut(L, h, y, yd = y) { const [x, z] = L.C.at(h); CH.x = x; CH.z = z; CH.y = y; CH.yd = yd }
+function ladPose(L, ph, k) { L.pose = { ph, k, u: L.u, u0: L.u0, y: CH.yd, h: (L.C.s === 'L' ? CH.x : CH.z) - PIT0, S: LAD.S } }
+function ladEnd() { CH.state = 'walk'; CH.lad = null; CH.t = 0; CH.lt = 0 }
+function ladOver(L, u0) {
+  const [ex, ez] = L.C.at(-.42), g = groundAt(ex, ez, .3);
+  Object.assign(L, { ph: 'over', t: 0, u0, u: u0, y0: CH.y, yTop: g === null ? 0 : g, h3: -.42 });
+}
+function stepLadder(dt, iy) {
+  const L = CH.lad, C = L.C, S = LAD.S; CH.face.copy(C.n).negate(); CH.moving = false;
+  if (L.ph === 'grab') {
+    L.t += dt / .65; const k = Math.min(1, L.t), e = sm01(k / .4), [tx, tz] = C.at(LAD.OFF);
+    CH.x = lerp(L.x0, tx, e); CH.z = lerp(L.z0, tz, e); CH.y = CH.yd = lerp(L.y0, L.y1, sm01((k - .35) / .65));
+    if (k < 1) { ladPose(L, 'grab', k); return }
+    if (L.u0 >= -3) ladOver(L, L.u0); else { L.ph = 'climb'; L.u = L.u0 }
+  }
+  if (L.ph === 'climb') {
+    let c = -iy; c = Math.abs(c) > .35 ? Math.sign(c) : 0; if (c) L.dir = c;
+    const dd = d[C.a], uLow = -3 * dd + 1, ch = ladChain(C.s, C.k), uBot = -(3 * (Math.min(ch, dd) - 1) + 2);
+    let v = c > 0 ? LAD.UP : c < 0 ? -LAD.DN : 0, nu = L.u;
+    if (!c && nu !== Math.round(nu)) v = L.dir > 0 ? LAD.UP : -LAD.DN;   // отпустили — дотягивается до ступеньки и замирает
+    nu += v * dt;
+    if (!c && v > 0 && Math.floor(nu) > Math.floor(L.u)) nu = Math.floor(nu);
+    if (!c && v < 0 && Math.ceil(nu) < Math.ceil(L.u)) nu = Math.ceil(nu);
+    if (c > 0 && nu >= -3) { L.u = Math.max(-3, Math.round(L.u)); ladPut(L, LAD.OFF, (L.u - .5) * S); ladOver(L, L.u) }
+    else if (c < 0 && nu <= uBot) {
+      L.u = uBot; ladPut(L, LAD.OFF, (uBot - .5) * S);
+      if (ch >= dd) Object.assign(L, { ph: 'off', t: 0, y0: CH.y });
+      else { ladEnd(); CH.state = 'fall'; CH.vy = 0; toast('Лестница кончилась!', 0); return }   // ниже лестниц нет — отпустил руки
+    } else {
+      L.u = Math.max(uBot, nu); const n = Math.floor(L.u); ladPut(L, LAD.OFF, (L.u - .5) * S, (n + sm01(L.u - n) - .5) * S); ladPose(L, 'climb', 0); return;
+    }
+  }
+  if (L.ph === 'over') {
+    L.t += dt / 1.15; const k = Math.min(1, L.t), [h, y] = ladOverRoot(L, k); ladPut(L, h, y);
+    if (k >= 1) { ladEnd(); CH.land = .06; haptic('light'); return }
+    ladPose(L, 'over', k); return;
+  }
+  if (L.ph === 'mount') {
+    L.t += dt / 1.35; const m = Math.min(1, L.t);
+    if (m < .2) { const e = sm01(m / .2), [tx, tz] = C.at(L.h3); CH.x = lerp(L.x0, tx, e); CH.z = lerp(L.z0, tz, e); CH.y = CH.yd = L.yTop; ladPose(L, 'over', 1); return }
+    const kov = 1 - (m - .2) / .8, [h, y] = ladOverRoot(L, kov); ladPut(L, h, y);
+    if (m < 1) { ladPose(L, 'over', kov); return }
+    L.ph = 'climb'; L.u = L.u0; ladPut(L, LAD.OFF, (L.u0 - .5) * S); ladPose(L, 'climb', 0); return;
+  }
+  if (L.ph === 'off') {
+    L.t += dt / .35; const k = Math.min(1, L.t); ladPut(L, LAD.OFF + .12 * sm01(k), lerp(L.y0, floorY(C.a), sm01(k)));
+    if (k >= 1) { ladEnd(); CH.land = .05; return }
+    ladPose(L, 'off', k);
+  }
+}
+/* камера на лестнице: с ортокамеры перетекает в перспективу снизу сбоку — как в Metal Gear; на краю поднимается вместе с Кирью */
+const LCT = window.__LCT = { ang: .62, el: -.2, bot: .14, top: .35, vh: 3.3, fov: 38, dy: .2, clip: .9 };   // у дна смотрит чуть сверху — иначе под полом видно небо
+const LC = { k: 0, cam: new THREE.PerspectiveCamera(30, 1, .03, 300), t: new THREE.Vector3(), C: null, el: 0, init: false };
+function stepLadCam(dt) {
+  const on = CH.state === 'ladder'; if (on) LC.C = CH.lad.C;
+  LC.k = Math.max(0, Math.min(1, LC.k + (on ? dt / .8 : -dt / .9)));
+  if (LC.k <= 0 || PH.k > 0 || !LC.C) { LC.init = false; return }
+  const C = LC.C, ph = on ? CH.lad.ph : 'out', hF = on && C.a >= 0 ? CH.yd - floorY(C.a) : 9;
+  const elT = ph === 'over' || ph === 'mount' ? LCT.top : lerp(LCT.bot, LCT.el, sm01((hF - .2) / 1.4));
+  const tg = new THREE.Vector3(CH.x, (on ? CH.yd : CH.y) + 1 + LCT.dy, CH.z);
+  if (!LC.init) { LC.init = true; LC.el = elT; LC.t.copy(tg) }
+  LC.el += (elT - LC.el) * (1 - Math.exp(-dt * 2.5)); LC.t.lerp(tg, 1 - Math.exp(-dt * 6));
+  const d1 = C.n.clone().multiplyScalar(Math.cos(LCT.ang)).addScaledVector(C.t, Math.sin(LCT.ang)).multiplyScalar(Math.cos(LC.el)); d1.y = Math.sin(LC.el); d1.normalize();
+  const e = ease3(LC.k), dir = VIEW.clone().lerp(d1, e).normalize();
+  const t0 = cam.position.clone().addScaledVector(VIEW, -60), tgt = t0.lerp(LC.t, e);
+  const h0 = cam.top - cam.bottom, vh = h0 * Math.pow(LCT.vh / h0, e), fov = 2 + (LCT.fov - 2) * e;
+  const dist = vh / 2 / Math.tan(fov * Math.PI / 360), c = LC.cam;
+  c.fov = fov; c.aspect = W / H; c.near = Math.max(.03, dist - (40 + (LCT.clip - 40) * e)); c.far = dist + 120; c.updateProjectionMatrix();
+  c.position.copy(tgt).addScaledVector(dir, dist); c.lookAt(tgt); c.updateMatrixWorld();
+  VCAM = c;
+}
 /* ---------- монеты ---------- */
 const COINI = ["..kkkkk..", ".kyyyyyk.", "kyllyyydk", "kylyyyydk", "kyyyyyydk", "kyyyyyydk", "kyyyyyddk", ".kdddddk.", "..kkkkk.."];
 const COINP = { k: '#5a3a10', y: '#f2c14e', l: '#fff3b0', d: '#c8902a' };
@@ -2216,7 +2462,7 @@ function addCoins(n, x, y, z) {
 }
 
 /* ---------- окно лавки ---------- */
-const WARES = [{ type: 'lantern', name: 'Фонарь', desc: 'Светит на четверть ямы', price: 6 }];
+const WARES = [{ type: 'lantern', name: 'Фонарь', desc: 'Светит на четверть ямы', price: 6 }, { type: 'ladder', name: 'Лестница', desc: 'Вешается на стенку ямы', price: 4 }];
 const shopwrap = document.getElementById('shopwrap'), shopclose = document.getElementById('shopclose'), shoplist = document.getElementById('shoplist');
 icon(XI, { k: '#10141f', x: '#e9f0ee' }, shopclose);
 function wareIcon(type, host) {                              // 3D-иконка товара тем же способом, что и инструменты
@@ -2308,6 +2554,7 @@ function frame(now) {
   const hl = new Set(); if (tool === 'pick' && !CH.held) for (let a = 0; a < ACT.length; a++) if (diggable(a, d[a]) && reach(a)) hl.add(ACT[a][0] + ',' + ACT[a][1] + ',' + d[a]);
   const tinH = !!CH.held && CH.held.type === 'tin';
   if ((tool === 'trowel' && !CH.held) || tinH) for (const s of SPOTS) if ((tinH ? s.state === 1 : s.state === 0) && spotOpen(s) && spotReach(s)) hl.add(s.i + ',' + s.j + ',' + s.z);
+  if (CH.held && CH.held.type === 'ladder' && CH.state === 'walk') for (const k of ladTargets()) hl.add(k);   // куда можно повесить лестницу
   pulseU.value = hl.size || tool === 'pick' ? .12 + .1 * Math.sin(now / 260) : 0;
   setHighlight(hl);
   const T1 = performance.now();
@@ -2317,7 +2564,7 @@ function frame(now) {
   const cl = -camF.y / BH, z0 = Math.floor(cl - 10), z1 = Math.min(BOT, Math.ceil(cl + 10), Math.max(SKY_D, maxD + 5));
   under.position.y = -(z1 + 1) * BH; clipU.value = under.position.y;
   for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
-  placeCam(dt); stepHouse(); stepPhone(dt);
+  placeCam(dt); stepHouse(); stepPhone(dt); stepLadCam(dt);
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
   const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
@@ -2341,11 +2588,13 @@ for (const k of GAME.u) if (PLOT_TRASH[k]) removeTrash(PLOT_TRASH[k]);
 LOADING = true; updateTrash(); LOADING = false;
 for (const [type, x, y, z, qx, qy, qz, qw] of GAME.items) { if (!TYPES[type]) continue;
   const t = makeTrash(type, x, y, z, 0, -1); t.g.quaternion.set(qx, qy, qz, qw).normalize(); t.g.updateMatrixWorld(true); activate(t) }
-if (GAME.fresh) { const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
+KIT.rk = GAME.rk == null ? 4 : Math.max(0, Math.min(4, GAME.rk | 0)); rackShow();   // новый участок — полный стеллаж и фонарь на ящике
+if (GAME.rk == null) { const t = makeTrash('lantern', (CRATE.x0 + CRATE.x1) / 2, CRATE.top + .005, (CRATE.z0 + CRATE.z1) / 2, .4, -1); activate(t) }
+for (const key of GAME.lad || []) { const m = /^([LR])(\d),(\d+)$/.exec(key); if (m) mountLadder(m[1], +m[2], +m[3], true) }
 if (ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) { SHOP.revealed = true; lightDirty = true }
 if (GAME.w) buildWorms();
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
-window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
+window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs, LADS, KIT, mountLadder, KIRYU, LC, LAD };
 requestAnimationFrame(frame);
 
 /* ---------- поддержать автора: оплата звёздами Telegram через наш сервер ----------
@@ -2395,7 +2644,7 @@ async function saveGame(force, items) {
   if (!GAME.ok) { if (!GSAVE.warned) { GSAVE.warned = true; toast('Сохранение не загрузилось — прогресс этой сессии не запишется') } return false }
   if (GSAVE.busy || GAME.moving && !items) return false;          // переезд: пишем только запись нового участка, остальное ждёт перезагрузки
   const recs = items || gameItems();
-  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx };
+  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk };
   const sig = JSON.stringify(head) + '|' + recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');
   if (!force && sig === GSAVE.sig) return true;
   const parts = []; let cur = '';

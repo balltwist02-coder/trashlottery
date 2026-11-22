@@ -111,13 +111,104 @@ export function createKiryu(THREE) {
 
   // ---------- позы ----------
   const K = ['hipX', 'hipZ', 'hipRx', 'hipRy', 'hipRz', 'spRx', 'spRy', 'spRz', 'chRx', 'chRy', 'chRz', 'hdRx', 'hdRy', 'hdRz',
-    'th0', 'th1', 'ty0', 'ty1', 'kn0', 'kn1', 'ux0', 'ux1', 'uy0', 'uy1', 'uz0', 'uz1', 'fx0', 'fx1', 'fz0', 'fz1'];
+    'th0', 'th1', 'ty0', 'ty1', 'kn0', 'kn1', 'ux0', 'ux1', 'uy0', 'uy1', 'uz0', 'uz1', 'fx0', 'fx1', 'fz0', 'fz1', 'hipY', 'hipW'];
   const cur = Object.fromEntries(K.map(k => [k, 0]));
   let phase = 0, time = 0, look = 0, lookTo = 0, lookT = 2, tilt = 0, tiltTo = 0, blinkT = 3, first = true;
   // руки в карманах: плечо назад и в сторону, локоть торчит наружу, кисть уходит в боковой карман
   // (сутулость наклоняет плечи вперёд — руку сначала возвращаем к вертикали, потом отводим)
   const pocket = (p, i) => { const s = i ? 1 : -1, c = -(p.spRx + p.chRx); p['ux' + i] = c + .18; p['uy' + i] = 0; p['uz' + i] = .7 * s; p['fx' + i] = .05; p['fz' + i] = -1.62 * s };
   const hang = (p, i, fwd = 0) => { const s = i ? 1 : -1, c = -(p.spRx + p.chRx); p['ux' + i] = c - fwd; p['uy' + i] = 0; p['uz' + i] = .12 * s; p['fx' + i] = -.2; p['fz' + i] = 0 };
+  // ---------- лестница: хват, лазание как в Metal Gear, вылезание наверх ----------
+  // руки и ноги ставятся точно на ступеньки (двухзвенная IK), корпус и голова — позой. По очереди: рука и противоположная нога
+  // переставляются на две ступеньки вверх, тело рывком поднимается на одну. Ступенька U — на высоте (U − ½)·S от верха стенки (y = 0).
+  // от игры: ph — фаза, k — её доля, u — ступенька под ногами (целое — стоит), u0 — опорная ступенька фазы, y — высота корня, h — от корня до стенки
+  const sm = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x), lr = (a, b, k) => a + (b - a) * k;
+  const ARMK = ['ux0', 'ux1', 'uy0', 'uy1', 'uz0', 'uz1', 'fx0', 'fx1', 'fz0', 'fz1'], BODYK = K.filter(k => !ARMK.includes(k));
+  const mix = (p, q, w, keys = K) => { w = Math.min(1, Math.max(0, w)); if (w > 0) for (const n of keys) p[n] += (q[n] - p[n]) * w };
+  const LP = { hipY: .76, rung: .1, hx: .15, fx: .1 };
+  const zero = () => Object.fromEntries(K.map(k => [k, 0]));
+  function climbPose(u) {                                                      // корпус прямой, прижат к лестнице, голова задрана вверх
+    const p = zero(), n = Math.floor(u), f = u - n, lead = n & 1, arc = Math.sin(Math.PI * Math.min(1, f / .7)), sd = lead ? 1 : -1;
+    p.hipW = 1; p.hipY = LP.hipY; p.spRx = .02; p.chRx = .06; p.hdRx = -.55 + .1 * arc; p.hdRy = .1 * sd * arc;
+    p.chRy = .1 * sd * arc; p.chRz = -.05 * sd * arc; p.hipRz = .04 * sd * arc; p.hipX = .02 * sd * arc;
+    for (const i of [0, 1]) { const s = i ? 1 : -1; p['ux' + i] = -2.2; p['uz' + i] = .3 * s; p['fx' + i] = -.9; p['th' + i] = -.9; p['kn' + i] = 1.2; p['ty' + i] = .15 * s }
+    return p;
+  }
+  function overKeys(lead) {                                                    // руки на краю — колено на край — встал
+    const k1 = zero(), k2 = zero(), kl = 1 - lead, sl = lead;                  // колено на край ставит та нога, что выше
+    Object.assign(k1, { hipW: 1, hipY: .72, hipZ: .04, spRx: .3, chRx: .45, hdRx: -.1 });
+    Object.assign(k2, { hipW: 1, hipY: .5, hipZ: .12, spRx: .42, chRx: .6, hdRx: .12 });
+    for (const q of [k1, k2]) for (const i of [0, 1]) { const s = i ? 1 : -1; q['ux' + i] = -1.1; q['uz' + i] = .3 * s; q['fx' + i] = -.1; q['th' + i] = -.9; q['kn' + i] = 1.3; q['ty' + i] = .18 * s }
+    k2['th' + kl] = -1.85; k2['kn' + kl] = 2.4; k2['ty' + kl] = (kl ? 1 : -1) * .25; k2['th' + sl] = .05; k2['kn' + sl] = .5;
+    return [k1, k2];
+  }
+  function ladderPose(p, L) {
+    if (L.ph === 'climb') { Object.assign(p, climbPose(L.u)); return }
+    if (L.ph === 'grab') { const q = climbPose(L.u0), k = L.k; p.hdRx = lr(p.hdRx, -.75, sm(k / .25)); mix(p, q, sm(k / .45), ARMK); mix(p, q, sm((k - .25) / .75), BODYK); return }
+    if (L.ph === 'off') { const q = climbPose(L.u); mix(q, p, sm(L.k)); Object.assign(p, q); return }
+    if (L.ph === 'over') {
+      const [k1, k2] = overKeys(L.u0 & 1), k = L.k, q = climbPose(L.u0);
+      if (k < .3) mix(q, k1, sm(k / .3)); else if (k < .62) { Object.assign(q, k1); mix(q, k2, sm((k - .3) / .32)) } else { Object.assign(q, k2); mix(q, p, sm((k - .62) / .38)) }
+      Object.assign(p, q);
+    }
+  }
+  // куда тянутся руки (запястье) и ноги (щиколотка) — в координатах корня; w — насколько IK перебивает позу
+  function ladderIK(L) {
+    const S = L.S, rz = L.h - LP.rung, ry = U => (U - .5) * S - L.y;
+    const top = (i, q) => [(i ? 1 : -1) * .2, .035 - L.y, L.h + q];                // ладонь на верху стенки, q — от края вглубь
+    const hand = (i, U) => U > 0 ? top(i, .14) : [(i ? 1 : -1) * LP.hx, ry(U) + .02, rz - .04];   // выше лестницы — ладонь на землю у края
+    const foot = (i, U) => [(i ? 1 : -1) * LP.fx, ry(U) + .135, rz - .1];
+    const way = (A, B, k, back) => { const e = sm(k), a = Math.sin(Math.PI * k); return [lr(A[0], B[0], e), lr(A[1], B[1], e) + .04 * a, lr(A[2], B[2], e) - back * a] };
+    const rest = (n, f) => {                                                    // полушаг n: рука lead и противоположная нога переезжают на две ступеньки
+      const lead = n & 1, mv = Math.min(1, f / .7), H = [], F = [];
+      H[1 - lead] = hand(1 - lead, n + 6); H[lead] = way(hand(lead, n + 5), hand(lead, n + 7), mv, .12);
+      F[lead] = foot(lead, n + 1); F[1 - lead] = way(foot(1 - lead, n), foot(1 - lead, n + 2), mv, .14);
+      return { H, F, lead };
+    };
+    if (L.ph === 'climb') { const n = Math.floor(L.u); const r = rest(n, L.u - n); return { H: r.H, F: r.F, wa: [1, 1], wl: [1, 1] } }
+    if (L.ph === 'grab' || L.ph === 'off') {
+      const n = Math.round(L.ph === 'grab' ? L.u0 : L.u), r = rest(n, 0), k = L.k, ld = r.lead;
+      if (L.ph === 'off') { const w = 1 - sm(k / .8); return { H: r.H, F: r.F, wa: [w, w], wl: [w, w] } }
+      const wa = [], wl = []; wa[1 - ld] = sm(k / .4); wa[ld] = sm((k - .12) / .4); wl[ld] = sm((k - .3) / .35); wl[1 - ld] = sm((k - .5) / .35);
+      return { H: r.H, F: r.F, wa, wl };
+    }
+    if (L.ph === 'over') {
+      const n = Math.round(L.u0), r = rest(n, 0), k = L.k, ld = r.lead, H = [], F = [];
+      for (const i of [0, 1]) H[i] = k < .3 ? way(r.H[i], top(i, .14), sm((k - (i === ld ? 0 : .08)) / .22), -.05) : top(i, .14);
+      F[ld] = r.F[ld]; F[1 - ld] = way(r.F[1 - ld], foot(1 - ld, n + 2), Math.min(1, k / .3), .12);
+      const wa = 1 - sm((k - .68) / .25);
+      const wl = []; wl[ld] = 1 - sm((k - .6) / .25); wl[1 - ld] = 1 - sm((k - .3) / .22);
+      return { H, F, wa: [wa, wa], wl };
+    }
+    return null;
+  }
+  // двухзвенная IK: плечо/бедро из точки S к цели T, локоть/колено — в сторону pole. Всё в системе родителя сустава
+  const _v = () => new THREE.Vector3(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
+  function solve2(S, T, a, b, pole) {
+    const D = T.clone().sub(S), d = Math.min(a + b - 1e-3, Math.max(.05, D.length())); D.normalize();
+    const ca = Math.min(1, Math.max(-1, (a * a + d * d - b * b) / (2 * a * d))), sa = Math.sqrt(1 - ca * ca);
+    const P = pole.clone().addScaledVector(D, -pole.dot(D)).normalize();
+    const E = S.clone().addScaledVector(D, a * ca).addScaledVector(P, a * sa), Tc = S.clone().addScaledVector(D, d);
+    const U = E.clone().sub(S).normalize(), F = Tc.sub(E).normalize();
+    let A = _v().crossVectors(U, F); if (A.lengthSq() < 1e-6) A.crossVectors(P, U); A.normalize();
+    const Y = U.clone().negate(), Z = _v().crossVectors(A, Y);
+    const q = new THREE.Quaternion().setFromRotationMatrix(_m.makeBasis(A, Y, Z));
+    const bend = Math.atan2(-F.dot(Z), F.dot(U));                                // поворот второго звена вокруг его оси x
+    return { q, bend };
+  }
+  const POLE_A = [new THREE.Vector3(-1, -.45, -.35), new THREE.Vector3(1, -.45, -.35)], POLE_L = [new THREE.Vector3(-.3, 0, 1), new THREE.Vector3(.3, 0, 1)];
+  function applyIK(ik) {
+    hips.updateMatrix(); spine.updateMatrix(); chest.updateMatrix();
+    const Mh = hips.matrix.clone(), Mc = Mh.clone().multiply(spine.matrix).multiply(chest.matrix);
+    const iMh = Mh.clone().invert(), iMc = Mc.clone().invert();
+    arms.forEach((A, i) => { const w = ik.wa[i] || 0; if (w <= 0 || !ik.H[i]) return;
+      const T = new THREE.Vector3(...ik.H[i]).applyMatrix4(iMc), r = solve2(A.sh.position, T, UA, FA + .04, POLE_A[i]);
+      A.sh.quaternion.slerp(r.q, w); A.el.rotation.x = lr(A.el.rotation.x, r.bend, w); A.el.rotation.z *= 1 - w });
+    legs.forEach((L, i) => { const w = ik.wl[i] || 0; if (w <= 0 || !ik.F[i]) return;
+      const T = new THREE.Vector3(...ik.F[i]).applyMatrix4(iMh), r = solve2(L.th.position, T, LT, LS, POLE_L[i]);
+      L.th.quaternion.slerp(r.q, w); L.kn.rotation.x = lr(L.kn.rotation.x, r.bend, w);
+      _q.copy(hips.quaternion).multiply(L.th.quaternion).multiply(L.kn.quaternion).invert(); L.an.quaternion.slerp(_q, w) });   // ступня — ровно
+  }
   function target(st, dt) {
     const p = Object.fromEntries(K.map(k => [k, 0]));
     // стойка: колени глубоко согнуты и смотрят наружу, спина дугой, голова вперёд, взгляд исподлобья
@@ -126,6 +217,7 @@ export function createKiryu(THREE) {
     p.chRz = .03 * Math.sin(time * .7);
     pocket(p, 0); pocket(p, 1);
     const S = st.state, A = st.anim;
+    if (st.lad) { ladderPose(p, st.lad); return p }
     if (st.moving && S === 'walk') {
       // вальяжная пружинистая походка: колени наружу, таз гуляет из стороны в сторону, плечи перекатываются
       const a = Math.min(1, .55 + st.speed * .45), sn = Math.sin(phase), cs = Math.cos(phase);
@@ -188,12 +280,13 @@ export function createKiryu(THREE) {
     const c = cur;
     // таз на такой высоте, чтобы более вытянутая нога стояла на полу
     const h = i => LT * Math.cos(c.hipRx + c['th' + i]) + LS * Math.cos(c.hipRx + c['th' + i] + c['kn' + i]) + ANK;
-    hips.position.set(c.hipX, Math.max(h(0), h(1)), c.hipZ); hips.rotation.set(c.hipRx, c.hipRy, c.hipRz);
+    const fit = Math.max(h(0), h(1)); hips.position.set(c.hipX, fit + (c.hipY - fit) * c.hipW, c.hipZ); hips.rotation.set(c.hipRx, c.hipRy, c.hipRz);
     spine.rotation.set(c.spRx, c.spRy, c.spRz); chest.rotation.set(c.chRx, c.chRy, c.chRz); head.rotation.set(c.hdRx, c.hdRy, c.hdRz);
     legs.forEach((L, i) => { L.th.rotation.set(c['th' + i], c['ty' + i], 0); L.kn.rotation.x = c['kn' + i]; L.an.rotation.set(-(c.hipRx + c['th' + i] + c['kn' + i]), 0, 0) });
     arms.forEach((A, i) => { A.sh.rotation.set(c['ux' + i], c['uy' + i], c['uz' + i]); A.el.rotation.set(c['fx' + i], 0, c['fz' + i]) });
     blinkT -= dt; const bl = blinkT < .12; if (blinkT < 0) blinkT = 2 + Math.random() * 4;
     for (const e of eyes) e.scale.y = bl ? .15 : 1;
+    const ik = st.lad && ladderIK(st.lad); if (ik) applyIK(ik);
   }
   root.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true });
   // ---------- склейка: все детали, которые не двигаются друг относительно друга, — один меш на сустав ----------
@@ -219,10 +312,10 @@ export function createKiryu(THREE) {
   const ph = G(arms[0].hd, 0, -.16, .03); ph.rotation.set(-.3, 0, 0);
   ph.add(new THREE.Mesh(B(.1, .19, .02), new THREE.MeshLambertMaterial({ color: 0x15181f, flatShading: true })));
   const scr = new THREE.MeshBasicMaterial({ color: 0x9fe8ff }); scr.userData.glow = true;
-  const sm = new THREE.Mesh(B(.084, .165, .004), scr); sm.position.z = .011; ph.add(sm);
+  const scrM = new THREE.Mesh(B(.084, .165, .004), scr); scrM.position.z = .011; ph.add(scrM);
   const phL = new THREE.PointLight(0x8fdcff, 0, .7, 1.5); phL.position.set(0, 0, .12); ph.add(phL);
   ph.visible = false;
   const upd0 = update;
   function update2(dt, st) { upd0(dt, st); const v = st.phone || 0; ph.visible = v > .02; phL.intensity = 2.5 * v * Math.PI }
-  return { root, update: update2, height: 1.5, head };
+  return { root, update: update2, height: 1.5, head, LP };
 }
