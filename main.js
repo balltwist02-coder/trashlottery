@@ -96,7 +96,7 @@ function shakeTool(t) { if (iconFx[t]) iconFx[t].shake = .4; haptic('warn') }
 function setTool(t) {
   if (t === 'phone') { openPhone(); return }
   tool = tool === t ? null : t; haptic('light');
-  if (tool === 'trowel' && !setTool.tw) { setTool.tw = true; toast('Лопатка рыхлит землю там, где на стенке черви') }
+  if (tool === 'trowel' && !setTool.tw) { setTool.tw = true; toast('Лопатка… ей рыхлят землю, где на стенке черви', 0) }
   toolBtns.forEach((b, k) => b.setAttribute('aria-pressed', TOOLS[k] && TOOLS[k] === tool ? 'true' : 'false'));
 }
 toolBtns.forEach((b, k) => { const t = TOOLS[k];
@@ -628,7 +628,7 @@ function updateTrash() {
     t.g.visible = dug > 0;
     if (dug > 0 && dug < t.cells.length) setGrey(t, true);
     if (dug === t.cells.length) { activate(t); if (t.pk != null && !GAME.u.includes(t.pk)) GAME.u.push(t.pk); if (LOADING) continue; GAME.st.f++;
-      const c = t.g.position; burst(c.x, c.y + .2, c.z, ['#fff6c8', '#f2c14e', '#ffffff'], 18, .6); toast('Найдено: ' + TYPES[t.type].name); haptic('medium') }
+      const c = t.g.position; burst(c.x, c.y + .2, c.z, ['#fff6c8', '#f2c14e', '#ffffff'], 18, .6); toast('Нашёл: ' + TYPES[t.type].name.toLowerCase() + '!', 2); haptic('medium') }
   }
   for (const t of trash) if (t.body) t.body.wakeUp();          // убрали блок — пусть всё, что на нём лежало, проверит опору
 }
@@ -835,7 +835,7 @@ addEventListener('keyup', e => keys.delete(e.code));
 const faceTo = (x, z) => { const v = new THREE.Vector3(x - CH.x, 0, z - CH.z); if (v.lengthSq() > 1e-4) CH.face.copy(v.normalize()) };
 function tap(e) {
   const h = pick(e);
-  if (h && h.object.userData.merchant) { if (nearShop()) openShop(); else toast('Надо подойти к лавке поближе'); return }
+  if (h && h.object.userData.merchant) { if (nearShop()) openShop(); else toast('Надо подойти к лавке поближе', 0); return }
   if (h && h.object.userData.deco && Math.hypot(h.point.x - BASKET.x, h.point.z - BASKET.z) < BASKET.r + .12) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
   const t = h && h.object.userData.t;
   if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
@@ -865,11 +865,56 @@ function breakTrash(t) {
     h.body.velocity.set(dir.x * 1.1 * hv, 1.2 * hv + .2, dir.z * 1.1 * hv);
   }
   const p = b.position; burst(p.x, p.y + .1, p.z, T0.chips || ['#8a4b2a', '#a35a2c', '#5f7f9e', '#c9d3dc'], 22, .8);
-  haptic('heavy'); toast(T0.brokeMsg || 'Сломано: ' + T0.name);
+  haptic('heavy'); toast(T0.brokeMsg || 'Сломал: ' + T0.name.toLowerCase(), 2);
 }
 
 /* ---------- тост и карта ---------- */
-let toastT = 0; function toast(s) { const el = document.getElementById('toast'); el.textContent = s; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 1800) }
+/* ---------- реплики Кирью: всё, что раньше было всплывашкой, теперь говорит он сам ----------
+   чёрное квадратное окошко с пиксельным текстом над головой, текст печатается по буквам.
+   очередь: реплика держится, пока не дочитана (минимум ~1 с, если ждут следующие); одинаковые склеиваются в «×2»;
+   важные (p = 2: находки, покупки, сообщения) встают вперёд подсказок (p = 0); в очереди не больше 4 — лишние подсказки выкидываются */
+{ const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500&display=swap'; document.head.append(l)
+  const st = document.createElement('style'); st.textContent = `
+.say{position:absolute;left:0;top:0;z-index:4;max-width:min(240px,70vw);padding:7px 10px 8px;background:#0b0b0d;color:#f4f1e8;
+  font:500 14px/1.25 "Pixelify Sans","Press Start 2P",ui-monospace,Menlo,Consolas,monospace;letter-spacing:.02em;
+  box-shadow:0 0 0 2px #f4f1e8,0 0 0 4px #0b0b0d,0 6px 14px rgba(0,0,0,.45);pointer-events:none;transform-origin:50% 100%;white-space:pre-wrap;word-break:break-word}
+.say::after{content:'';position:absolute;left:calc(50% + var(--tx,0px) - 6px);bottom:-10px;width:0;height:0;border:6px solid transparent;border-top:6px solid #f4f1e8;border-bottom:0}
+.say::before{content:'';position:absolute;left:calc(50% + var(--tx,0px) - 3px);bottom:-5px;width:6px;height:5px;background:#0b0b0d;z-index:1}
+.say .n{color:#f2c14e;margin-left:6px}
+.say.in{animation:sayin .16s steps(3) both}.say.out{animation:sayout .14s steps(2) both}
+@keyframes sayin{from{transform:scale(.6);opacity:0}}@keyframes sayout{to{transform:scale(.7);opacity:0}}
+`; document.head.append(st) }
+const SAY = { q: [], cur: null, el: null, pos: new THREE.Vector3() };
+function toast(s, p = 1) {
+  s = String(s);
+  if (SAY.cur && SAY.cur.s === s) { SAY.cur.n++; SAY.cur.end = Math.max(SAY.cur.end, performance.now() + 900); sayText(); return }
+  const same = SAY.q.find(m => m.s === s); if (same) { same.n++; same.p = Math.max(same.p, p); return }
+  const m = { s, p, n: 1 }; let k = SAY.q.findIndex(o => o.p < p); if (k < 0) k = SAY.q.length; SAY.q.splice(k, 0, m);
+  while (SAY.q.length > 4) { let w = 0; SAY.q.forEach((o, i) => { if (o.p <= SAY.q[w].p) w = i }); SAY.q.splice(w, 1) }   // лишняя — самая неважная из поздних
+  if (!SAY.cur) sayNext();
+}
+function sayText() { const c = SAY.cur; if (!c) return; SAY.el.firstChild.textContent = c.s.slice(0, c.shown); SAY.el.lastChild.textContent = c.n > 1 ? '×' + c.n : '' }
+function sayNext() {
+  if (SAY.el) { const old = SAY.el; old.classList.remove('in'); old.classList.add('out'); setTimeout(() => old.remove(), 160); SAY.el = null }
+  const m = SAY.q.shift(); SAY.cur = m || null; if (!m) return;
+  const el = document.createElement('div'); el.className = 'say in'; el.append(document.createElement('span'), document.createElement('span')); el.lastChild.className = 'n';
+  document.body.append(el); SAY.el = el;
+  m.t0 = performance.now(); m.shown = 0; m.read = 1100 + m.s.length * 55; m.end = m.t0 + Math.min(4200, m.read);
+  sayText(); stepSay();
+}
+function stepSay() {
+  const c = SAY.cur; if (!c) return; const now = performance.now();
+  const n = Math.min(c.s.length, Math.floor((now - c.t0) / 22)); if (n !== c.shown) { c.shown = n; sayText() }   // печатаем по буквам
+  const typed = c.t0 + c.s.length * 22, end = SAY.q.length ? Math.max(c.t0 + 1000, Math.min(c.end, typed + 700)) : c.end;
+  if (now > end) return sayNext();
+  const el = SAY.el; if (!el || !SAY.ready) return;            // до первого кадра модели и камеры ещё нет
+  KIRYU.head.getWorldPosition(SAY.pos); SAY.pos.y += .55; SAY.pos.project(VCAM);
+  const W = innerWidth, H = innerHeight, bw = el.offsetWidth, bh = el.offsetHeight;
+  let x = (SAY.pos.x * .5 + .5) * W, y = (-SAY.pos.y * .5 + .5) * H;
+  const cx = Math.max(bw / 2 + 8, Math.min(W - bw / 2 - 8, x)), cy = Math.max(bh + 70, Math.min(H - 20, y));
+  el.style.setProperty('--tx', Math.max(-bw / 2 + 12, Math.min(bw / 2 - 12, x - cx)) + 'px');
+  el.style.transform = `translate(${Math.round(cx - bw / 2)}px,${Math.round(cy - bh - 12)}px)`;
+}
 const mapwrap = document.getElementById('mapwrap'), mapbtn = document.getElementById('mapbtn'), mapclose = document.getElementById('mapclose');
 icon(XI, { k: '#10141f', x: '#e9f0ee' }, mapclose);
 // окно карты — рулетка участков, собирается в конце файла (ей нужны оплата и сохранение)
@@ -1016,7 +1061,7 @@ function grabItem(t) {
   const hv = TYPES[t.type].heavy; if (hv) { shakeTool('glove'); haptic('warn'); toast(hv === true ? 'Слишком тяжёлая — даже не сдвинуть' : hv); return }
   const b = t.body; t.held = true; CH.held = t; t.hinted = false;
   b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
-  CH.swing = 0; haptic('medium'); toast('В руках: ' + TYPES[t.type].name);
+  CH.swing = 0; haptic('medium'); toast('Взял: ' + TYPES[t.type].name.toLowerCase(), 0);
 }
 const PRICE = { tin: 1, coffee: 2, beer: 1, glass: 1, milk: 1, pipeHalf: 4, wormTin: 5, tireQuarter: 1, skeleton: 1, skull: 1, skelChest: 1, skelLegs: 1 };   // сколько монет даёт торговец за кусочек мусора
 function heldFree(x, y, z, sell) {                             // можно ли держать предмет в этой точке
@@ -2005,7 +2050,7 @@ function buildStall() {
 }
 buildStall();
 const merBase = new Map();
-function revealShop() { SHOP.revealed = true; lightDirty = true; setTimeout(() => toast('Кирью: …лавка? Под землёй?!'), 500) }
+function revealShop() { SHOP.revealed = true; lightDirty = true; setTimeout(() => toast('…лавка? Под землёй?!', 2), 500) }
 function nearShop() { return SHOP.revealed && CH.x > SHOP.i0 - .2 && CH.x < SHOP.i1 + .2 && CH.z < PIT0 + 1.3 && Math.abs(CH.y - SHOP.floor) < 1 }
 
 /* ---------- лишайник, мох и гнёзда червей на стенках ----------
@@ -2132,7 +2177,7 @@ function spotHit(h) {                                           // тап по �
   return SPOTS.find(s => s.state !== 2 && s.i === u.i && s.j === u.j && s.z === u.z && (s.F.f === 0 ? h.point.x > s.i + .97 : h.point.z > s.j + .97)) || null;
 }
 function useSpot(s) {
-  if (!spotReach(s)) { toast('Черви далеко — подойди к стенке'); return }
+  if (!spotReach(s)) { toast('Черви далеко — надо подойти к стенке', 0); return }
   faceTo(s.F.c.x, s.F.c.z);
   const held = CH.held;
   if (held && held.type === 'tin') { if (s.state) fillTin(s); else { shakeTool('glove'); toast('Черви сидят глубоко — сначала разрыхли лопаткой') } return }
@@ -2150,7 +2195,7 @@ function fillTin(s) {                                           // пустая 
   const t = makeTrash('wormTin', gp.x, gp.y, gp.z, CH.yaw, -1); activate(t); grabItem(t);
   s.state = 2; buildWorms(); CH.swing = .3;
   const p = onFace(s.F, 0, -.06, .1); burst(p.x, p.y, p.z, ['#e58ca0', '#f6bac6', '#3a2415'], 14, .4);
-  toast('Банка с червями! Гнездо опустело'); haptic('medium');
+  toast('Банка с червями! Гнездо опустело', 2); haptic('medium');
 }
 
 /* ---------- монеты ---------- */
@@ -2201,7 +2246,7 @@ function buy(w, btn) {
   if (coins < w.price) { btn.classList.remove('no'); void btn.offsetWidth; btn.classList.add('no'); haptic('warn'); document.getElementById('shopsay').textContent = '«Не хватает. Неси ещё мусора.»'; return }
   coins -= w.price; showCoins(); closeShop();
   const t = makeTrash(w.type, CH.x + rnd(-.08, .08), Math.min(1.5, CH.y + 6), CH.z + rnd(-.08, .08), rnd(0, 6.28), -1); activate(t);
-  t.body.angularVelocity.set(rnd(-2, 2), 0, rnd(-2, 2)); toast('Куплено: ' + w.name.toLowerCase() + ' — лови сверху!'); haptic('medium');
+  t.body.angularVelocity.set(rnd(-2, 2), 0, rnd(-2, 2)); toast('Купил: ' + w.name.toLowerCase() + ' — сейчас прилетит сверху!', 2); haptic('medium');
 }
 shopclose.addEventListener('click', closeShop);
 shopwrap.addEventListener('click', e => { if (e.target === shopwrap) closeShop() });
@@ -2277,6 +2322,7 @@ function frame(now) {
   const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
   const T2 = performance.now();
+  SAY.ready = true; stepSay();
   renderer.render(scene, VCAM); perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
   const T3 = performance.now();
   drawOutlines();
@@ -2330,7 +2376,7 @@ const SUP_TERMS = `1. «Поддержать автора» — добровол
       const r = await api('/api/invoice', { product: o.dataset.p });
       if (!r.link) throw new Error(r.error || 'нет ссылки');
       tg.openInvoice(r.link, status => {
-        if (status === 'paid') { haptic('medium'); toast('Спасибо за поддержку! ⭐'); setTimeout(refresh, 1500); setTimeout(refresh, 5000) }
+        if (status === 'paid') { haptic('medium'); toast('Спасибо за поддержку! ⭐', 2); setTimeout(refresh, 1500); setTimeout(refresh, 5000) }
         else if (status === 'failed') toast('Оплата не прошла');
       });
     } catch (e) { toast('Не получилось открыть оплату — попробуй позже') }
