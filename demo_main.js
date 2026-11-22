@@ -4,7 +4,62 @@ import { createKiryu } from './kiryu_demo.js?v=2';
 import { createMerchant } from './merchant.js?v=1';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
-const PLOT = window.PLOT3D, TEX = window.TEX3D;
+/* ---------- сохранение игры и участки ----------
+   участок: редкость (зелёный / синий / фиолетовый), номер и зерно генерации; первый зелёный — ручной план из редактора.
+   из зерна заново получаются и слои, и закопанный мусор, поэтому сохраняем только то, что изменил игрок:
+   сколько выкопано в каждой клетке, какие предметы уже откопаны, где лежат откопанные вещи вне дома, монеты и счётчики.
+   ключи облака Телеграма (у каждого игрока своё; в браузере — localStorage): game = {v, …, n}, game_0.. = вещи «тип,x,y,z,qx,qy,qz,qw;…» */
+const RAR = {
+  g: { name: 'Зелёный', col: '#5fc24a', layers: 20, trash: .6 },
+  b: { name: 'Синий', col: '#4a90ff', layers: 27, trash: .7 },
+  p: { name: 'Фиолетовый', col: '#b65cff', layers: 35, trash: .8 },
+};
+const GAME_V = 1;
+const mulberry = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296 };
+const GCLOUD = (() => { const w = window.Telegram && window.Telegram.WebApp; return w && w.initData && w.CloudStorage && w.isVersionAtLeast && w.isVersionAtLeast('6.9') ? w.CloudStorage : null })();
+const gGet = keys => new Promise(res => {
+  const t = setTimeout(() => res(null), 5000), done = v => { clearTimeout(t); res(v) };
+  if (GCLOUD) { try { GCLOUD.getItems(keys, (e, v) => done(e ? null : v || {})) } catch (_) { done(null) } return }
+  const v = {}; try { for (const k of keys) v[k] = localStorage.getItem('tl_' + k) || '' } catch (_) { return done(null) } done(v);
+});
+const gSet = (key, val) => new Promise(res => {
+  if (GCLOUD) { try { GCLOUD.setItem(key, val, e => res(!e)) } catch (_) { res(false) } return }
+  try { localStorage.setItem('tl_' + key, val); res(true) } catch (_) { res(false) }
+});
+const newSeed = () => 1 + (Math.random() * 2147483000 | 0);
+async function loadGame() {
+  const fresh = ok => ({ v: GAME_V, c: 0, p: 0, pl: { r: 'g', s: newSeed(), n: 1, h: 1 }, d: null, u: [], st: { f: 0, e: 0 }, w: null, nx: null, items: [], fresh: true, ok });
+  const v = await gGet(['game']); if (!v) return fresh(false);           // хранилище не ответило — играем, но не пишем, чтобы не затереть прогресс
+  let h = null; try { h = v.game ? JSON.parse(v.game) : null } catch (_) { }
+  if (!h || h.v !== GAME_V || !h.pl || !RAR[h.pl.r]) return fresh(true);
+  const items = [];
+  if (h.n) {
+    const w = await gGet([...Array(h.n).keys()].map(i => 'game_' + i)); if (!w) return { ...fresh(false) };
+    for (let i = 0; i < h.n; i++) for (const r of (w['game_' + i] || '').split(';')) { const [type, ...n] = r.split(','), a = n.map(Number); if (type && a.length === 7 && !a.some(isNaN)) items.push([type, ...a]) }
+  }
+  return { ...h, u: h.u || [], st: h.st || { f: 0, e: 0 }, items, fresh: false, ok: true };
+}
+/* слои нового участка: полосы материалов по глубине, свои у каждой редкости, плюс пещеры; ниже дна — 10 слоёв камня */
+function genPlot(r, seed) {
+  const R = mulberry(seed ^ 0x5bd1e995), L = RAR[r].layers, out = [];
+  const PAL = {
+    g: [[.06, 'Т'], [.22, 'ЗЗЗП'], [.5, 'ППЯГЗ'], [.75, 'ККПБ'], [1, 'ГБКК']],
+    b: [[.04, 'Т'], [.14, 'ЗЗГ'], [.5, 'ГГГББП'], [.78, 'БККГ'], [1, 'ККГБ']],
+    p: [[.03, 'Т'], [.1, 'ЗП'], [.32, 'ККБР'], [.6, 'ВРЯК'], [.85, 'ККВВР'], [1, 'ЯРВК']],
+  }[r], CAVE = { g: .05, b: .08, p: .13 }[r];
+  const pick = s => s[R() * s.length | 0];
+  for (let z = 0; z < L; z++) {
+    const band = (PAL.find(([f]) => z / L < f) || PAL[PAL.length - 1])[1], base = pick(band);
+    const row = [0, 1, 2].map(() => [0, 1, 2].map(() => R() < .7 ? base : pick(band)));
+    if (z === 0) row.forEach(rr => rr.fill('Т'));
+    if (z > 3 && z < L - 2 && R() < CAVE) { const n = 1 + (R() < .4 ? 1 : 0); for (let k = 0; k < n; k++) row[1 + (R() * 2 | 0)][1 + (R() * 2 | 0)] = '.' }
+    out.push(row);
+  }
+  for (let z = 0; z < 10; z++) out.push([0, 1, 2].map(() => ['К', 'К', 'К']));
+  return out;
+}
+const GAME = await loadGame();
+const PLOT = GAME.pl.h ? window.PLOT3D : genPlot(GAME.pl.r, GAME.pl.s), TEX = window.TEX3D;
 const N = 6, DIG = PLOT.length - 10, BOT = DIG + 10;   // ниже дна ямы — ещё 10 слоёв цельного камня, чтобы мир не обрывался            // сетка 6×6: две декоративные стенки сзади и сбоку, яма — передние 4×4; нижние 10 слоёв срезаны
 const PIT0 = 2, PIT1 = 6, PC = (PIT0 + PIT1) / 2; // яма занимает x,z от 2 до 6
 const ACT = []; for (let j = PIT0; j < PIT1; j++) for (let i = PIT0; i < PIT1; i++) ACT.push([i, j]);
@@ -92,7 +147,7 @@ function drawBag(cnv) {
 { const c = document.querySelector('.pouch .bagbg'); if (c) drawBag(c) }
 
 /* ---------- состояние раскопа ---------- */
-const d = ACT.map(() => 0);
+const d = GAME.d && GAME.d.length === ACT.length ? GAME.d.map(v => Math.max(0, Math.min(v | 0, DIG))) : ACT.map(() => 0);   // сколько блоков уже выкопано в каждой клетке ямы
 // план из редактора — 3×3: кольцо декора (индекс 0) + яма 2×2 (индексы 1..2).
 // яму 4×4 собираем из него зеркально, ближняя к яме декоративная стенка берёт кольцо плана, дальняя — просто земля
 const MIR = [1, 2, 2, 1];
@@ -185,6 +240,7 @@ const G_BLOCK = 1, G_TRASH = 2, G_CHAR = 4;
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
 for (let z = 0; z <= BOT; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') blocks.set(i + ',' + j + ',' + z, { k: matKey(i, j, z), body: null });
 for (let z = SHOP.z0; z <= SHOP.z1; z++) for (let i = SHOP.i0; i < SHOP.i1; i++) blocks.set(i + ',-1,' + z, { k: ['З', 'З1', 'З2'][hash(i, -1, z)], body: null });   // задняя стенка выемки
+for (let a = 0; a < ACT.length; a++) for (let z = 0; z < d[a]; z++) blocks.delete(ACT[a][0] + ',' + ACT[a][1] + ',' + z);   // уже выкопанное из сохранения
 const hasB = (i, j, z) => blocks.has(i + ',' + j + ',' + z);
 // физика нужна только верхним блокам ямы (на них лежит мусор); глубже тела добавляются по мере раскопок
 function ensureBodies() {
@@ -556,21 +612,23 @@ function genTrash() {
       for (let a = 0; a < ACT.length; a++) { const [i, j] = ACT[a]; if (bb.max.x > i + .03 && bb.min.x < i + .97 && bb.max.z > j + .03 && bb.min.z < j + .97) cells.add(a) } });
     t.cells = [...cells]; return true;
   };
-  for (let z = 1; z < DIG; z++) for (let n = 0; n < 2; n++) {    // на слой — до двух предметов, каждый с шансом 60%
-    if (Math.random() >= .6) continue;
+  for (let z = 1; z < DIG; z++) for (let n = 0; n < 2; n++) {    // на слой — до двух предметов; шанс каждого зависит от редкости участка (60 / 70 / 80%)
+    if (Math.random() >= RAR[GAME.pl.r].trash) continue;
     const r = Math.random(); place(r < .26 ? 'coffee' : r < .46 ? 'tin' : r < .58 ? 'beer' : r < .68 ? 'glass' : r < .78 ? 'milk' : 'pipe', z);
   }
   for (let k = 0, z = 5 + (Math.random() * 9 | 0); k < 6 && !place('tire', z); k++, z++);        // огромная шина — одна на участок
   for (let k = 0, z = 9 + (Math.random() * 9 | 0); k < 6 && !place('skeleton', z); k++, z = Math.min(DIG - 1, z + 1));   // скелет — тоже один, поглубже
 }
 function setGrey(t, on) { if (!t.grey) t.grey = GREY.clone(); t.g.traverse(o => { if (o.isMesh) o.material = on ? t.grey : t.colors.get(o) }) }
+let LOADING = false;                                           // восстановление из сохранения — без «Найдено!» и счётчиков
 function updateTrash() {
   for (const t of trash) {
     if (t.active) continue;
     const dug = t.cells.filter(a => d[a] > t.layer).length;
     t.g.visible = dug > 0;
     if (dug > 0 && dug < t.cells.length) setGrey(t, true);
-    if (dug === t.cells.length) { activate(t); const c = t.g.position; burst(c.x, c.y + .2, c.z, ['#fff6c8', '#f2c14e', '#ffffff'], 18, .6); toast('Найдено: ' + TYPES[t.type].name); haptic('medium') }
+    if (dug === t.cells.length) { activate(t); if (t.pk != null && !GAME.u.includes(t.pk)) GAME.u.push(t.pk); if (LOADING) continue; GAME.st.f++;
+      const c = t.g.position; burst(c.x, c.y + .2, c.z, ['#fff6c8', '#f2c14e', '#ffffff'], 18, .6); toast('Найдено: ' + TYPES[t.type].name); haptic('medium') }
   }
   for (const t of trash) if (t.body) t.body.wakeUp();          // убрали блок — пусть всё, что на нём лежало, проверит опору
 }
@@ -814,13 +872,7 @@ function breakTrash(t) {
 let toastT = 0; function toast(s) { const el = document.getElementById('toast'); el.textContent = s; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 1800) }
 const mapwrap = document.getElementById('mapwrap'), mapbtn = document.getElementById('mapbtn'), mapclose = document.getElementById('mapclose');
 icon(XI, { k: '#10141f', x: '#e9f0ee' }, mapclose);
-(function buildMap() { const g = document.getElementById('mapgrid');
-  for (let k = 0; k < 25; k++) { const c = document.createElement('div'); c.className = 'cell' + (k === 12 ? ' on' : '');
-    if (k === 12) { const im = new Image(); im.src = window.GRASS64; im.style.cssText = 'width:84%;height:84%;image-rendering:pixelated'; c.appendChild(im) }
-    else icon(XI, { k: '#0c0a08', x: '#6e3030' }, c);
-    g.appendChild(c) } })();
-mapbtn.addEventListener('click', () => { mapwrap.hidden = false; mapclose.focus(); haptic('light') });
-mapclose.addEventListener('click', () => { mapwrap.hidden = true; mapbtn.focus(); haptic('light') });
+// окно карты — рулетка участков, собирается в конце файла (ей нужны оплата и сохранение)
 
 /* ---------- предмет в руке: движение по сетке, без прохода сквозь блоки ---------- */
 function stepHeld(g) {
@@ -925,7 +977,7 @@ function digCell(a) {
   const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.k : 'З';
   removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
   d[a]++; ensureBodies(); settle(); updateTrash(); haptic('light'); CH.swing = .3;
-  if (z === 1) DATING.unlock('rozovye');                       // начали второй слой — в телефоне новая взаимная симпатия
+  if (z >= 1) DATING.unlock('rozovye');                       // начали второй слой — в телефоне новая взаимная симпатия
   if (!SHOP.revealed && ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) revealShop();
 }
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
@@ -1009,7 +1061,7 @@ function basketTake(t) {                                       // корзина
   const price = PRICE[t.type], p = t.body.position;
   if (!price) { t.body.position.set(BASKET.x, SHOP.floor + 1, PIT0 + .35); t.body.velocity.set(0, 1.5, 1.4); t.body.wakeUp();
     toast(t.type === 'pipe' ? 'Торговец: «Целиком не возьму — разломай»' : 'Торговец: «Это оставь себе»'); return }
-  removeTrash(t); addCoins(price, BASKET.x, SHOP.floor + BASKET.h, BASKET.z);
+  removeTrash(t); addCoins(price, BASKET.x, SHOP.floor + BASKET.h, BASKET.z); GAME.st.e += price;
   burst(BASKET.x, SHOP.floor + BASKET.h, BASKET.z, ['#f2c14e', '#fff6c8', '#d99a2b'], 14, .7); haptic('medium');
 }
 function dropItem() {
@@ -1981,6 +2033,7 @@ const onFace = (F, a, b, t) => F.c.clone().addScaledVector(F.u, a).addScaledVect
 // гнёзда червей — на ближних к яме гранях декоративных стенок, каждые 2 слоя, по очереди слева и справа
 const SPOTS = [['L', 3, 1], ['R', 4, 2], ['L', 2, 4], ['R', 3, 6], ['L', 4, 8], ['R', 5, 10], ['L', 3, 12], ['R', 2, 14], ['L', 5, 16], ['R', 4, 18]]
   .map(([s, k, z]) => { const i = s === 'L' ? 1 : k, j = s === 'L' ? k : 1; return { i, j, z, F: faceFrame(i, j, z, s === 'L' ? 0 : 4), state: 0, v0: 0, vn: 0, br: -1 } });
+if (GAME.w) SPOTS.forEach((s, k) => s.state = GAME.w[k] | 0);   // черви из сохранения
 const DECO = { items: [], byKey: new Map(), moss: null, lich: null, mossBase: null };
 { const bm = geoB({ al: [1] }), bl = geoB({ al: [1], gw: [0], ph: [0] }), HV = BH / 2, cl = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const moss = F => {                                           // пятно мха: комочки, погуще к середине, и пара свисающих нитей
@@ -2105,7 +2158,8 @@ const COINI = ["..kkkkk..", ".kyyyyyk.", "kyllyyydk", "kylyyyydk", "kyyyyyydk", 
 const COINP = { k: '#5a3a10', y: '#f2c14e', l: '#fff3b0', d: '#c8902a' };
 const coinsEl = document.getElementById('coins'), coinN = document.getElementById('coinN');
 icon(COINI, COINP, coinsEl.querySelector('.ci'));
-let coins = 0;
+let coins = GAME.c | 0;
+coinN.textContent = coins;
 function showCoins() { coinN.textContent = coins; coinsEl.classList.remove('bump'); void coinsEl.offsetWidth; coinsEl.classList.add('bump') }
 function addCoins(n, x, y, z) {
   coins += n; showCoins();
@@ -2234,8 +2288,16 @@ function frame(now) {
 }
 for (let z = 0; z <= BOT; z++) buildChunk(z);
 ensureBodies();
-genTrash();
-{ const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
+/* мусор участка — из зерна участка, поэтому при каждом запуске тот же; уже откопанные предметы убираем, а вещи, лежавшие вне дома, ставим на место */
+{ const mr = Math.random; Math.random = mulberry(GAME.pl.s); try { genTrash() } finally { Math.random = mr } }
+const PLOT_TRASH = trash.slice(); PLOT_TRASH.forEach((t, k) => t.pk = k);
+for (const k of GAME.u) if (PLOT_TRASH[k]) removeTrash(PLOT_TRASH[k]);
+LOADING = true; updateTrash(); LOADING = false;
+for (const [type, x, y, z, qx, qy, qz, qw] of GAME.items) { if (!TYPES[type]) continue;
+  const t = makeTrash(type, x, y, z, 0, -1); t.g.quaternion.set(qx, qy, qz, qw).normalize(); t.g.updateMatrixWorld(true); activate(t) }
+if (GAME.fresh) { const t = makeTrash('lantern', PIT0 + .55, .01, PIT0 + .6, .3, -1); activate(t) }   // фонарь ждёт на лужайке
+if (ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) { SHOP.revealed = true; lightDirty = true }
+if (GAME.w) buildWorms();
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
 window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs };
 requestAnimationFrame(frame);
@@ -2275,3 +2337,158 @@ const SUP_TERMS = `1. «Поддержать автора» — добровол
     opts.forEach(b => b.disabled = false);
   });
 }
+
+/* ---------- сохранение прогресса ----------
+   раз в 3 секунды сверяем «снимок» (монеты, раскопки, вещи вне дома с точностью 5 см); изменилось — пишем. Свернули игру — пишем сразу. */
+const GSAVE = { sig: '', busy: false, warned: false };
+function gameItems() {
+  return trash.filter(t => t.active && t.body && TYPES[t.type] && !inHouse(t.body.position))
+    .map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') });
+}
+async function saveGame(force, items) {
+  if (!GAME.ok) { if (!GSAVE.warned) { GSAVE.warned = true; toast('Сохранение не загрузилось — прогресс этой сессии не запишется') } return false }
+  if (GSAVE.busy || GAME.moving && !items) return false;          // переезд: пишем только запись нового участка, остальное ждёт перезагрузки
+  const recs = items || gameItems();
+  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx };
+  const sig = JSON.stringify(head) + '|' + recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');
+  if (!force && sig === GSAVE.sig) return true;
+  const parts = []; let cur = '';
+  for (const r of recs) { if (cur.length + r.length + 1 > 4000) { parts.push(cur); cur = '' } cur += (cur ? ';' : '') + r }
+  if (cur) parts.push(cur);
+  head.n = parts.length; GSAVE.busy = true;
+  const ok = (await Promise.all(parts.map((p, i) => gSet('game_' + i, p)))).every(Boolean) && await gSet('game', JSON.stringify(head));
+  GSAVE.busy = false; if (ok) GSAVE.sig = sig; return ok;
+}
+setInterval(() => saveGame(false), 3000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(true) });
+if (GAME.ok && GAME.fresh) saveGame(true);
+
+/* ---------- карта: рулетка участков ----------
+   прокрутка бесплатна, когда участок докопан до дна; раньше — только за звёзды. Шансы на экране, гарант фиолетового.
+   результат запоминается сразу (закрыть окно и перекрутить нельзя); «Перейти к участку» — новый участок, старый пропадает навсегда */
+const PLOT_ODDS = [['g', 70], ['b', 25], ['p', 5]], GUAR = 10, SPIN_STARS = 20;
+{ const st = document.createElement('style'); st.textContent = `
+#mapwrap .map{width:min(100%,420px);max-height:calc(100vh - 32px);overflow:auto}
+.rl{position:relative;height:118px;overflow:hidden;background:#100d0a;border-radius:2px;box-shadow:inset 0 0 0 2px #2a221b,inset 0 0 24px rgba(0,0,0,.8)}
+.rl-strip{position:absolute;left:0;top:10px;display:flex;gap:6px;will-change:transform}
+.rl-card{flex:none;width:76px;height:98px;border-radius:3px;background:#1e1813;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  box-shadow:inset 0 0 0 2px var(--rc),inset 0 -14px 18px -10px var(--rc);font:600 10px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e9f0ee;text-align:center}
+.rl-card canvas{width:44px;height:44px;image-rendering:pixelated}
+.rl-card.win{animation:rlwin 1s ease-in-out infinite alternate}
+@keyframes rlwin{to{box-shadow:inset 0 0 0 3px var(--rc),0 0 18px var(--rc),inset 0 -20px 24px -10px var(--rc)}}
+.rl-mark{position:absolute;left:50%;top:0;bottom:0;width:2px;margin-left:-1px;background:#f2c14e;box-shadow:0 0 8px #f2c14e;z-index:2}
+.rl-mark::before,.rl-mark::after{content:'';position:absolute;left:-6px;border:7px solid transparent}
+.rl-mark::before{top:0;border-top-color:#f2c14e}.rl-mark::after{bottom:0;border-bottom-color:#f2c14e}
+.rl-odds{display:flex;flex-wrap:wrap;gap:4px 10px;margin:8px 0 2px;font:500 11.5px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--muted)}
+.rl-odds b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.rl-res{min-height:20px;margin:8px 0 6px;font:700 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);text-align:center}
+.rl-go{display:block;width:100%;padding:11px 12px;border:0;border-radius:2px;background:var(--active);color:#1a140c;font:800 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;cursor:pointer;box-shadow:inset 0 -3px 0 rgba(0,0,0,.25)}
+.rl-go:disabled{opacity:.45;cursor:default}
+.rl-go.star{background:#f7c948}
+.rl-note{margin:6px 0 0;font:500 11.5px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--muted);text-align:center}
+.pl-card{margin-top:12px;padding:10px 12px;border-radius:2px;background:#1a1612;box-shadow:inset 0 0 0 2px #2a221b;display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}
+.pl-card canvas{width:54px;height:54px;image-rendering:pixelated;border-radius:2px}
+.pl-card h3{margin:0 0 4px;font:700 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
+.pl-chip{display:inline-block;padding:1px 7px;border-radius:9px;font:700 11px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#101010;margin-left:6px;vertical-align:1px}
+.pl-stats{display:grid;grid-template-columns:auto auto;gap:2px 12px;font:500 12.5px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--muted)}
+.pl-stats b{color:var(--fg);font-variant-numeric:tabular-nums;text-align:right}
+.mv-veil{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#0b0f16;color:#e9f0ee;font:700 16px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+`; document.head.appendChild(st) }
+
+/* значок участка: срез земли — трава, слои по редкости, рамка цветом редкости */
+function plotIcon(r) {
+  const c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d');
+  const L = { g: ['#ad7757', '#8a5a44', '#7a4836', '#6d6a70'], b: ['#ad7757', '#c06a4a', '#9a4a3a', '#5d5a66'], p: ['#8a5a44', '#5d5a66', '#7d4fb0', '#4a3a6a'] }[r];
+  x.fillStyle = '#0c0a08'; x.fillRect(0, 0, 16, 16);
+  for (let y = 2; y < 14; y++) { x.fillStyle = y < 4 ? (y < 3 ? '#5fae45' : '#3f7a34') : L[Math.min(3, (y - 4) / 2.6 | 0)]; x.fillRect(2, y, 12, 1) }
+  const rnd = mulberry(r.charCodeAt(0) * 97); for (let k = 0; k < 14; k++) { x.fillStyle = 'rgba(0,0,0,.25)'; x.fillRect(2 + (rnd() * 12 | 0), 4 + (rnd() * 10 | 0), 1, 1) }
+  if (r === 'p') { x.fillStyle = '#e3b6ff'; x.fillRect(6, 9, 1, 1); x.fillRect(10, 11, 1, 1); x.fillRect(8, 6, 1, 1) }
+  if (r === 'b') { x.fillStyle = '#9cc6ff'; x.fillRect(5, 10, 2, 1) }
+  x.strokeStyle = RAR[r].col; x.lineWidth = 1; x.strokeRect(1.5, 1.5, 13, 13);
+  return c;
+}
+{
+  const box = mapwrap.querySelector('.map'); box.querySelector('h2').textContent = 'Участки';
+  const oldGrid = document.getElementById('mapgrid'); if (oldGrid) oldGrid.remove();
+  const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e };
+  const rl = h('div', 'rl'), strip = h('div', 'rl-strip'); rl.append(strip, h('i', 'rl-mark'));
+  const odds = h('div', 'rl-odds'), res = h('div', 'rl-res'), go = h('button', 'rl-go'), note = h('div', 'rl-note'), card = h('div', 'pl-card');
+  go.type = 'button'; box.append(rl, odds, res, go, note, card);
+  const canPay = !!(tg && tg.initData && tg.openInvoice && tg.isVersionAtLeast && tg.isVersionAtLeast('6.1'));
+  const done = () => cur() >= DIG;
+  const CW = 76, STEP = 82;
+  let spinning = false;
+  const cardEl = r => { const c = h('div', 'rl-card'); c.style.setProperty('--rc', RAR[r].col); c.append(plotIcon(r), h('div', '', RAR[r].name), h('div', '', RAR[r].layers + ' слоёв')); return c };
+  const roll = () => { if (GAME.p >= GUAR - 1) return 'p'; let x = Math.random() * 100; for (const [r, w] of PLOT_ODDS) if ((x -= w) < 0) return r; return 'g' };
+  const filler = () => { let x = Math.random() * 100; for (const [r, w] of [['g', 60], ['b', 28], ['p', 12]]) if ((x -= w) < 0) return r; return 'g' };
+  function fillStrip(win, at, total) { strip.textContent = ''; for (let k = 0; k < total; k++) strip.append(cardEl(k === at ? win : filler())) }
+  const offsetFor = (at, jit) => at * STEP + CW / 2 - rl.clientWidth / 2 + jit;
+  function renderOdds() {
+    odds.textContent = '';
+    for (const [r, w] of PLOT_ODDS) { const s = h('span'); const b = h('b'); b.style.background = RAR[r].col; s.append(b, `${RAR[r].name} ${w}%`); odds.append(s) }
+    odds.append(h('span', '', `Гарант фиолетового: через ${Math.max(1, GUAR - GAME.p)}`));
+  }
+  function renderCard() {
+    card.textContent = ''; const r = GAME.pl.r, ic = plotIcon(r);
+    const info = h('div'), t = h('h3', '', `Участок №${GAME.pl.n}`), chip = h('span', 'pl-chip', RAR[r].name); chip.style.background = RAR[r].col; t.append(chip);
+    const s = h('div', 'pl-stats');
+    for (const [k, v] of [['Прокопано слоёв', `${Math.min(cur(), DIG)} / ${DIG}`], ['Найдено мусора', GAME.st.f], ['Заработано здесь', GAME.st.e + ' 🪙']]) s.append(h('span', '', k), h('b', '', String(v)));
+    info.append(t, s); card.append(ic, info);
+  }
+  function renderButton() {
+    note.textContent = ''; go.classList.remove('star'); go.disabled = spinning;
+    if (GAME.nx) { go.textContent = 'Перейти к участку'; note.textContent = 'Текущий участок пропадёт навсегда — вернуться на него нельзя'; return }
+    if (done()) { go.textContent = 'Крутить бесплатно'; note.textContent = 'Участок докопан до дна — прокрутка бесплатная'; return }
+    go.classList.add('star'); go.textContent = `Крутить за ${SPIN_STARS} ⭐`;
+    note.textContent = canPay ? 'Бесплатно — когда докопаешь участок до дна. Уйдёшь — вернуться нельзя' : 'Сейчас — только в Телеграме. Бесплатно — когда докопаешь участок до дна';
+    if (!canPay) go.disabled = true;
+  }
+  function render() {
+    renderOdds(); renderCard(); renderButton();
+    if (spinning) return;
+    if (GAME.nx) { fillStrip(GAME.nx.r, 3, 7); requestAnimationFrame(() => { strip.style.transform = `translateX(${-offsetFor(3, 0)}px)`; strip.children[3].classList.add('win') }); res.textContent = `Выпал: ${RAR[GAME.nx.r].name} участок · ${RAR[GAME.nx.r].layers} слоёв` }
+    else { fillStrip(GAME.pl.r, 3, 7); requestAnimationFrame(() => strip.style.transform = `translateX(${-offsetFor(3, 0)}px)`); res.textContent = '' }
+  }
+  async function spin() {
+    if (spinning || GAME.nx) return; spinning = true; renderButton();
+    const r = roll(); GAME.p = r === 'p' ? 0 : GAME.p + 1;
+    GAME.nx = { r, s: newSeed(), n: GAME.pl.n + 1 }; saveGame(true);          // результат записан до анимации
+    const AT = 42, TOTAL = 48, jit = (Math.random() - .5) * CW * .7; fillStrip(r, AT, TOTAL);
+    const x1 = offsetFor(AT, jit), T = 5200, t0 = performance.now(); let lastK = -1; res.textContent = '';
+    strip.style.transform = 'translateX(0px)';
+    await new Promise(fin => {
+      const step = now => {
+        const k = Math.min(1, (now - t0) / T), e = 1 - Math.pow(1 - k, 4), x = x1 * e;
+        strip.style.transform = `translateX(${-x}px)`;
+        const under = Math.floor((x + rl.clientWidth / 2) / STEP); if (under !== lastK) { lastK = under; try { tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged() } catch (_) { } }
+        if (k < 1) requestAnimationFrame(step); else fin();
+      };
+      requestAnimationFrame(step);
+    });
+    strip.children[AT].classList.add('win'); haptic(r === 'p' ? 'heavy' : 'medium');
+    res.textContent = `Выпал: ${RAR[r].name} участок · ${RAR[r].layers} слоёв`;
+    spinning = false; renderOdds(); renderButton();
+  }
+  async function move() {
+    if (!GAME.nx) return; go.disabled = true;
+    const veil = h('div', 'mv-veil', 'Переезжаем на новый участок…'); document.body.append(veil);
+    GAME.pl = GAME.nx; GAME.nx = null; GAME.moving = true; GAME.u = []; GAME.st = { f: 0, e: 0 }; SPOTS.forEach(s => s.state = 0);
+    await saveGame(true, []);                                     // вещи, брошенные на старом участке, остаются там; дом переезжает с Кирью
+    location.reload();
+  }
+  go.addEventListener('click', async () => {
+    haptic('light');
+    if (GAME.nx) return move();
+    if (done()) return spin();
+    if (!canPay) return;
+    go.disabled = true;
+    try {
+      const r = await fetch(PAY_API + '/api/invoice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData, product: 'spin' }) }).then(r => r.json());
+      if (!r.link) throw new Error(r.error || 'нет ссылки');
+      tg.openInvoice(r.link, status => { if (status === 'paid') spin(); else { if (status === 'failed') toast('Оплата не прошла'); renderButton() } });
+    } catch (e) { toast('Не получилось открыть оплату — попробуй позже'); renderButton() }
+  });
+  mapbtn.addEventListener('click', () => { mapwrap.hidden = false; render(); mapclose.focus(); haptic('light') });
+  mapclose.addEventListener('click', () => { if (spinning) return; mapwrap.hidden = true; mapbtn.focus(); haptic('light') });
+}
+Object.assign(window.__dbg, { GAME, saveGame, digAll: () => { for (let k = 0; k < 600 && cur() < DIG; k++) digCell(d.indexOf(cur())) } });
