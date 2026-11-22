@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { createKiryu } from './kiryu.js?v=7';
 import { createMerchant } from './merchant.js?v=1';
+import { createKudzuya } from './kudzuya.js?v=1';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
 /* ---------- сохранение игры и участки ----------
@@ -196,9 +197,11 @@ function makeBg() {
 }
 /* камера следует за персонажем и двигается только на целые пиксели — иначе пиксельные текстуры «дрожат» */
 const camF = new THREE.Vector3(PC, 0, PC);                   // точка, за которой следит камера (сглаженная)
+let camO = 0;                                                // сдвиг камеры вбок по экрану
 function placeCam(dt) {
   const k = 1 - Math.exp(-dt * 4);                           // по горизонтали камера стоит на центре ямы, по глубине плавно идёт за персонажем
-  camF.x = PC; camF.z = PC; camF.y += (CH.y + .3 - camF.y) * k;
+  const cs = (CH.x - CH.z) * Math.SQRT1_2, half = Math.max(.5, W / 2 / PX - 2), o = Math.abs(cs) > half ? cs - Math.sign(cs) * half : 0;   // ушёл к краю кадра — камера сдвигается вбок
+  camO += (o - camO) * k; camF.x = PC + camO * Math.SQRT1_2; camF.z = PC - camO * Math.SQRT1_2; camF.y += (CH.y + .3 - camF.y) * k;
   let sx = Math.round(camF.dot(SCR_R) * PX), sy = Math.round(camF.dot(SCR_U) * PX);
   const t = SCR_R.clone().multiplyScalar(sx / PX).addScaledVector(SCR_U, sy / PX);
   cam.position.copy(t).addScaledVector(VIEW, 60); cam.lookAt(t);
@@ -279,7 +282,7 @@ function removeBlock(i, j, z) { const b = blocks.get(i + ',' + j + ',' + z); if 
 { const top = 3, bot = -(DIG + 1) * BH, hw = (PIT1 - PIT0) / 2 + 1;
   const wall = (x0, x1, y0, y1, z0, z1) => world.addBody(new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2)),
     position: new CANNON.Vec3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), collisionFilterGroup: G_BLOCK, collisionFilterMask: G_TRASH }));
-  wall(PIT0 - 1, PIT0, bot, top, PC - hw, PC + hw); wall(PIT1, PIT1 + 1, bot, top, PC - hw, PC + hw); wall(PC - hw, PC + hw, bot, top, PIT1, PIT1 + 1);
+  wall(PIT0 - .45, PIT0, bot, top, PC - hw, PC + hw); wall(PIT1, PIT1 + 1, bot, top, PC - hw, PC + hw); wall(PC - hw, PC + hw, bot, top, PIT1, PIT1 + 1);
   // сторона лавки: на высоте ниши над корзиной стенки нет — туда можно опустить мусор
   wall(PC - hw, WIN.x0, bot, top, PIT0 - 1, PIT0); wall(WIN.x1, PC + hw, bot, top, PIT0 - 1, PIT0);
   wall(WIN.x0, WIN.x1, SHOP.ceil, top, PIT0 - 1, PIT0); wall(WIN.x0, WIN.x1, bot, SHOP.floor, PIT0 - 1, PIT0) }
@@ -667,7 +670,7 @@ const solidAt = (i, j, z) => z >= 0 && (z > BOT || hasB(i, j, z));
 const skyAt = z => 15 * Math.max(0, Math.min(1, 1 - (z + 1) / SKY_D));
 function Lget(i, j, z) {
   if (z < 0) return 15; if (z > BOT + 1) return 0;
-  if (i < 0 || j < 0) return 0;                               // за задними стенками ничего не видно
+  if (i < 0 || j < 0) return i >= N || j >= N ? skyAt(z) : 0;   // за задними стенками ничего не видно; срез расширения участка — под небом
   if (i >= N || j >= N) return Math.max(skyAt(z), LG[li(Math.min(i, N - 1), Math.min(j, N - 1), z)], i >= N && j < N ? OUTL[(z + 1) * N + j] : j >= N && i < N ? OUTL[NL * N + (z + 1) * N + i] : 0);   // открытый срез участка
   return LG[li(i, j, z)];
 }
@@ -741,7 +744,7 @@ const chBase = new Map();
 function updateLight() {
   const src = lightSources(), key = JSON.stringify(src);
   for (const z of chunkDirty) buildChunk(z);
-  if (lightDirty || key !== lightKey || chunkDirty.size) { lightDirty = false; lightKey = key; perf.lightN++; computeLight(src); for (const ch of chunks) if (ch) shadeChunk(ch); shadeStall(); shadeDeco(); shadeWorms() }
+  if (lightDirty || key !== lightKey || chunkDirty.size) { lightDirty = false; lightKey = key; perf.lightN++; computeLight(src); for (const ch of chunks) if (ch) shadeChunk(ch); shadeChunk(EXT); shadeStall(); shadeDeco(); shadeWorms() }
   chunkDirty.clear();
   for (const t of trash) if (t.g.visible) { const p = t.g.position, br = lightAt(p.x, p.y + .15, p.z);
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
@@ -812,7 +815,7 @@ const ray = new THREE.Raycaster();
 const ndc = e => { const r = cv.getBoundingClientRect(); return new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1) };
 function pick(e) {
   ray.setFromCamera(ndc(e), LC.k > .5 && LC.init ? LC.cam : cam);   // на лестнице смотрим через киношную камеру — и тапаем через неё
-  const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g), ...(shopG.visible ? [shopG] : []), KIT.g];
+  const objs = [...chunks.filter(c => c && c.mesh.visible).map(c => c.mesh), ...trash.filter(t => t.g.visible).map(t => t.g), ...(shopG.visible ? [shopG] : []), KIT.g, KZ.g];
   const h = ray.intersectObjects(objs, true)[0]; if (!h) return null;
   if (h.object.userData.chunk === undefined) return h;
   const p = h.point.clone().addScaledVector(h.face.normal, -.02), i = Math.floor(p.x), j = Math.floor(p.z), z = Math.floor(-p.y / BH), b = blocks.get(i + ',' + j + ',' + z);
@@ -842,6 +845,8 @@ function tap(e) {
   if (CH.state === 'ladder') { ladPlaceTap(pick(e)); return }
   const h = pick(e);
   if (h && h.object.userData.rack) { useRack(); return }
+  if (h && h.object.userData.kz) { kzTalk(); return }
+  if (h && h.object.userData.table) { tableTap(); return }
   if (h && h.object.userData.t && h.object.userData.t.mounted) { ladTap(h.object.userData.t); return }
   if (h && h.object.userData.merchant) { if (nearShop()) openShop(); else toast('Надо подойти к лавке поближе', 0); return }
   if (h && h.object.userData.deco && Math.hypot(h.point.x - BASKET.x, h.point.z - BASKET.z) < BASKET.r + .12) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
@@ -969,7 +974,7 @@ function depenetrate(t) {
    закрашивается тёмным — у ближнего к камере предмета, поэтому в куче видно, кто сверху */
 const idRT = new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, depthTexture: new THREE.DepthTexture(1, 1) });
 const ID_BLOCK = new THREE.MeshBasicMaterial({ color: 0x000000 });
-const DECO_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(253 / 255, 0, 0) }), MERCH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(254 / 255, 0, 0) });
+const DECO_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(253 / 255, 0, 0) }), MERCH_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(254 / 255, 0, 0) }), KZ_ID = new THREE.MeshBasicMaterial({ color: new THREE.Color(251 / 255, 0, 0) });
 const olMat = new THREE.ShaderMaterial({
   uniforms: { tId: { value: idRT.texture }, tD: { value: idRT.depthTexture }, px: { value: new THREE.Vector2(1, 1) } },
   transparent: true, depthTest: false, depthWrite: false,
@@ -996,6 +1001,8 @@ function drawOutlines() {
   shopG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = o.userData.merchant ? MERCH_ID : DECO_ID } });
   houseG.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
   KIT.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
+  KZ.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = o.userData.kz ? KZ_ID : DECO_ID } });   // Кудзуя-сан обведён, как Кирью
+  saved.push([EXT.mesh, EXT.mesh.material]); EXT.mesh.material = ID_BLOCK;
   const uv = under.visible; under.visible = false;
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
@@ -1036,7 +1043,7 @@ function digCell(a) {
   const [i, j] = ACT[a], z = d[a], b = blocks.get(i + ',' + j + ',' + z), k = b ? b.k : 'З';
   removeBlock(i, j, z); burst(i + .5, -z * BH, j + .5, CRUMB[k] || CRUMB[k[0]] || CRUMB['З'], 16);
   d[a]++; ensureBodies(); settle(); updateTrash(); haptic('light'); CH.swing = .3;
-  if (z >= 1) DATING.unlock('rozovye');                       // начали второй слой — в телефоне новая взаимная симпатия
+  if (z >= 1) SMS.unlock('stranger');                         // начали второй слой — СМС с неизвестного номера
   if (!SHOP.revealed && ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) revealShop();
 }
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
@@ -1047,7 +1054,7 @@ function act() {
   if (CH.held && CH.held.type === 'ladder') { const L = ladderAhead(); if (L) { placeLadder(L.s, L.k, L.z); return } if (tool === 'glove' && rackNear()) { useRack(); return } }
   if (CH.held && CH.held.type === 'tin') { const s = spotAhead(); if (s && s.state) { useSpot(s); return } }   // пустую банку — к разрыхлённым червям
   if (tool === 'glove') {                                      // перчатка: поднять предмет перед собой или поставить тот, что в руках
-    if (CH.held) { dropItem(); return }
+    if (CH.held) { if (CH.held.type !== 'ladder' && nearTable(.6)) putOnTable(); else dropItem(); return }
     const t = nearItem(t => !TYPES[t.type].heavy) || nearItem(t => true), lt = !t && ladderInReach();
     if (t) grabItem(t); else if (rackNear()) useRack(); else if (lt) takeLadder(lt); else shakeTool('glove'); return }
   if (CH.held) { busy(); return }                              // руки заняты: ни копать, ни ломать
@@ -1142,7 +1149,7 @@ const LV = n => n * BH, HF = LV(9);
 const inR = (r, x, z, m = 0) => x >= r[0] - m && x <= r[1] + m && z >= r[2] - m && z <= r[3] + m;   // r = [x0, x1, z0, z1]
 /* где можно стоять: [x0, x1, z0, z1, высота(x, z)] — по точке, куда шагает край Кирью */
 const SURF = [
-  [.25, 2, .25, 5.75, () => 0], [2, 3, .25, 2, () => 0], [3, 5, 1, 2, () => 0],   // верх декоративных стенок (кроме клеток под низкими пролётами)
+  [-1.75, 2, -1.75, 5.75, () => 0], [2, 3, -1.75, 2, () => 0], [3, 5, 1, 2, () => 0], [3, 5.75, -1.75, -.05, () => 0],   // верх декоративных стенок и расширения за ними (кроме клеток под низкими пролётами)
   [5, 5.75, 1, 2, (x, z) => LV(2 - z)],                       // пролёт 1: клетка (5,1), вверх к дальней стенке
   [5, 5.75, .25, 1, () => LV(1)],                             // площадка (5,0)
   [1, 5, .25, 1, x => LV(6 - x)],                             // пролёт 2: вдоль дальней правой стенки, вверх к углу
@@ -1523,40 +1530,39 @@ addEventListener('keydown', e => {
 }, true);
 addEventListener('keyup', e => { if (PH.on && !PHONE.root.contains(e.target)) e.stopImmediatePropagation() }, true);
 
-/* ---------- приложение «Знакомства без интимных фото верифицирующих личность» ----------
-   Две вкладки: «Анкеты» (свайп влево — нет, вправо — лайк; пока закрыта замком) и «Чаты».
-   Сюжет: когда Кирью начинает копать второй слой, телефон дважды вибрирует — в чатах появляется
-   «Розовые» с пометкой «Найдена взаимная симпатия». Переписка идёт по сценарию из редактора диалогов
-   (DT_SCRIPTS): она пишет реплики, игрок выбирает ответ, ответ ведёт к следующему узлу.
-   Сохранение: ключ dating (облако Телеграма / localStorage): {v:2, m:{id:{c:[номера ответов], nw}}} */
+/* ---------- Кудзуя-сан: просьбы-задания по СМС ----------
+   сосед Кирью стоит у своего стола на левой стенке участка и по одной присылает просьбы: что найти в земле и положить ему на стол.
+   положил то, что нужно, — он забирает вещь, платит монетами и через пару секунд пишет следующую просьбу.
+   прогресс — в сохранении игры (GAME.q): i — номер просьбы, s — уже прислана, a — выбранные ответы, seen — до какой просьбы переписка уже прочитана, nw — непрочитано */
+const QUESTS = [
+  { type: 'coffee', what: 'банка кофе', acc: 'банку кофе', pay: 5, got: 'О-о, кофе! Аригато, Кирью-кун!',
+    say: ['Кирью-кун, здравствуй! Это Кудзуя, твой сосед.', 'Старик у большого стола слева от твоей ямы — это я. Помаши мне.', 'Раз уж ты копаешь — найди мне банку кофе. Положи её на мой стол, я заплачу.'],
+    ask: [{ t: 'Хорошо, Кудзуя-сан!' }, { t: 'А откуда у вас мой номер?', re: ['Ты сам мне его дал. Лет двадцать назад. Ты тогда был вот такой.', 'Кофе, Кирью-кун. Кофе.'] }] },
+  { type: 'tin', what: 'консервная банка', acc: 'пустую консервную банку', pay: 3, got: 'Отличная банка. Спасибо!',
+    say: ['Спасибо за кофе! Теперь хоть глаза открываются.', 'Теперь нужна пустая консервная банка. Посажу в неё дайкон.'],
+    ask: [{ t: 'Будет сделано' }, { t: 'Дайкон? В банке?', re: ['Маленький дайкон. Не задавай лишних вопросов, Кирью-кун.'] }] },
+  { type: 'wormTin', what: 'банка с червями', acc: 'банку с червями', pay: 7, got: 'Какие жирные! Рыба будет счастлива.',
+    say: ['Дайкон уже проклюнулся.', 'В субботу иду на рыбалку. Набери мне банку червей: лопаткой разрыхли гнездо на стенке ямы и подставь пустую банку.'],
+    ask: [{ t: 'Черви так черви' }, { t: 'А сами никак?', re: ['У меня спина, Кирью-кун. Ты видел, как я стою?'] }] },
+  { type: 'glass', what: 'зелёная бутылка', acc: 'зелёную бутылку', pay: 4, got: 'Какой цвет! Будет мне фонарик в сад.',
+    say: ['Рыбы я не поймал, но черви были прекрасные.', 'Найди зелёную бутылку. Сделаю из неё фонарик для сада.'],
+    ask: [{ t: 'Поищу' }] },
+  { type: 'skull', what: 'череп Егора Филатова', acc: 'череп Егора Филатова', pay: 12, got: 'Он самый... Поставлю рядом с пластинками.',
+    say: ['Говорят, у тебя в земле лежит Егор Филатов.', 'Я его очень уважаю. Принеси череп — поставлю на полку рядом с его пластинками.'],
+    ask: [{ t: 'Это вообще законно?', re: ['Он бы не возражал.'] }, { t: 'Принесу' }] },
+  { type: null, say: ['Спасибо тебе за всё, Кирью-кун. Пока мне больше ничего не нужно.', 'Будет дело — напишу.'], idle: 'Отдыхай, Кирью-кун. Будет дело — напишу.' },
+];
+const Q = (() => { const q = GAME.q; if (!q || typeof q.i !== 'number') return { i: 0, s: 0, a: [], seen: -1, nw: false };
+  return { i: Math.max(0, Math.min(QUESTS.length - 1, q.i | 0)), s: q.s ? 1 : 0, a: Array.isArray(q.a) ? q.a.slice(0, QUESTS.length) : [], seen: typeof q.seen === 'number' ? q.seen : -1, nw: !!q.nw } })();
+const cap = s => s[0].toUpperCase() + s.slice(1);
+
+/* ---------- приложение «Сообщения»: СМС от Кудзуя-сан и с неизвестного номера ----------
+   Неизвестный номер — сюжетная переписка по сценарию из редактора диалогов (DT_SCRIPTS): появляется, когда Кирью начинает
+   копать второй слой (телефон дважды вибрирует). Пока сценарий отрабатывается, она каждый запуск начинается заново */
 { const st = document.createElement('style'); st.textContent = `
-#po .dt-wrap{position:absolute;inset:0;display:flex;flex-direction:column}
-#po .dt-main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
-#po .dt-deck{position:relative;flex:1;min-height:0;margin:.8em .8em .3em}
-#po .dt-card{position:absolute;inset:0;border-radius:1.1em;overflow:hidden;background:#221a26;box-shadow:0 .4em 1.2em rgba(0,0,0,.5);touch-action:none;transition:transform .28s cubic-bezier(.2,.9,.3,1);cursor:grab}
-#po .dt-card.drag{transition:none;cursor:grabbing}
-#po .dt-card.under{transform:scale(.95) translateY(.6em);filter:brightness(.75)}
-#po .dt-card canvas{width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
-#po .dt-info{position:absolute;left:0;right:0;bottom:0;padding:3.5em 1em 1em;background:linear-gradient(transparent,rgba(10,6,14,.92) 45%);pointer-events:none}
-#po .dt-info b{display:block;font-size:1.45em;font-weight:800}
-#po .dt-info b span{font-weight:400;opacity:.8}
-#po .dt-info p{margin:.35em 0 .55em;font-size:.88em;line-height:1.3;opacity:.92}
-#po .dt-tags{display:flex;flex-wrap:wrap;gap:.35em}
-#po .dt-tags i{font-style:normal;font-size:.75em;padding:.25em .7em;border-radius:1em;background:rgba(255,255,255,.14)}
-#po .dt-stamp{position:absolute;top:1.2em;padding:.15em .5em;border:.18em solid;border-radius:.4em;font-weight:900;font-size:1.6em;opacity:0;pointer-events:none;letter-spacing:.05em}
-#po .dt-stamp.yes{left:1em;color:#5be39b;transform:rotate(-14deg)}
-#po .dt-stamp.no{right:1em;color:#ff5a6e;transform:rotate(14deg)}
-#po .dt-btns{flex:none;display:flex;justify-content:center;gap:2.2em;padding:.3em 0 .8em}
-#po .dt-btns button{width:3.5em;height:3.5em;border-radius:50%;border:0;background:#2a1f2e;color:#fff;font:700 1.25em/1 inherit;box-shadow:0 .25em .7em rgba(0,0,0,.4);cursor:pointer}
-#po .dt-btns .n{color:#ff5a6e}#po .dt-btns .y{color:#fff;background:var(--acc)}
-#po .dt-btns button:active{transform:scale(.9)}
+#po .po-row i{image-rendering:pixelated}
 #po .dt-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.6em;padding:2em;text-align:center;opacity:.75}
 #po .dt-empty .big{font-size:2.6em;opacity:.9}
-#po .dt-tabs{flex:none;display:flex;border-top:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03)}
-#po .dt-tabs button{flex:1;position:relative;border:0;background:none;color:inherit;opacity:.55;padding:.75em 0;font:600 .9em inherit;cursor:pointer}
-#po .dt-tabs button.on{opacity:1;color:var(--acc)}
-#po .dt-tabs sup{position:absolute;top:.35em;margin-left:.3em;min-width:1.3em;padding:0 .3em;border-radius:1em;background:var(--acc);color:#fff;font-size:.72em;line-height:1.3em}
-#po .po-row i{image-rendering:pixelated}
 #po .dt-new{display:inline-block;vertical-align:middle;width:.55em;height:.55em;border-radius:50%;background:var(--acc);margin-left:.4em}
 #po .po-row.dt-fresh small{color:var(--acc);opacity:1;font-weight:600}
 #po .po-ic{position:relative}
@@ -1564,20 +1570,13 @@ addEventListener('keyup', e => { if (PH.on && !PHONE.root.contains(e.target)) e.
 .tool .ph-dot{position:absolute;top:2px;right:2px;width:11px;height:11px;border-radius:50%;background:#ff3b5c;box-shadow:0 0 0 2px #2a1a10;animation:ph-dot 1s ease-in-out infinite;pointer-events:none}
 @keyframes ph-dot{50%{transform:scale(1.25)}}
 `; document.head.appendChild(st) }
-
-/* анкеты для свайпов — пока пусто, вкладка закрыта */
-const DT_DECK = [], DT_DECK_LOCKED = true;
-const DT_PERSIST = false;                    // пока сценарий отрабатывается — переписка каждый запуск начинается заново (вернуть true, чтобы сохранять)
-/* собеседницы: ник, портрет-заглушка */
-const DT_PEOPLE = {
-  rozovye: { id: 'rozovye', name: 'Розовые', hair: 'long', bg: ['#ffc2dc', '#a8406f'] },
-};
+const DT_PEOPLE = { stranger: { id: 'stranger', name: 'Неизвестный номер', hair: 'long', bg: ['#ffc2dc', '#a8406f'] } };
 /* сценарии переписки — их собирает редактор диалогов («Скопировать для игры»).
-   узел: {say:[реплики собеседницы], ask:[{t:текст ответа, to:следующий узел}]}; без ask или с пустым to — пока конец */
+   узел: {say:[реплики собеседника], ask:[{t:текст ответа, to:следующий узел}]}; без ask или с пустым to — пока конец */
 const DT_SCRIPTS = {
-  rozovye: { start: 'n1', nodes: {
+  stranger: { start: 'n1', nodes: {
     n1: { say: ['Кирью, значит...'], ask: [
-      { t: 'Привет, я помню как лайкал тебя!', to: '' },
+      { t: 'Кто это?', to: '' },
       { t: 'а?', to: '' },
       { t: 'Имя не имеет значения, у меня есть своя земля', to: '' } ] },
   } },
@@ -1610,28 +1609,27 @@ function dtPortrait(g) {
   x.putImageData(img, 0, 0); return c;
 }
 
-const DATING = PHONE.register({
-  id: 'dating', name: 'Знакомства без интимных фото верифицирующих личность',
-  theme: { bg: '#15101a', acc: '#ff4f7b', bar: 'rgba(255,79,123,.06)' },
-  icon(x) {                                          // белое пиксельное сердце на розово-красном
-    for (let y = 0; y < 16; y++) for (let i = 0; i < 16; i++) { const t = (i + y) / 30; x.fillStyle = `rgb(${255 - t * 40 | 0},${70 + t * 20 | 0},${120 - t * 50 | 0})`; x.fillRect(i, y, 1, 1) }
-    const H = ["................", "................", "................", "...WW.....WW....", "..WWWW...WWWW...", ".WWWWWW.WWWWWW..", ".WWWWWWWWWWWWW..", ".WWWWWWWWWWWWW..", "..WWWWWWWWWWW...", "...WWWWWWWWW....", "....WWWWWWW.....", ".....WWWWW......", "......WWW.......", ".......W........", "................", "................"];
-    H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#fff6f8'; x.fillRect(i + 1, y, 1, 1) } }));
-    x.fillStyle = 'rgba(255,255,255,.55)'; x.fillRect(4, 4, 2, 1); x.fillRect(3, 5, 1, 2);
+/* аватар Кудзуя-сан: лысина, седые виски, огромные круглые очки, клетчатый воротник */
+function kzAvatar() {
+  const c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d'), R = (col, a, b, w, h) => { x.fillStyle = col; x.fillRect(a, b, w, h) };
+  R('#e7c07a', 0, 0, 16, 16); R('#d4a861', 0, 10, 16, 6);
+  R('#a8352d', 2, 13, 12, 3); R('#4c1614', 4, 13, 1, 3); R('#4c1614', 11, 13, 1, 3); R('#cfa870', 7, 13, 2, 3);
+  R('#dcab84', 4, 3, 8, 10); R('#dcab84', 5, 2, 6, 1); R('#f0c7a2', 6, 3, 3, 1);
+  R('#dedbd4', 3, 5, 1, 4); R('#dedbd4', 12, 5, 1, 4);
+  for (const ox of [3, 8]) { R('#231a15', ox, 6, 5, 1); R('#231a15', ox, 9, 5, 1); R('#231a15', ox, 7, 1, 2); R('#231a15', ox + 4, 7, 1, 2); R('#c6dde4', ox + 1, 7, 3, 2); R('#1c120c', ox + 2, 7, 1, 2) }
+  R('#dedbd4', 6, 11, 4, 1); R('#9c5c4a', 7, 12, 2, 1);
+  return c.toDataURL();
+}
+const SMS = PHONE.register({
+  id: 'sms', name: 'Сообщения',
+  theme: { bg: '#0f1519', acc: '#2fbd63', bar: 'rgba(47,189,99,.07)' },
+  icon(x) {                                          // белое облачко сообщения на зелёном
+    for (let y = 0; y < 16; y++) for (let i = 0; i < 16; i++) { const t = (i + y) / 30; x.fillStyle = `rgb(${70 - t * 30 | 0},${215 - t * 60 | 0},${110 - t * 40 | 0})`; x.fillRect(i, y, 1, 1) }
+    const H = ["................", "................", "................", "....WWWWWWWW....", "..WWWWWWWWWWWW..", ".WWWWWWWWWWWWWW.", ".WWWWWWWWWWWWWW.", ".WWWWWWWWWWWWWW.", ".WWWWWWWWWWWWWW.", "..WWWWWWWWWWWW..", "...WWWWWWWWWW...", "...WWW..........", "..WW............", "................", "................", "................"];
+    H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#f4fff7'; x.fillRect(i, y, 1, 1) } }));
   },
-  st: null, wait: [],
-  load(cb) {                                          // состояние грузим один раз при запуске игры
-    if (this.st) return cb && cb();
-    if (!DT_PERSIST) { this.st = { v: 2, m: {} }; this.badge(); return cb && cb() }
-    if (cb) this.wait.push(cb); if (this.loading) return; this.loading = true;
-    stGet(['dating'], v => {
-      let s = null; try { s = v && v.dating ? JSON.parse(v.dating) : null } catch (_) { }
-      this.st = s && s.v === 2 ? s : { v: 2, m: {} };
-      this.badge(); this.wait.splice(0).forEach(f => f());
-    });
-  },
-  save() { if (!DT_PERSIST) return; try { stSet('dating', JSON.stringify(this.st)) } catch (_) { } },
-  unread() { return this.st ? Object.values(this.st.m).filter(m => m.nw).length : 0 },
+  m: {},                                             // переписки с неизвестных номеров: {c:[номера ответов], nw}
+  unread() { return (Q.nw ? 1 : 0) + Object.values(this.m).filter(m => m.nw).length },
   badge() {                                          // счётчик на значке приложения и точка на кнопке телефона
     const n = this.unread(), ic = PHONE.root.querySelector('.po-ic'); if (!ic) return;
     let s = ic.querySelector('sup'); if (n && !s) { s = document.createElement('sup'); ic.append(s) } if (s) { if (n) s.textContent = n; else s.remove() }
@@ -1640,96 +1638,65 @@ const DATING = PHONE.register({
     if (n && !dot) { if (getComputedStyle(tb).position === 'static') tb.style.position = 'relative'; dot = document.createElement('span'); dot.className = 'ph-dot'; tb.append(dot) }
     if (!n && dot) dot.remove();
   },
-  /* новая взаимная симпатия: телефон дважды вибрирует, в чатах появляется собеседница */
-  unlock(id) {
-    this.load(() => {
-      if (this.st.m[id]) return;
-      this.st.m[id] = { c: [], nw: true }; this.save(); this.badge();
-      const buzz = () => {
-        try { if (tg && tg.HapticFeedback) { tg.HapticFeedback.notificationOccurred('success'); setTimeout(() => tg.HapticFeedback.impactOccurred('heavy'), 140) } else if (navigator.vibrate) navigator.vibrate([180, 90, 180]) } catch (_) { }
-        if (iconFx.phone) iconFx.phone.shake = 1;
-      };
-      buzz(); setTimeout(buzz, 900);
-      if (this.page && this.page.refresh && !this.page.gone) this.page.refresh();
-    });
+  buzz() {                                           // телефон дважды вибрирует
+    const one = () => { try { if (tg && tg.HapticFeedback) { tg.HapticFeedback.notificationOccurred('success'); setTimeout(() => tg.HapticFeedback.impactOccurred('heavy'), 140) } else if (navigator.vibrate) navigator.vibrate([180, 90, 180]) } catch (_) { }
+      if (iconFx.phone) iconFx.phone.shake = 1 };
+    one(); setTimeout(one, 900);
   },
-  start(ctx) { this.load(() => this.main(ctx)) },
+  refresh() { if (this.page && this.page.refresh && !this.page.gone) this.page.refresh() },
+  unlock(id) {                                       // новый собеседник с неизвестного номера
+    if (this.m[id]) return;
+    this.m[id] = { c: [], nw: true }; this.badge(); this.buzz(); this.refresh();
+    toast('СМС с неизвестного номера…', 2);
+  },
+  start(ctx) { this.main(ctx) },
 
   main(ctx) {
-    const app = this, u = ctx.ui; let tab = 'chats';
+    const app = this, u = ctx.ui;
     app.page = ctx.push({ title: this.name, render(body, page) {
-      body.style.overflow = 'hidden'; body.style.position = 'relative';
-      const wrap = u.h('div', 'dt-wrap'), main = u.h('div', 'dt-main'), tabs = u.h('div', 'dt-tabs');
-      const tDeck = u.h('button', '', DT_DECK_LOCKED ? 'Анкеты 🔒' : 'Анкеты'), tChats = u.h('button', 'on', 'Чаты');
-      tabs.append(tDeck, tChats); wrap.append(main, tabs); body.append(wrap);
-      const show = t => { tab = t; tDeck.classList.toggle('on', t === 'deck'); tChats.classList.toggle('on', t === 'chats'); main.textContent = ''; t === 'deck' ? deck() : chats() };
-      tDeck.onclick = () => { haptic('light'); show('deck') }; tChats.onclick = () => { haptic('light'); show('chats') };
-      page.badge = () => { const n = app.unread(); tChats.innerHTML = 'Чаты' + (n ? `<sup>${n}</sup>` : ''); app.badge() };
-      page.refresh = () => { page.badge(); show(tab) };
-
-      function deck() {
-        const empty = (big, a, b) => { const e = u.h('div', 'dt-empty'); e.append(u.h('div', 'big', big), u.h('div', '', a), u.h('div', '', b)); main.append(e) };
-        if (DT_DECK_LOCKED) return empty('🔒', 'Анкеты временно недоступны.', 'Загляни в чаты — кажется, там кто-то есть.');
-        const left = DT_DECK.filter(g => !(app.st.seen || []).includes(g.id));
-        if (!left.length) return empty('🕳', 'Анкеты закончились.', 'Новые появятся позже.');
-        const dk = u.h('div', 'dt-deck'), btns = u.h('div', 'dt-btns'), no = u.h('button', 'n', '✕'), yes = u.h('button', 'y', '♥');
-        no.setAttribute('aria-label', 'Нет'); yes.setAttribute('aria-label', 'Лайк');
-        btns.append(no, yes); main.append(dk, btns);
-        const card = g => {
-          const c = u.h('div', 'dt-card'), info = u.h('div', 'dt-info'), name = u.h('b'), tg = u.h('div', 'dt-tags');
-          name.append(g.name + (g.age ? ', ' : '')); if (g.age) name.append(u.h('span', '', String(g.age)));
-          (g.tags || []).forEach(s => tg.append(u.h('i', '', s)));
-          info.append(name, u.h('p', '', g.bio || ''), tg);
-          c.append(dtPortrait(g), info, u.h('div', 'dt-stamp yes', 'ЛАЙК'), u.h('div', 'dt-stamp no', 'НЕТ'));
-          c.g = g; return c;
-        };
-        let top = null, under = null;
-        const fill = () => {
-          const l = DT_DECK.filter(g => !(app.st.seen || []).includes(g.id));
-          if (!l.length) { main.textContent = ''; deck(); return }
-          if (!top) { top = card(l[0]); dk.append(top) }
-          if (!under && l[1]) { under = card(l[1]); under.classList.add('under'); dk.prepend(under) }
-          drag(top);
-        };
-        const decide = like => {
-          if (!top || top.busy) return; top.busy = true; const c = top, g = c.g;
-          c.style.transform = `translateX(${like ? 140 : -140}%) rotate(${like ? 24 : -24}deg)`; haptic(like ? 'medium' : 'light');
-          (app.st.seen = app.st.seen || []).push(g.id);
-          if (like && g.match) app.unlock(g.id); else app.save();
-          setTimeout(() => { c.remove(); top = under; under = null; if (top) top.classList.remove('under'); fill() }, 260);
-        };
-        const drag = c => {
-          if (!c || c.dr) return; c.dr = true; let x0 = 0, dx = 0, id = null;
-          const yS = c.querySelector('.yes'), nS = c.querySelector('.no');
-          c.addEventListener('pointerdown', e => { if (c.busy) return; id = e.pointerId; x0 = e.clientX; dx = 0; c.classList.add('drag'); try { c.setPointerCapture(id) } catch (_) { } });
-          c.addEventListener('pointermove', e => { if (e.pointerId !== id) return; dx = e.clientX - x0; c.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`; yS.style.opacity = Math.max(0, Math.min(1, dx / 80)); nS.style.opacity = Math.max(0, Math.min(1, -dx / 80)) });
-          const up = e => { if (e.pointerId !== id) return; id = null; c.classList.remove('drag');
-            if (Math.abs(dx) > c.offsetWidth * .28) decide(dx > 0); else { c.style.transform = ''; yS.style.opacity = nS.style.opacity = 0 } };
-          c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
-        };
-        no.onclick = () => decide(false); yes.onclick = () => decide(true);
-        fill();
-      }
-      function chats() {
-        const ids = Object.keys(app.st.m).filter(id => DT_PEOPLE[id]);
-        if (!ids.length) { const e = u.h('div', 'dt-empty'); e.append(u.h('div', 'big', '💬'), u.h('div', '', 'Пока никто не написал.')); main.append(e); return }
-        const list = u.h('div'); list.style.cssText = 'flex:1;overflow-y:auto';
-        for (const id of ids) {
-          const g = DT_PEOPLE[id], m = app.st.m[id];
-          const sub = m.nw ? 'Найдена взаимная симпатия' : app.lastLine(id) || 'Найдена взаимная симпатия';
-          const r = u.row({ title: g.name, sub, avatar: dtPortrait(g).toDataURL(), on: () => app.chat(ctx, g, page) });
-          if (m.nw) { r.classList.add('dt-fresh'); r.querySelector('span div').append(u.h('b', 'dt-new')) }
-          list.append(r);
-        }
-        main.append(list);
-      }
-      page.badge(); show('chats');
+      const show = () => {
+        body.textContent = '';
+        const rows = [];
+        if (Q.s || Q.i > 0) rows.push({ title: 'Кудзуя-сан', sub: Q.nw ? 'Новое сообщение' : app.kzLast(), avatar: kzAvatar(), nw: Q.nw, on: () => app.kzChat(ctx, page) });
+        for (const id of Object.keys(app.m)) { const g = DT_PEOPLE[id]; if (!g) continue; const m = app.m[id];
+          rows.push({ title: g.name, sub: m.nw ? 'Новое сообщение' : app.lastLine(id) || '…', avatar: dtPortrait(g).toDataURL(), nw: m.nw, on: () => app.chat(ctx, g, page) }) }
+        if (!rows.length) { const e = u.h('div', 'dt-empty'); e.append(u.h('div', 'big', '💬'), u.h('div', '', 'Сообщений пока нет.')); body.append(e); return }
+        for (const r of rows) { const b = u.row(r); if (r.nw) { b.classList.add('dt-fresh'); b.querySelector('span div').append(u.h('b', 'dt-new')) } body.append(b) }
+      };
+      page.refresh = () => { app.badge(); show() };
+      page.badge = () => app.badge();
+      show();
     } });
   },
 
-  /* последняя реплика в переписке — для подписи в списке чатов */
+  /* переписка с Кудзуя-сан собирается из прогресса просьб: прочитанное — сразу, новое — с «печатает…» */
+  kzLast() {
+    const last = Q.s ? Q.i : Q.i - 1, q = QUESTS[last]; if (!q) return '';
+    const a = q.ask && q.ask[Q.a[last]]; if (a) return a.re ? a.re[a.re.length - 1] : 'Вы: ' + a.t;
+    return q.say[q.say.length - 1];
+  },
+  kzChat(ctx, parent) {
+    const app = this; Q.nw = false; app.badge();
+    const page = ctx.push({ title: 'Кудзуя-сан', render() { }, onBack() { parent.refresh && parent.refresh(); return false } });
+    const chat = ctx.ui.chat(page);
+    (async () => {
+      const last = Q.s ? Q.i : Q.i - 1;
+      for (let i = 0; i <= last && !page.gone; i++) {
+        const q = QUESTS[i], live = i > Q.seen && i === last;   // пропущенные старые просьбы — сразу, печатается только последняя
+        for (const t of q.say) { if (live) await chat.typing(Math.min(1700, 450 + t.length * 24)); if (page.gone) return; chat.say('them', t) }
+        if (i > Q.seen) Q.seen = i;
+        if (!q.ask) continue;
+        let n = Q.a[i], now = false;
+        if (n == null || !q.ask[n]) { if (i !== last) continue; n = await chat.ask(q.ask.map(a => a.t)); if (page.gone) return; Q.a[i] = n; now = true }
+        else chat.say('me', q.ask[n].t);
+        for (const t of q.ask[n].re || []) { if (now) await chat.typing(Math.min(1700, 450 + t.length * 24)); if (page.gone) return; chat.say('them', t) }
+      }
+    })();
+  },
+
+  /* последняя реплика в переписке с неизвестным номером — для подписи в списке */
   lastLine(id) {
-    const S = DT_SCRIPTS[id], m = this.st.m[id]; if (!S) return '';
+    const S = DT_SCRIPTS[id], m = this.m[id]; if (!S || !m) return '';
     let n = S.nodes[S.start], last = '';
     for (let k = 0; n; k++) {
       if (n.say && n.say.length) last = n.say[n.say.length - 1];
@@ -1738,14 +1705,12 @@ const DATING = PHONE.register({
     }
     return last;
   },
-
-  /* переписка: уже выбранные ответы проигрываются сразу, новые реплики собеседницы — с «печатает…» */
+  /* переписка по сценарию: уже выбранные ответы проигрываются сразу, новые реплики — с «печатает…» */
   chat(ctx, g, parent) {
-    const app = this, m = app.st.m[g.id], S = DT_SCRIPTS[g.id]; if (!m || !S) return;
-    m.nw = false; app.save(); parent.badge && parent.badge();
+    const app = this, m = app.m[g.id], S = DT_SCRIPTS[g.id]; if (!m || !S) return;
+    m.nw = false; app.badge();
     const page = ctx.push({ title: g.name, render() { }, onBack() { parent.refresh && parent.refresh(); return false } });
     const chat = ctx.ui.chat(page);
-    chat.say('sys', 'Найдена взаимная симпатия');
     (async () => {
       let id = S.start, k = 0;
       while (!page.gone) {
@@ -1756,14 +1721,14 @@ const DATING = PHONE.register({
         if (!ask.length) break;                          // конец написанного сценария
         let i = k < m.c.length ? m.c[k] : -1;
         if (i >= 0 && ask[i]) chat.say('me', ask[i].t);
-        else { m.c.length = k; i = await chat.ask(ask.map(a => a.t)); m.c.push(i); app.save() }
+        else { m.c.length = k; i = await chat.ask(ask.map(a => a.t)); m.c.push(i) }
         id = ask[i].to; k++;
         if (!id || !S.nodes[id]) break;
       }
     })();
   },
 });
-DATING.load();
+SMS.badge();
 
 function openPhone() {
   if (PH.on) return closePhone();
@@ -2322,7 +2287,9 @@ function ladTargets() {                                          // грани, 
 /* ---------- стартовый набор: стеллаж с лестницами и ящик с фонарём на верху левой стенки ---------- */
 const RACK = { x0: .27, x1: .82, z0: .86, z1: 2.84, top: 1.02 }, CRATE = { x0: .3, x1: .86, z0: 3.02, z1: 3.56, top: .46 };
 const KIT = { g: new THREE.Group(), rk: 4, lads: [] }; scene.add(KIT.g);
-const kitHit = (x, z, y) => (x > RACK.x0 && x < RACK.x1 && z > RACK.z0 && z < RACK.z1 && y < RACK.top - .05) || (x > CRATE.x0 && x < CRATE.x1 && z > CRATE.z0 && z < CRATE.z1 && y < CRATE.top - .05);
+const TBL = { x0: .76, x1: 1.44, z0: 3.8, z1: 4.6, top: .68 }, KZP = { x: .42, z: 4.24, ry: 1.25, r: .24 };   // стол Кудзуя-сан и где стоит он сам
+const kitHit = (x, z, y) => (x > RACK.x0 && x < RACK.x1 && z > RACK.z0 && z < RACK.z1 && y < RACK.top - .05) || (x > CRATE.x0 && x < CRATE.x1 && z > CRATE.z0 && z < CRATE.z1 && y < CRATE.top - .05)
+  || (x > TBL.x0 - .03 && x < TBL.x1 + .03 && z > TBL.z0 - .03 && z < TBL.z1 + .03 && y < TBL.top - .05) || (Math.hypot(x - KZP.x, z - KZP.z) < KZP.r && y < 1.1);
 { const kb = (g, x0, x1, y0, y1, z0, z1, c) => { const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), M(c)); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); g.add(m) };
   const r = new THREE.Group(), D = 0x6b4424, Dd = 0x4e301a, Lc = 0x8a5a30;
   for (const z of [RACK.z0, RACK.z1 - .07]) { kb(r, .3, .37, 0, 1, z, z + .07, D); kb(r, .7, .77, 0, .24, z, z + .07, D); kb(r, .3, .77, .02, .09, z, z + .07, Dd); kb(r, .3, .37, .45, .5, z - .005, z + .075, Dd) }
@@ -2358,6 +2325,101 @@ function useRack() {
   KIT.rk--; rackShow();
   const t = makeTrash('ladder', CH.x + CH.face.x * .35, CH.y + 1, CH.z + CH.face.z * .35, CH.yaw, -1); activate(t); grabItem(t);
 }
+/* ---------- стол и сам Кудзуя-сан на левой стенке, у дальнего края прохода ----------
+   стол массивный, квадратный, из тех же тёмных досок, что и дом; на столешнице — физика: вещь, положенная на стол, лежит.
+   Кудзуя-сан стоит за дальним углом стола и смотрит на проход, где ходит Кирью */
+const KZ = { g: new THREE.Group(), mod: null, busy: null, near: false, hint: 0 }; scene.add(KZ.g);
+{ const TW = new THREE.MeshLambertMaterial({ map: plankTex(23, [132, 92, 56], [100, 68, 40], [156, 112, 70]) }), TD = new THREE.MeshLambertMaterial({ map: plankTex(31, [98, 66, 38], [74, 48, 28], [118, 82, 48]) }), T = TBL;
+  const tb = (x0, x1, y0, y1, z0, z1, m, body) => { const o = hbox(x0, x1, y0, y1, z0, z1, m, null, body, KZ.g); o.castShadow = o.receiveShadow = true; o.userData.table = true; return o };
+  tb(T.x0 - .03, T.x1 + .03, T.top - .1, T.top, T.z0 - .03, T.z1 + .03, TW, false);         // толстая столешница с напуском
+  wall(T.x0 - .03, T.x1 + .03, T.top - .5, T.top, T.z0 - .03, T.z1 + .03);                  // для предметов стол — толстый брусок: тонкую доску они пролетают насквозь
+  tb(T.x0 + .03, T.x1 - .03, T.top - .19, T.top - .1, T.z0 + .03, T.z1 - .03, TD, false);   // царги
+  for (const [x, z] of [[T.x0 + .02, T.z0 + .02], [T.x1 - .15, T.z0 + .02], [T.x0 + .02, T.z1 - .15], [T.x1 - .15, T.z1 - .15]]) tb(x, x + .13, 0, T.top - .1, z, z + .13, TD, false);   // ноги-бруски
+  tb(T.x0 + .1, T.x1 - .1, .1, .16, (T.z0 + T.z1) / 2 - .035, (T.z0 + T.z1) / 2 + .035, TD, false);   // перекладина
+  for (const z of [T.z0 + .08, T.z1 - .08]) tb((T.x0 + T.x1) / 2 - .035, (T.x0 + T.x1) / 2 + .035, .1, .16, z - .06, z + .06, TD, false);
+  const cup = new THREE.Group(), cm = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });   // чашка чая у угла Кудзуя-сан
+  const c1 = new THREE.Mesh(new THREE.CylinderGeometry(.034, .028, .07, 8), cm(0x5f7f86)); c1.position.y = .035; cup.add(c1);
+  const c2 = new THREE.Mesh(new THREE.CylinderGeometry(.028, .028, .006, 8), cm(0x8a6a2a)); c2.position.y = .068; cup.add(c2);
+  const c3 = new THREE.Mesh(new THREE.CylinderGeometry(.036, .036, .012, 8), cm(0x3e5458)); c3.position.y = .006; cup.add(c3);
+  cup.position.set(T.x0 + .11, T.top, T.z0 + .11); cup.traverse(o => { if (o.isMesh) { o.castShadow = true; o.userData.table = true } }); KZ.g.add(cup);
+  KZ.mod = createKudzuya(THREE); KZ.mod.root.position.set(KZP.x, 0, KZP.z); KZ.mod.root.rotation.y = KZP.ry; KZ.g.add(KZ.mod.root);
+}
+const nearTable = (m = .75) => Math.hypot(Math.max(TBL.x0 - CH.x, 0, CH.x - TBL.x1), Math.max(TBL.z0 - CH.z, 0, CH.z - TBL.z1)) < m && Math.abs(CH.y) < .3;
+function putOnTable() {                                          // вещь из рук — на стол, в ближнюю к Кирью точку столешницы
+  const t = CH.held, b = t.body, up = t.local.max.y - t.local.min.y, m = .2;
+  const x = Math.max(TBL.x0 + m, Math.min(TBL.x1 - m, CH.x)), z = Math.max(TBL.z0 + m, Math.min(TBL.z1 - m, CH.z));
+  faceTo(x, z); b.position.set(x, TBL.top + up * .55 + .04, z); dropItem(); b.velocity.set(0, 0, 0);
+}
+function tableTap() {
+  if (!CH.held) { kzTalk(); return }
+  if (CH.held.type === 'ladder') { toast('Лестницу на стол? Кудзуя-сан не оценит', 0); return }
+  if (!nearTable()) { toast('Подойду к столу поближе', 0); return }
+  putOnTable();
+}
+function kzTalk() {                                              // тап по Кудзуя-сан или пустому столу — напомнит, что ему нужно
+  if (KZ.busy) return; const q = QUESTS[Q.i]; KZ.mod.play('nod');
+  kzSay(!Q.s ? 'Кирью-кун! Загляни потом в телефон.' : q.type ? `${cap(q.what)}, Кирью-кун. Положи на мой стол.` : q.idle);
+}
+function qSend() {                                               // Кудзуя-сан присылает следующую просьбу
+  if (Q.s || Q.i >= QUESTS.length) return;
+  Q.s = 1; Q.nw = true; SMS.badge(); SMS.buzz(); SMS.refresh();
+  if (!KZ.busy) KZ.mod.play('wave'); toast('СМС от Кудзуя-сан', 2);
+}
+function kzJudge(t) {                                            // на стол положили вещь
+  const q = QUESTS[Q.i];
+  if (Q.s && q && q.type === t.type) { kzTake(t); return }
+  KZ.mod.play('no'); kzSay(Q.s && q && q.type ? `Не то, Кирью-кун. Я жду ${q.acc}.` : 'Мне пока ничего не нужно, Кирью-кун.');
+}
+function kzTake(t) {                                             // забирает вещь: награда сразу (чтобы сохранение посреди анимации ничего не потеряло)
+  const q = QUESTS[Q.i], b = t.body, p = new THREE.Vector3(b.position.x, b.position.y, b.position.z);
+  Q.i++; Q.s = 0; addCoins(q.pay, p.x, p.y + .25, p.z); burst(p.x, p.y + .1, p.z, ['#f2c14e', '#fff6c8', '#d99a2b'], 12, .6); haptic('medium'); kzSay(q.got);
+  t.kz = true; b.type = CANNON.Body.KINEMATIC; b.collisionResponse = false; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+  KZ.busy = { t, p0: p }; KZ.g.updateMatrixWorld(true); KZ.mod.play('take', { target: KZ.mod.root.worldToLocal(p.clone()) });
+  setTimeout(qSend, 5500);
+}
+function stepTable(dt) {                                         // вещь улеглась на столе — Кудзуя-сан смотрит, что это
+  for (const t of trash) { if (!t.body || !t.active || t.held || t.mounted || t.kz) continue;
+    const p = t.body.position, on = p.x > TBL.x0 - .05 && p.x < TBL.x1 + .05 && p.z > TBL.z0 - .05 && p.z < TBL.z1 + .05 && p.y > TBL.top - .05 && p.y < TBL.top + .9;
+    if (!on) { t.onT = 0; t.tblSeen = false; continue }
+    if (t.tblSeen || KZ.busy) continue;
+    if (t.body.velocity.length() > .25) { t.onT = 0; continue }
+    t.onT = (t.onT || 0) + dt; if (t.onT < .35) continue;
+    t.tblSeen = true; kzJudge(t);
+  }
+}
+const _kh = new THREE.Vector3();
+function stepKZ(dt) {
+  const near = CH.state === 'walk' && Math.hypot(CH.x - KZP.x, CH.z - KZP.z) < 1.7 && Math.abs(CH.y) < .5, now = performance.now();
+  KZ.mod.update(dt, { near, px: CH.x - KZP.x, pz: CH.z - KZP.z });
+  if (near && !KZ.near && !KZ.busy && Q.s && QUESTS[Q.i].type && now - KZ.hint > 25000) { KZ.hint = now; kzSay(`Ну что, Кирью-кун? Нашёл ${QUESTS[Q.i].acc}?`) }
+  KZ.near = near;
+  const B = KZ.busy;
+  if (B) { const t = B.t, k = KZ.mod.k;
+    if (KZ.mod.act !== 'take' || k > .74) { removeTrash(t); KZ.busy = null }
+    else if (k > .18) { KZ.g.updateMatrixWorld(true); KZ.mod.hand.localToWorld(_kh.set(0, -.07, .02)); const e = Math.min(1, (k - .18) / .14), p = B.p0.clone().lerp(_kh, e * e * (3 - 2 * e)); t.body.position.set(p.x, p.y, p.z) } }
+  stepKzSay();
+}
+/* реплика Кудзуя-сан: такое же окошко, как у Кирью, только тёплого цвета, над его головой */
+{ const st = document.createElement('style'); st.textContent = `.say.kz{background:#2b1a12;color:#ffe9c4;box-shadow:0 0 0 2px #e9c88c,0 0 0 4px #2b1a12,0 6px 14px rgba(0,0,0,.45)}.say.kz::after{border-top-color:#e9c88c}.say.kz::before{background:#2b1a12}`; document.head.append(st) }
+const KZS = { el: null, s: '', t0: 0, end: 0, pos: new THREE.Vector3() };
+function kzSay(s) {
+  if (KZS.el) KZS.el.remove();
+  const el = document.createElement('div'); el.className = 'say kz in'; el.style.visibility = 'hidden'; el.append(document.createElement('span'), document.createElement('span')); el.children[1].className = 'r';
+  document.body.append(el); const t0 = performance.now(); Object.assign(KZS, { el, s, t0, end: t0 + Math.min(5000, 1500 + s.length * 60) });
+}
+function stepKzSay() {
+  const el = KZS.el; if (!el) return; const now = performance.now(), s = KZS.s, n = Math.min(s.length, Math.floor((now - KZS.t0) / 24));
+  if (el.firstChild.textContent.length !== n) { el.firstChild.textContent = s.slice(0, n); el.children[1].textContent = s.slice(n) }
+  if (now > KZS.end) { el.classList.remove('in'); el.classList.add('out'); setTimeout(() => el.remove(), 160); KZS.el = null; return }
+  if (PH.on || !SAY.ready) { el.style.visibility = 'hidden'; return }
+  KZ.mod.head.getWorldPosition(KZS.pos); KZS.pos.y += .42; KZS.pos.project(VCAM);
+  const W = innerWidth, H = innerHeight, bw = el.offsetWidth, bh = el.offsetHeight, x = (KZS.pos.x * .5 + .5) * W, y = (-KZS.pos.y * .5 + .5) * H;
+  if (KZS.pos.z > 1 || x < -bw || x > W + bw) { el.style.visibility = 'hidden'; return }
+  const cx = Math.max(bw / 2 + 8, Math.min(W - bw / 2 - 8, x)), cy = Math.max(bh + 70, Math.min(H - 20, y));
+  el.style.setProperty('--tx', Math.max(-bw / 2 + 12, Math.min(bw / 2 - 12, x - cx)) + 'px');
+  el.style.left = Math.round(cx - bw / 2) + 'px'; el.style.top = Math.round(cy - bh - 12) + 'px'; el.style.visibility = '';
+}
+
 /* ---------- по лестнице: хват снизу, лазание, вылезание наверх; сверху — разворот и спуск ----------
    фазы: grab (снизу берётся за ступеньки), climb (вверх-вниз джойстиком; отпустил — встаёт на ближайшую ступеньку),
    over (руки на край, колено на край, встал), mount (сверху: развернулся, спустил ноги — over задом наперёд), off (сошёл на дно) */
@@ -2570,7 +2632,31 @@ shopwrap.addEventListener('click', e => { if (e.target === shopwrap) closeShop()
 addEventListener('keydown', e => { if (e.code === 'Escape' && !shopwrap.hidden) closeShop() });
 
 /* ---------- чёрная толща под видимыми слоями: дальше свет всё равно не доходит ---------- */
-const under = new THREE.Mesh(new THREE.BoxGeometry(N, 60, N).translate(N / 2, -30, N / 2), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+const under = new THREE.Mesh(new THREE.BoxGeometry(N + 2, 60, N + 2).translate(N / 2 - 1, -30, N / 2 - 1), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+/* ---------- расширение участка: по два слоя декоративной земли за левой и правой стенками ----------
+   оно никогда не меняется, поэтому всё — один меш: верх и срезы с нашей стороны до самого низа мира; ниже видимых слоёв срезается шейдером */
+const EXT = (() => {
+  const cells = []; for (let i = -2; i < N; i++) for (let j = -2; j < N; j++) if (i < 0 || j < 0) cells.push([i, j]);
+  const pos = [], nrm = [], uv = [], idx = [], faces = [];
+  for (let z = 0; z <= BOT; z++) for (const [i, j] of cells) { if (blocks.has(i + ',' + j + ',' + z)) continue;   // задняя стенка лавки уже нарисована слоями
+    const k = z >= DIG ? 'К' : ['З', 'З1', 'З2'][hash(i, j, z)], open = [i === N - 1, z === 0, j === N - 1];
+    FT.forEach((ft, q) => { if (!open[q]) return;
+      const v0 = pos.length / 3, t = TILE[k][ft.tx], tu = (t % ATL_C) * ATL_T, tv = (t / ATL_C | 0) * ATL_T;
+      for (let v = 0; v < 4; v++) {
+        pos.push(ft.pos[v * 3] + i + .5, ft.pos[v * 3 + 1] - (z + .5) * BH, ft.pos[v * 3 + 2] + j + .5); nrm.push(ft.nrm[v * 3], ft.nrm[v * 3 + 1], ft.nrm[v * 3 + 2]);
+        uv.push((tu + .01 + ft.uv[v * 2] * (ATL_T - .02)) / atlC.width, 1 - (tv + .01 + (1 - ft.uv[v * 2 + 1]) * (ATL_T - .02)) / atlC.height) }
+      for (const x of ft.idx) idx.push(v0 + x);
+      faces.push({ i, j, z, f: ft.f, p: ft.pos }) }) }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pos.length).fill(1), 3)); g.setIndex(idx); g.computeBoundingSphere();
+  const mat = new THREE.MeshLambertMaterial({ map: atlas, vertexColors: true });
+  mat.onBeforeCompile = sh => { sh.uniforms.uMinY = clipU;
+    sh.vertexShader = 'varying float vWY;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWY = (modelMatrix * vec4(transformed, 1.0)).y;');
+    sh.fragmentShader = 'uniform float uMinY;\nvarying float vWY;\n' + sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\nif (vWY < uMinY) discard;') };
+  const mesh = new THREE.Mesh(g, mat); mesh.castShadow = mesh.receiveShadow = true; mesh.matrixAutoUpdate = false; mesh.frustumCulled = false; scene.add(mesh);
+  return { mesh, faces };
+})();
 under.matrixAutoUpdate = true; scene.add(under);
 /* ---------- цикл ---------- */
 /* ---------- замер производительности: тройной тап по счётчику слоя включает/выключает табличку ----------
@@ -2605,7 +2691,7 @@ function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now; timeU.value = now / 1000;
   for (const g of grabs.values()) stepHeld(g);
   stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held);
-  shopG.userData.mer.update(dt, { near: nearShop(), px: CH.x - MERCH.x, pz: CH.z - MERCH.z });
+  shopG.userData.mer.update(dt, { near: nearShop(), px: CH.x - MERCH.x, pz: CH.z - MERCH.z }); stepKZ(dt);
   const Tp = performance.now(); world.step(1 / 60, dt, 3); const Tq = performance.now();
   const sold = [];
   for (const t of trash) if (t.body) {
@@ -2620,6 +2706,7 @@ function frame(now) {
     if (!t.held && vy < -3) { t.falling = true; t.fallV = Math.min(t.fallV || 0, vy) } else if (!t.falling) t.fallV = 0;
   }
   for (const t of sold) basketTake(t);
+  stepTable(dt);
   stepParts(dt);
   // подсветка того, к чему можно приложить инструмент: блоки под кирку, гнёзда червей под лопатку или пустую банку
   const hl = new Set(); if (tool === 'pick' && !CH.held) for (let a = 0; a < ACT.length; a++) if (diggable(a, d[a]) && reach(a)) hl.add(ACT[a][0] + ',' + ACT[a][1] + ',' + d[a]);
@@ -2664,6 +2751,7 @@ if (GAME.rk == null) { const t = makeTrash('lantern', (CRATE.x0 + CRATE.x1) / 2,
 for (const key of GAME.lad || []) { const m = /^([LR])(\d),(\d+)$/.exec(key); if (m) mountLadder(m[1], +m[2], +m[3], true) }
 if (ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) { SHOP.revealed = true; lightDirty = true }
 if (GAME.w) buildWorms();
+if (!Q.s) setTimeout(qSend, 4500);                              // Кудзуя-сан пишет первым (или следующую просьбу после перезапуска)
 resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('viewportChanged', resize);
 window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs, LADS, KIT, mountLadder, KIRYU, LC, LAD };
 requestAnimationFrame(frame);
@@ -2708,7 +2796,7 @@ const SUP_TERMS = `1. «Поддержать автора» — добровол
    раз в 3 секунды сверяем «снимок» (монеты, раскопки, вещи вне дома с точностью 5 см); изменилось — пишем. Свернули игру — пишем сразу. */
 const GSAVE = { sig: '', busy: false, warned: false };
 function gameItems() {
-  return trash.filter(t => t.active && t.body && TYPES[t.type] && !inHouse(t.body.position))
+  return trash.filter(t => t.active && t.body && !t.kz && TYPES[t.type] && !inHouse(t.body.position))
     .map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') })
     .concat(CH.state === 'ladder' && (CH.lad.carry || CH.lad.ph === 'sling' || (CH.lad.ph === 'place' && !LADS.has(ladKey(CH.lad.C.s, CH.lad.C.k, CH.lad.ext.z)))) ? ['ladder,' + r3(CH.x) + ',' + r3(Math.max(.3, CH.y + .5)) + ',' + r3(CH.z) + ',0,0,0,1'] : []);   // лестница на боку
 }
@@ -2716,7 +2804,7 @@ async function saveGame(force, items) {
   if (!GAME.ok) { if (!GSAVE.warned) { GSAVE.warned = true; toast('Сохранение не загрузилось — прогресс этой сессии не запишется') } return false }
   if (GSAVE.busy || GAME.moving && !items) return false;          // переезд: пишем только запись нового участка, остальное ждёт перезагрузки
   const recs = items || gameItems();
-  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk };
+  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk, q: Q };
   const sig = JSON.stringify(head) + '|' + recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');
   if (!force && sig === GSAVE.sig) return true;
   const parts = []; let cur = '';
