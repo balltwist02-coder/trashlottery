@@ -880,7 +880,7 @@ function breakTrash(t) {
   box-shadow:0 0 0 2px #f4f1e8,0 0 0 4px #0b0b0d,0 6px 14px rgba(0,0,0,.45);pointer-events:none;transform-origin:50% 100%;white-space:pre-wrap;word-break:break-word}
 .say::after{content:'';position:absolute;left:calc(50% + var(--tx,0px) - 6px);bottom:-10px;width:0;height:0;border:6px solid transparent;border-top:6px solid #f4f1e8;border-bottom:0}
 .say::before{content:'';position:absolute;left:calc(50% + var(--tx,0px) - 3px);bottom:-5px;width:6px;height:5px;background:#0b0b0d;z-index:1}
-.say .n{color:#f2c14e;margin-left:6px}
+.say .n{color:#f2c14e;margin-left:6px}.say .r{color:transparent}
 .say.in{animation:sayin .16s steps(3) both}.say.out{animation:sayout .14s steps(2) both}
 @keyframes sayin{from{transform:translateY(6px) scale(.6);opacity:0}}@keyframes sayout{to{transform:translateY(-4px) scale(.8);opacity:0}}
 `; document.head.append(st) }
@@ -893,11 +893,11 @@ function toast(s, p = 1) {
   while (SAY.q.length > 4) { let w = 0; SAY.q.forEach((o, i) => { if (o.p <= SAY.q[w].p) w = i }); SAY.q.splice(w, 1) }   // лишняя — самая неважная из поздних
   if (!SAY.cur) sayNext();
 }
-function sayText() { const c = SAY.cur; if (!c) return; SAY.el.firstChild.textContent = c.s.slice(0, c.shown); SAY.el.lastChild.textContent = c.n > 1 ? '×' + c.n : '' }
+function sayText() { const c = SAY.cur; if (!c) return; const [a, r, n] = SAY.el.children; a.textContent = c.s.slice(0, c.shown); r.textContent = c.s.slice(c.shown); n.textContent = c.n > 1 ? '×' + c.n : '' }   // ненапечатанный хвост прозрачный — окошко сразу своего размера и не растёт
 function sayNext() {
   if (SAY.el) { const old = SAY.el; old.classList.remove('in'); old.classList.add('out'); setTimeout(() => old.remove(), 160); SAY.el = null }
   const m = SAY.q.shift(); SAY.cur = m || null; if (!m) return;
-  const el = document.createElement('div'); el.className = 'say in'; el.style.visibility = 'hidden'; /* покажем, когда встанет над головой */ el.append(document.createElement('span'), document.createElement('span')); el.lastChild.className = 'n';
+  const el = document.createElement('div'); el.className = 'say in'; el.style.visibility = 'hidden'; /* покажем, когда встанет над головой */ el.append(document.createElement('span'), document.createElement('span'), document.createElement('span')); el.children[1].className = 'r'; el.lastChild.className = 'n';
   document.body.append(el); SAY.el = el;
   m.t0 = performance.now(); m.shown = 0; m.read = 1100 + m.s.length * 55; m.end = m.t0 + Math.min(4200, m.read);
   sayText(); stepSay();
