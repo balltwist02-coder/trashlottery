@@ -882,7 +882,7 @@ function breakTrash(t) {
 .say::before{content:'';position:absolute;left:calc(50% + var(--tx,0px) - 3px);bottom:-5px;width:6px;height:5px;background:#0b0b0d;z-index:1}
 .say .n{color:#f2c14e;margin-left:6px}
 .say.in{animation:sayin .16s steps(3) both}.say.out{animation:sayout .14s steps(2) both}
-@keyframes sayin{from{transform:scale(.6);opacity:0}}@keyframes sayout{to{transform:scale(.7);opacity:0}}
+@keyframes sayin{from{transform:translateY(6px) scale(.6);opacity:0}}@keyframes sayout{to{transform:translateY(-4px) scale(.8);opacity:0}}
 `; document.head.append(st) }
 const SAY = { q: [], cur: null, el: null, pos: new THREE.Vector3() };
 function toast(s, p = 1) {
@@ -897,7 +897,7 @@ function sayText() { const c = SAY.cur; if (!c) return; SAY.el.firstChild.textCo
 function sayNext() {
   if (SAY.el) { const old = SAY.el; old.classList.remove('in'); old.classList.add('out'); setTimeout(() => old.remove(), 160); SAY.el = null }
   const m = SAY.q.shift(); SAY.cur = m || null; if (!m) return;
-  const el = document.createElement('div'); el.className = 'say in'; el.append(document.createElement('span'), document.createElement('span')); el.lastChild.className = 'n';
+  const el = document.createElement('div'); el.className = 'say in'; el.style.visibility = 'hidden'; /* покажем, когда встанет над головой */ el.append(document.createElement('span'), document.createElement('span')); el.lastChild.className = 'n';
   document.body.append(el); SAY.el = el;
   m.t0 = performance.now(); m.shown = 0; m.read = 1100 + m.s.length * 55; m.end = m.t0 + Math.min(4200, m.read);
   sayText(); stepSay();
@@ -913,7 +913,7 @@ function stepSay() {
   let x = (SAY.pos.x * .5 + .5) * W, y = (-SAY.pos.y * .5 + .5) * H;
   const cx = Math.max(bw / 2 + 8, Math.min(W - bw / 2 - 8, x)), cy = Math.max(bh + 70, Math.min(H - 20, y));
   el.style.setProperty('--tx', Math.max(-bw / 2 + 12, Math.min(bw / 2 - 12, x - cx)) + 'px');
-  el.style.transform = `translate(${Math.round(cx - bw / 2)}px,${Math.round(cy - bh - 12)}px)`;
+  el.style.left = Math.round(cx - bw / 2) + 'px'; el.style.top = Math.round(cy - bh - 12) + 'px'; el.style.visibility = '';   // позиция — через left/top, чтобы анимация появления (transform) её не сбивала
 }
 const mapwrap = document.getElementById('mapwrap'), mapbtn = document.getElementById('mapbtn'), mapclose = document.getElementById('mapclose');
 icon(XI, { k: '#10141f', x: '#e9f0ee' }, mapclose);
