@@ -156,7 +156,8 @@ export function createKiryu(THREE) {
   function ladderIK(L) {
     const S = L.S, rz = L.h - LP.rung, ry = U => (U - .5) * S - L.y;
     const top = (i, q) => [(i ? 1 : -1) * .2, .035 - L.y, L.h + q];                // ладонь на верху стенки, q — от края вглубь
-    const hand = (i, U) => U > 0 ? top(i, .14) : [(i ? 1 : -1) * LP.hx, ry(U) + .02, rz - .04];   // выше лестницы — ладонь на землю у края
+    const tU = L.topU || 0, rungH = (i, U) => [(i ? 1 : -1) * LP.hx, ry(U) + .02, rz - .04];
+    const hand = (i, U) => U > tU ? (tU === 0 ? top(i, .14) : rungH(i, tU)) : rungH(i, U);   // выше лестницы — ладонь на землю у края (или на верхнюю ступеньку)
     const foot = (i, U) => [(i ? 1 : -1) * LP.fx, ry(U) + .135, rz - .1];
     const way = (A, B, k, back) => { const e = sm(k), a = Math.sin(Math.PI * k); return [lr(A[0], B[0], e), lr(A[1], B[1], e) + .04 * a, lr(A[2], B[2], e) - back * a] };
     const rest = (n, f) => {                                                    // полушаг n: рука lead и противоположная нога переезжают на две ступеньки
@@ -165,7 +166,9 @@ export function createKiryu(THREE) {
       F[lead] = foot(lead, n + 1); F[1 - lead] = way(foot(1 - lead, n), foot(1 - lead, n + 2), mv, .14);
       return { H, F, lead };
     };
-    if (L.ph === 'climb') { const n = Math.floor(L.u); const r = rest(n, L.u - n); return { H: r.H, F: r.F, wa: [1, 1], wl: [1, 1] } }
+    if (L.ph === 'climb') { const n = Math.floor(L.u); const r = rest(n, L.u - n), H = r.H.slice();
+      if (L.hold) { const o = H[L.hold.i], w = L.hold.w; H[L.hold.i] = o.map((v, j) => v + (L.hold.p[j] - v) * w) }   // рука с лестницей
+      return { H, F: r.F, wa: [1, 1], wl: [1, 1] } }
     if (L.ph === 'grab' || L.ph === 'off') {
       const n = Math.round(L.ph === 'grab' ? L.u0 : L.u), r = rest(n, 0), k = L.k, ld = r.lead;
       if (L.ph === 'off') { const w = 1 - sm(k / .8); return { H: r.H, F: r.F, wa: [w, w], wl: [w, w] } }
@@ -315,7 +318,14 @@ export function createKiryu(THREE) {
   const scrM = new THREE.Mesh(B(.084, .165, .004), scr); scrM.position.z = .011; ph.add(scrM);
   const phL = new THREE.PointLight(0x8fdcff, 0, .7, 1.5); phL.position.set(0, 0, .12); ph.add(phL);
   ph.visible = false;
+  // лестница на левом боку на ремне через правое плечо: спина остаётся свободной под мешок
+  const sideLad = G(hips, .31, .12, -.05); sideLad.rotation.x = -.32;
+  { const s = G(sideLad); s.rotation.z = Math.PI / 2; const rl = new THREE.MeshLambertMaterial({ color: 0xd9a35c, flatShading: true }), rg = new THREE.MeshLambertMaterial({ color: 0xa8692f, flatShading: true });
+    const BH = .8165; for (const z of [-.2, .2]) P(s, B(BH, .07, .085), rl, 0, 0, z); for (const x of [-BH / 3, 0, BH / 3]) P(s, B(.065, .05, .33), rg, x, 0, 0);
+    const strap = new THREE.MeshLambertMaterial({ color: 0x3a2c24, flatShading: true }); P(chest, B(.03, .5, .03), strap, .02, .1, -.13, 0, 0, -.75); P(chest, B(.03, .5, .03), strap, .02, .1, .13, 0, 0, -.75);
+    sideLad.userData.strap = chest.children.slice(-2); sideLad.userData.inner = s }
+  sideLad.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }); sideLad.visible = false;
   const upd0 = update;
-  function update2(dt, st) { upd0(dt, st); const v = st.phone || 0; ph.visible = v > .02; phL.intensity = 2.5 * v * Math.PI }
-  return { root, update: update2, height: 1.5, head, LP };
+  function update2(dt, st) { upd0(dt, st); const v = st.phone || 0; sideLad.visible = !!st.sideLad; for (const m of sideLad.userData.strap) m.visible = !!st.sideLad; ph.visible = v > .02; phL.intensity = 2.5 * v * Math.PI }
+  return { root, update: update2, height: 1.5, head, LP, sideLad };
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu.js?v=6';
+import { createKiryu } from './kiryu.js?v=7';
 import { createMerchant } from './merchant.js?v=1';
 
 /* ===== 3D-версия: яма 4×4 на 20 слоёв, кубы из ваших тайлов, физика мусора ===== */
@@ -569,9 +569,9 @@ const TYPES = {
   skelLegs: { name: 'Ноги Егора Филатова', size: 1, mass: 1, build(g) { legsPart(g) }, shapes: SKEL_SHAPES.skelLegs },
   ladder: { name: 'Лестница', size: 2, mass: 1.2,                // высотой ровно в блок, три ступеньки
     build(g) { const rl = M(0xd9a35c), rg = M(0xa8692f);
-      for (const z of [-.2, .2]) part(g, new THREE.BoxGeometry(BH, .045, .05), rl, 0, .0225, z);
-      for (const x of [-BH / 3, 0, BH / 3]) part(g, new THREE.BoxGeometry(.04, .032, .36), rg, x, .0225, 0) },
-    shapes: () => [[new CANNON.Box(new CANNON.Vec3(BH / 2, .0225, .225)), [0, .0225, 0]]] },
+      for (const z of [-.2, .2]) part(g, new THREE.BoxGeometry(BH, .07, .085), rl, 0, .035, z);           // толстые брусья
+      for (const x of [-BH / 3, 0, BH / 3]) part(g, new THREE.BoxGeometry(.065, .05, .33), rg, x, .035, 0) },   // и широкие ступеньки
+    shapes: () => [[new CANNON.Box(new CANNON.Vec3(BH / 2, .035, .243)), [0, .035, 0]]] },
 };
 const trash = [];
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -847,7 +847,8 @@ function tap(e) {
   if (h && h.object.userData.deco && Math.hypot(h.point.x - BASKET.x, h.point.z - BASKET.z) < BASKET.r + .12) { if (CH.held && tool === 'glove') act(); else toast(CH.held ? 'Возьми перчатку и отпусти предмет над корзиной' : 'Корзина торговца: неси мусор в перчатке'); return }
   if (CH.held && CH.held.type === 'ladder' && h) {               // с лестницей в руках — тап по грани стенки вешает её туда
     if (h.object.userData.deco) { toast(LAD_WHY.shop, 0); return }
-    const L = ladFromHit(h); if (L) { const why = ladOk(L.s, L.k, L.z); if (why) toast(LAD_WHY[why], 0); else placeLadder(L.s, L.k, L.z); return }
+    const L = ladFromHit(h); if (L) { const why = ladOk(L.s, L.k, L.z), ex = why === 'far' ? ladExtWhy(L.s, L.k, L.z) : null;
+      if (!why) placeLadder(L.s, L.k, L.z); else if (ex === '') startExtend(L.s, L.k, L.z); else toast(ex || LAD_WHY[why], 0); return }
   }
   const t = h && h.object.userData.t;
   if (t && t.active && !t.held) {                              // тап по предмету рядом — применить инструмент именно к нему
@@ -1042,7 +1043,7 @@ function busy() { shakeTool(tool); toast('Руки заняты — сначал
 function act() {
   if (!tool) { haptic('warn'); return }
   if (CH.state === 'jump' || CH.state === 'fall' || CH.state === 'ladder') return;
-  if (CH.held && CH.held.type === 'ladder') { const L = ladderAhead(); if (L) { placeLadder(L.s, L.k, L.z); return } if (tool === 'glove' && rackNear()) { useRack(); return } }
+  if (CH.held && CH.held.type === 'ladder') { const L = ladderAhead(); if (L) { if (L.ext) startExtend(L.s, L.k, L.z); else placeLadder(L.s, L.k, L.z); return } if (tool === 'glove' && rackNear()) { useRack(); return } }
   if (CH.held && CH.held.type === 'tin') { const s = spotAhead(); if (s && s.state) { useSpot(s); return } }   // пустую банку — к разрыхлённым червям
   if (tool === 'glove') {                                      // перчатка: поднять предмет перед собой или поставить тот, что в руках
     if (CH.held) { dropItem(); return }
@@ -1109,7 +1110,8 @@ function carryPose(t) {
 /* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
 function lostItem(t) {
   const p = t.body.position, out = p.x < PIT0 - .2 || p.x > PIT1 + .2 || p.z < PIT0 - .2 || p.z > PIT1 + .2;
-  return (out && p.y < -.5) || p.y < Math.min(CH.y, 0) - 4;   // персонаж наверху в доме — вещи внизу не «потерялись»
+  if (out) return p.y < -.5;                                    // за краем ямы — только если упала ниже верха стенок
+  const a = cellAt(p.x, p.z); return a >= 0 ? p.y < floorY(a) - 1.2 : p.y < -(BOT + 1) * BH;   // в яме — только если провалилась сквозь пол своей клетки
 }
 function returnItem(t) {
   const b = t.body; b.position.set(CH.x, Math.min(1.5, CH.y + 9), CH.z);
@@ -1857,7 +1859,7 @@ function drawChar(dt, now) {
   chG.position.set(CH.x, CH.state === 'ladder' ? CH.yd : CH.y, CH.z);
   let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 10); chG.rotation.y = CH.yaw;
   CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
-  KIRYU.update(dt, { state: CH.state, moving: CH.moving, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, lad: CH.state === 'ladder' ? CH.lad.pose : null, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
+  KIRYU.update(dt, { state: CH.state, moving: CH.moving, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, lad: CH.state === 'ladder' ? CH.lad.pose : null, sideLad: CH.state === 'ladder' && !!CH.lad.carry, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
 }
 
 /* ---------- 3D-иконки инструментов: маленькие лоуполи-модели, рисуются отдельной камерой в пиксельный холст ----------
@@ -2221,7 +2223,7 @@ function fillTin(s) {                                           // пустая 
    вешает её на этот блок; перчаткой снимается обратно в руки. Вылезти из ямы можно, только если лестница висит на каждом блоке от дна клетки до верха.
    ступенька U — на высоте (U − ½)·S, S = BH/3: три ступеньки на блок. На лестнице Кирью стоит в LAD.OFF от стенки, лицом к ней.
    на верху левой стенки — стартовый набор: стеллаж с 4 лестницами и ящик с фонарём; на каждом новом участке — заново */
-const LAD = { S: BH / 3, OFF: .45, STAND: .0775, UP: 2.8, DN: 3.6, hint: false };
+const LAD = { S: BH / 3, OFF: .45, STAND: .065, UP: 2.8, DN: 3.6, hint: false };
 const LADS = new Map();                                          // 'L3,2' -> повешенная лестница (запись в trash с t.mounted, без физики)
 const ladKey = (s, k, z) => s + k + ',' + z;
 const ladFace = (s, k, z) => s === 'L' ? faceFrame(1, k, z, 0) : faceFrame(k, 1, z, 4);
@@ -2276,7 +2278,29 @@ function ladderAhead() {                                         // куда п�
   else if (Math.abs(CH.y) < .05) { if (CH.x > 1.2 && CH.x < PIT0 && CH.face.x > .7) { s = 'L'; k = Math.floor(CH.z) } else if (CH.z > 1.2 && CH.z < PIT0 && CH.face.z > .7) { s = 'R'; k = Math.floor(CH.x) } zs = [0] }
   if (!s) return null;
   for (const z of zs) if (ladOk(s, k, z) === '') return { s, k, z };
+  const zt = a >= 0 ? ladBottomTop(s, k) : null; if (zt && ladExtWhy(s, k, zt - 1) === '') return { s, k, z: zt - 1, ext: true };
   return null;
+}
+/* наращивание снизу: лестница в руках, Кирью стоит под цепочкой, которая стоит на дне. Тап по блоку сразу над её верхом —
+   Кирью вешает лестницу на левый бок (спина — под мешок), лезет, у верха снимает её с бока и вешает, потом спускается */
+function ladBottomTop(s, k) {                                     // верхний блок цепочки, которая стоит на дне клетки (или null)
+  const a = ladCol(s, k).a; if (a < 0) return null; const dd = d[a];
+  if (dd < 1 || !LADS.has(ladKey(s, k, dd - 1))) return null;
+  let zt = dd - 1; while (zt > 0 && LADS.has(ladKey(s, k, zt - 1))) zt--; return zt;
+}
+function ladExtWhy(s, k, z) {                                     // '' — можно нарастить цепочку до блока z
+  const zt = ladBottomTop(s, k); if (zt === null || zt === 0) return null;
+  const i = s === 'L' ? 1 : k, j = s === 'L' ? k : 1;
+  if (z !== zt - 1) return z < zt - 1 ? 'Сначала — блок прямо над лестницей' : null;
+  if (inShop(i, j, z)) return LAD_WHY.shop;
+  if (!hasB(i, j, z)) return LAD_WHY.no;
+  if (charCell() !== ladCol(s, k).a || CH.state !== 'walk') return 'Встань под эту лестницу';
+  return '';
+}
+function startExtend(s, k, z) {
+  const t = CH.held; t.held = false; CH.held = null; removeTrash(t);
+  const C = ladCol(s, k), dd = d[C.a], u0 = -3 * dd + 1;
+  ladStart(C, 'grab', { u0, y1: (u0 - .5) * LAD.S, side: 'bottom', ext: { z }, carry: true }); haptic('light');
 }
 function ladderInReach() {                                       // повешенная лестница перед Кирью, до которой он дотягивается
   let best = null, bd = 9;
@@ -2287,7 +2311,9 @@ function ladderInReach() {                                       // повеше
 }
 function ladTargets() {                                          // грани, куда сейчас можно повесить лестницу (для подсветки)
   const out = [], z0 = Math.max(0, Math.floor(-CH.y / BH) - 2);
-  for (const s of ['L', 'R']) for (let k = PIT0; k < PIT1; k++) for (let z = z0; z < z0 + 4; z++) if (ladOk(s, k, z) === '') out.push(s === 'L' ? '1,' + k + ',' + z : k + ',1,' + z);
+  for (const s of ['L', 'R']) for (let k = PIT0; k < PIT1; k++) {
+    for (let z = z0; z < z0 + 4; z++) if (ladOk(s, k, z) === '') out.push(s === 'L' ? '1,' + k + ',' + z : k + ',1,' + z);
+    const zt = ladBottomTop(s, k); if (zt && ladExtWhy(s, k, zt - 1) === '') out.push(s === 'L' ? '1,' + k + ',' + (zt - 1) : k + ',1,' + (zt - 1)) }
   return out;
 }
 /* ---------- стартовый набор: стеллаж с лестницами и ящик с фонарём на верху левой стенки ---------- */
@@ -2344,15 +2370,15 @@ function ladFrom(ad) {                                           // упёрли
   if (ad.x > .5 && CH.x > 1.2 && CH.x < PIT0) { s = 'L'; k = Math.floor(CH.z) } else if (ad.z > .5 && CH.z > 1.2 && CH.z < PIT0) { s = 'R'; k = Math.floor(CH.x) }
   return s && k >= PIT0 && k < PIT1 && LADS.has(ladKey(s, k, 0)) && d[ladCol(s, k).a] > 0 ? { s, k, from: 'top' } : null;
 }
-function tryLadder(s, k, from) {
+function tryLadder(s, k, from) {   // снизу — только по полной цепочке; сверху — по цепочке от верха
   if (CH.held) { toast('С вещью в руках по лестнице не залезть', 1); return false }
   const C = ladCol(s, k), dd = d[C.a]; if (C.a < 0 || dd < 1) return false;
   if (from === 'bottom') {
     let miss = 0; for (let z = 0; z < dd; z++) if (!LADS.has(ladKey(s, k, z))) miss++;
     if (miss) { toast(`До верха не хватает ${miss} ${miss === 1 ? 'лестницы' : 'лестниц'} — нужна на каждом блоке`, 1); return false }
-    const u0 = -3 * dd + 1; ladStart(C, 'grab', { u0, y1: (u0 - .5) * LAD.S }); haptic('light'); return true;
+    const u0 = -3 * dd + 1; ladStart(C, 'grab', { u0, y1: (u0 - .5) * LAD.S, side: 'bottom' }); haptic('light'); return true;
   }
-  const u0 = Math.max(-3, -3 * dd + 1, -(3 * (Math.min(ladChain(s, k), dd) - 1) + 2)); ladStart(C, 'mount', { u0, yTop: CH.y, y0: (u0 - .5) * LAD.S, h3: -.25 }); haptic('light'); return true;
+  const u0 = Math.max(-3, -3 * dd + 1, -(3 * (Math.min(ladChain(s, k), dd) - 1) + 2)); ladStart(C, 'mount', { u0, yTop: CH.y, y0: (u0 - .5) * LAD.S, h3: -.25, side: 'top' }); haptic('light'); return true;
 }
 function ladStart(C, ph, o) {
   CH.state = 'ladder'; CH.anim = null; CH.lt = 0; CH.yd = CH.y; CH.swing = 0;
@@ -2374,7 +2400,8 @@ function ladOverRoot(L, k) {                                     // путь к�
   const e = sm01((k - .62) / .38); return [lerp(.1, L.h3, e), lerp(L.yTop - .45, L.yTop, e)];
 }
 function ladPut(L, h, y, yd = y) { const [x, z] = L.C.at(h); CH.x = x; CH.z = z; CH.y = y; CH.yd = yd }
-function ladPose(L, ph, k) { L.pose = { ph, k, u: L.u, u0: L.u0, y: CH.yd, h: (L.C.s === 'L' ? CH.x : CH.z) - PIT0, S: LAD.S } }
+function ladPose(L, ph, k) { L.pose = { ph, k, u: L.u, u0: L.u0, y: CH.yd, h: (L.C.s === 'L' ? CH.x : CH.z) - PIT0, S: LAD.S, topU: L.topU || 0, hold: L.hold || null } }
+const toRoot = p => { const dx = p.x - CH.x, dy = p.y - CH.yd, dz = p.z - CH.z, c = Math.cos(CH.yaw), sn = Math.sin(CH.yaw); return [dx * c - dz * sn, dy, dx * sn + dz * c] };   // мир → координаты Кирью
 function ladEnd() { CH.state = 'walk'; CH.lad = null; CH.t = 0; CH.lt = 0 }
 function ladOver(L, u0) {
   const [ex, ez] = L.C.at(-.42), g = groundAt(ex, ez, .3);
@@ -2389,21 +2416,49 @@ function stepLadder(dt, iy) {
     if (L.u0 >= -3) ladOver(L, L.u0); else { L.ph = 'climb'; L.u = L.u0 }
   }
   if (L.ph === 'climb') {
-    let c = -iy; c = Math.abs(c) > .35 ? Math.sign(c) : 0; if (c) L.dir = c;
-    const dd = d[C.a], uLow = -3 * dd + 1, ch = ladChain(C.s, C.k), uBot = -(3 * (Math.min(ch, dd) - 1) + 2);
+    let c = -iy; c = Math.abs(c) > .35 ? Math.sign(c) : 0;
+    if (L.ext) c = 1; else if (c) L.auto = 0; else if (L.auto) c = L.auto;   // наращивает — лезет сам; после — сам спускается, пока не тронешь джойстик
+    if (c) L.dir = c;
+    const dd = d[C.a], uLow = -3 * dd + 1, ch = ladChain(C.s, C.k), full = ch >= dd, zt = ladBottomTop(C.s, C.k);
+    const uBot = L.side === 'bottom' || full ? uLow : -(3 * (Math.min(ch, dd) - 1) + 2);
+    const uMax = !full && L.side === 'bottom' && zt !== null ? Math.max(uLow, -3 * zt - 4) : null;   // по неполной цепочке снизу — до её верха
+    L.topU = uMax === null ? 0 : -3 * zt;
     let v = c > 0 ? LAD.UP : c < 0 ? -LAD.DN : 0, nu = L.u;
     if (!c && nu !== Math.round(nu)) v = L.dir > 0 ? LAD.UP : -LAD.DN;   // отпустили — дотягивается до ступеньки и замирает
     nu += v * dt;
     if (!c && v > 0 && Math.floor(nu) > Math.floor(L.u)) nu = Math.floor(nu);
     if (!c && v < 0 && Math.ceil(nu) < Math.ceil(L.u)) nu = Math.ceil(nu);
-    if (c > 0 && nu >= -3) { L.u = Math.max(-3, Math.round(L.u)); ladPut(L, LAD.OFF, (L.u - .5) * S); ladOver(L, L.u) }
+    if (uMax !== null && nu >= uMax) {
+      nu = uMax; L.u = uMax; ladPut(L, LAD.OFF, (uMax - .5) * S);
+      if (L.ext) { Object.assign(L, { ph: 'place', t: 0 }); }
+      else { ladPose(L, 'climb', 0); return }
+    }
+    else if (c > 0 && nu >= -3) { L.u = Math.max(-3, Math.round(L.u)); ladPut(L, LAD.OFF, (L.u - .5) * S); ladOver(L, L.u) }
     else if (c < 0 && nu <= uBot) {
       L.u = uBot; ladPut(L, LAD.OFF, (uBot - .5) * S);
-      if (ch >= dd) Object.assign(L, { ph: 'off', t: 0, y0: CH.y });
+      if (full || L.side === 'bottom') Object.assign(L, { ph: 'off', t: 0, y0: CH.y });
       else { ladEnd(); CH.state = 'fall'; CH.vy = 0; toast('Лестница кончилась!', 0); return }   // ниже лестниц нет — отпустил руки
     } else {
       L.u = Math.max(uBot, nu); const n = Math.floor(L.u); ladPut(L, LAD.OFF, (L.u - .5) * S, (n + sm01(L.u - n) - .5) * S); ladPose(L, 'climb', 0); return;
     }
+  }
+  if (L.ph === 'place') {                                       // снимает лестницу с бока и вешает на блок над цепочкой
+    L.t += dt / 1.4; const k = Math.min(1, L.t), F = ladFace(C.s, C.k, L.ext.z);
+    if (k < .3) { const p = new THREE.Vector3(); KIRYU.sideLad.userData.inner.getWorldPosition(p); L.hold = { i: 1, p: toRoot(p), w: sm01(k / .3) } }
+    else if (k < .78) {
+      if (!LAD.tmp) { const g = new THREE.Group(); TYPES.ladder.build(g); mergeParts(g); const SL = KIRYU.sideLad.userData.inner; SL.updateWorldMatrix(true, false); SL.getWorldPosition(g.position); SL.getWorldQuaternion(g.quaternion);
+        LAD.tmp = { g, p0: g.position.clone(), q0: g.quaternion.clone(), p1: F.c.clone().addScaledVector(F.n, LAD.STAND), q1: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(V3(0, 1, 0), F.n, F.u)) };
+        g.traverse(o => { if (o.isMesh) o.castShadow = true }); dimGroup(g, Math.max(.15, CH.br || 1), new Map()); scene.add(g); L.carry = false }
+      const T = LAD.tmp, e = sm01((k - .3) / .45);
+      T.g.position.lerpVectors(T.p0, T.p1, e).addScaledVector(F.n, .25 * Math.sin(Math.PI * e)); T.g.quaternion.slerpQuaternions(T.q0, T.q1, e);
+      const gp = T.g.position.clone().addScaledVector(F.u, .12).addScaledVector(F.n, .06); L.hold = { i: 1, p: toRoot(gp), w: 1 };
+    } else {
+      if (LAD.tmp) { scene.remove(LAD.tmp.g); LAD.tmp = null; mountLadder(C.s, C.k, L.ext.z, false); haptic('medium');
+        const p = onFace(F, 0, 0, .1); burst(p.x, p.y, p.z, ['#d9a35c', '#8c7a6a', '#5e4c42'], 8, .3) }
+      if (L.hold) L.hold.w = 1 - sm01((k - .78) / .22);
+    }
+    if (k >= 1) { L.hold = null; L.ext = null; L.ph = 'climb'; L.auto = -1; if (ladBottomTop(C.s, C.k) === 0) toast('Лестница до самого верха!', 1) }
+    ladPose(L, 'climb', 0); return;
   }
   if (L.ph === 'over') {
     L.t += dt / 1.15; const k = Math.min(1, L.t), [h, y] = ladOverRoot(L, k); ladPut(L, h, y);
