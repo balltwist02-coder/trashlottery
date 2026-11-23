@@ -213,7 +213,7 @@ export function createKiryu(THREE) {
       _q.copy(hips.quaternion).multiply(L.th.quaternion).multiply(L.kn.quaternion).invert(); L.an.quaternion.slerp(_q, w) });   // ступня — ровно
   }
   // ---------- мешок: достать из-за спины, расстелить на корточках, сидеть над полотном, связать узел и закинуть за спину ----------
-  // b.ph: pull — правая рука тянется за спину и выносит свёрток к груди; spread — садится на корточки и бросает полотно вперёд;
+  // b.ph: pull — правая рука тянется за спину и выносит свёрток к груди; spread — разворачивает плащ у груди, взмахивает вверх и, садясь на корточки, опускает его на пол, как скатерть;
   // squat — сидит над полотном; tie — руки сходятся к середине и вяжут узел; lift — встаёт и закидывает узел через правое плечо. b.k — доля фазы
   function squat(p) {
     Object.assign(p, { hipW: 1, hipY: .37, hipZ: -.07, hipX: 0, hipRx: .25, hipRy: 0, hipRz: 0, spRx: .34, spRy: 0, spRz: 0, chRx: .32, chRy: 0, chRz: .02 * Math.sin(time * 1.3),
@@ -228,12 +228,16 @@ export function createKiryu(THREE) {
     if (b.ph === 'pull') {                                         // за спину правой рукой — и к груди обеими
       const r = sm(k / .35) * (1 - sm((k - .55) / .3)); overShoulder(p, r);
       if (k > .55) { const w = sm((k - .55) / .35), q = Object.assign({}, p); holdChest(q, 0); holdChest(q, 1); mix(p, q, w, ARMK) }
-    } else if (b.ph === 'spread') {                                 // на корточки, свёрток — вперёд на пол
+    } else if (b.ph === 'spread') {                                 // как скатерть: развернул у груди, взмах вверх — и опускает вперёд, садясь на корточки
       const q = Object.assign({}, p); holdChest(q, 0); holdChest(q, 1); Object.assign(p, q);
-      mix(p, Q, sm(k / .55), BODYK);
-      const c = -(Q.hipRx + Q.spRx + Q.chRx), f = sm((k - .2) / .35);
-      for (const i of [0, 1]) { const s = i ? 1 : -1; p['ux' + i] = lr(p['ux' + i], c - 1.35, f); p['uz' + i] = lr(p['uz' + i], .18 * s, f); p['fx' + i] = lr(p['fx' + i], -.15, f); p['fz' + i] = lr(p['fz' + i], 0, f) }
-      if (k > .6) mix(p, Q, sm((k - .6) / .4), ARMK);
+      const down = sm((k - .4) / .35); mix(p, Q, down, BODYK);
+      const c = -(p.hipRx + p.spRx + p.chRx), a1 = sm(k / .16), a2 = sm((k - .14) / .26), a3 = sm((k - .4) / .3);
+      for (const i of [0, 1]) { const s = i ? 1 : -1;
+        p['ux' + i] = lr(lr(lr(c - 1.05, c - 1.35, a1), c - 2.6, a2), c - 1.5, a3); p['uy' + i] = 0;
+        p['uz' + i] = lr(lr(lr(.28, .52, a1), .4, a2), .34, a3) * s;
+        p['fx' + i] = lr(lr(lr(-.8, -.4, a1), -.12, a2), -.08, a3); p['fz' + i] = lr(-.35, 0, a1) * s }
+      p.hdRx += lr(-.15 * a2, .25, a3); p.chRx += -.12 * a2 * (1 - a3);   // голова и грудь — вслед за взмахом
+      if (k > .72) mix(p, Q, sm((k - .72) / .28), ARMK);
     } else if (b.ph === 'squat') Object.assign(p, Q);
     else if (b.ph === 'tie') {                                      // руки к середине полотна, вяжут узел
       Object.assign(p, Q); const c = -(Q.hipRx + Q.spRx + Q.chRx), w = sm(k / .2) * (1 - sm((k - .85) / .15));
@@ -361,11 +365,11 @@ export function createKiryu(THREE) {
     const strap = new THREE.MeshLambertMaterial({ color: 0x3a2c24, flatShading: true }); P(chest, B(.03, .5, .03), strap, .02, .1, -.13, 0, 0, -.75); P(chest, B(.03, .5, .03), strap, .02, .1, .13, 0, 0, -.75);
     sideLad.userData.strap = chest.children.slice(-2); sideLad.userData.inner = s }
   sideLad.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true }); sideLad.visible = false;
-  // мешок за спиной: кожаное полотно, связанное узлом-фуросики; концы перекинуты через плечи и завязаны на груди.
+  // мешок за спиной: бордовый плащ, связанный узлом-фуросики; концы перекинуты через плечи и завязаны на груди.
   // висит по центру спины — лестница на левом боку ему не мешает. Размер узла — от того, сколько в нём вещей
   const bagBack = G(chest, 0, .07, -.14);
   const bun = G(bagBack, 0, -.02, -.15);
-  { const LE = M(0x8c5a30), LD = M(0x6b4122), LL = M(0xa9733e), ST = M(0xe9c88c);
+  { const LE = M(0x6a1d24), LD = M(0x3a1014), LL = M(0x8e3036), ST = M(0xd8a64a);
     P(bun, B(.38, .28, .22), LE, 0, 0, 0); P(bun, B(.32, .34, .2), LE, 0, -.01, .005); P(bun, B(.3, .24, .27), LE, 0, 0, -.01);   // округлый узел из трёх брусков
     P(bun, B(.2, .16, .02), LL, -.05, .03, -.15); P(bun, B(.02, .22, .2), LD, .19, -.02, -.02);   // свет и тень на коже
     for (const [x, y, rz] of [[-.11, .02, .5], [.08, -.06, -.4], [.0, .09, .15]]) P(bun, B(.16, .012, .012), LD, x, y, -.145, 0, 0, rz);   // складки
@@ -373,7 +377,7 @@ export function createKiryu(THREE) {
     for (const s of [-1, 1]) P(bun, B(.07, .1, .05), LD, s * .06, .17, .03, 0, 0, s * .5);     // уголки узла торчат сверху
     P(bun, B(.09, .07, .07), LD, 0, .15, .02) }
   const bagStrap = G(chest);
-  { const CO = M(0x5a3820), KN = M(0x6b4122);
+  { const CO = M(0x3a1014), KN = M(0x6a1d24);
     for (const s of [-1, 1]) { P(bagStrap, B(.05, .03, .3), CO, s * .1, .2, -.02, -.15); P(bagStrap, B(.045, .2, .03), CO, s * .075, .1, .128, 0, 0, s * .35) }   // через плечи и вниз по груди
     P(bagStrap, B(.08, .065, .045), KN, 0, .02, .135); for (const s of [-1, 1]) P(bagStrap, B(.03, .07, .02), KN, s * .03, -.03, .14, 0, 0, s * .4) }   // узел на груди
   for (const g of [bun, bagStrap]) g.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu_demo.js?v=5';
+import { createKiryu } from './kiryu_demo.js?v=6';
 import { createMerchant } from './merchant.js?v=1';
 import { createKudzuya } from './kudzuya.js?v=1';
 
@@ -682,7 +682,8 @@ function lightSources() {
   for (const t of trash) { const L = TYPES[t.type].light; if (!L || !t.active || !t.body) continue;
     if (t.held) { out.push([Math.floor(CH.x), Math.floor(CH.z), Math.floor(-(CH.y + .9) / BH), L]); continue }   // в руках — светит там, где стоит Кирью
     const p = t.body.position; out.push([Math.floor(p.x), Math.floor(p.z), Math.floor(-(p.y + .05) / BH), L]) }
-  out.push([Math.floor(SHOP.lamp.x), Math.floor(SHOP.lamp.z), Math.floor(-SHOP.lamp.y / BH), 15]);   // фонарь в лавке (видно через открытый бок)
+  out.push([Math.floor(SHOP.lamp.x), Math.floor(SHOP.lamp.z), Math.floor(-SHOP.lamp.y / BH), 15]);
+  if (BAG.lit > 0) out.push([Math.floor(BAG.lp.x), Math.floor(BAG.lp.z), Math.floor(-(BAG.lp.y + .6) / BH), BAG.lit]);   // рабочий свет у расстеленного мешка   // фонарь в лавке (видно через открытый бок)
   return out;
 }
 function computeLight(src) {
@@ -752,7 +753,7 @@ function updateLight() {
     if (t.br === undefined || Math.abs(t.br - br) > .004) { t.br = br; if (!t.base) t.base = new Map(); dimGroup(t.g, br, t.base) } }
   { const mb = Math.min(1.7, .07 + 2.5 * lightAt(MERCH.x, SHOP.floor + .7, MERCH.z));
     if (shopG.br === undefined || Math.abs(shopG.br - mb) > .004) { shopG.br = mb; dimGroup(shopG.userData.mer.root, mb, merBase) } }
-  const cb = Math.max(.05, lightAt(CH.x, CH.y + .8, CH.z)) * (HOUSE.under ? .62 : 1);   // под полом дома — в тени    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
+  const cb = Math.max(.05, .5 * BAG.k, lightAt(CH.x, CH.y + .8, CH.z)) * (HOUSE.under ? .62 : 1);   // под полом дома — в тени    // Кирью совсем не пропадает во тьме — виден силуэт и огонёк каски
   if (CH.br === undefined || Math.abs(CH.br - cb) > .004) { CH.br = cb; dimGroup(chG, cb, chBase) }
 }
 function removeTrash(t) { scene.remove(t.g); if (t.body) world.removeBody(t.body); trash.splice(trash.indexOf(t), 1) }
@@ -1005,9 +1006,11 @@ function drawOutlines() {
   KIT.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
   KZ.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = o.userData.kz ? KZ_ID : DECO_ID } });   // Кудзуя-сан обведён, как Кирью
   saved.push([EXT.mesh, EXT.mesh.material]); EXT.mesh.material = ID_BLOCK;
-  for (const o of [BAG.flat, BAG.roll, BAG.hroll, ...BAG.hl]) { saved.push([o, o.material]); o.material = DECO_ID }
+  saved.push([BAG.flat, BAG.flat.material]); BAG.flat.material = BAG.idMat;
+  for (const o of BAG.hl) { saved.push([o, o.material]); o.material = DECO_ID }
+  BAG.hroll.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
   BAG.bun.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
-  [...BAG.items.map(it => it.t), ...(BAG.drag ? [BAG.drag.t] : [])].forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial(); t.idMat.color.setRGB((235 + k) / 255, 0, 0);   // вещи в мешке и в пальцах — свои номера
+  [...new Set([...BAG.items.map(it => it.t), ...(BAG.drag ? [BAG.drag.t] : [])])].forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial(); t.idMat.color.setRGB((235 + k) / 255, 0, 0);   // вещи в мешке и в пальцах — свои номера
     t.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = t.idMat } }) });
   const uv = under.visible; under.visible = false;
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
@@ -1017,7 +1020,7 @@ function drawOutlines() {
   const shV = shadow.visible; shadow.visible = false; for (const p of parts) p.m.visible = false;
   const dm = [DECO.moss, DECO.lich, WORM.mesh]; for (const m of dm) m.visible = false;   // мох, лишайник и черви обводки не получают
   renderer.setRenderTarget(idRT); renderer.clear(); renderer.render(scene, VCAM); renderer.setRenderTarget(null);
-  for (const [o, m] of saved) o.material = m; for (const m of vis) m.visible = true; under.visible = uv; shadow.visible = shV; for (const p of parts) p.m.visible = true; for (const m of dm) m.visible = true;
+  for (let i = saved.length - 1; i >= 0; i--) saved[i][0].material = saved[i][1]; for (const m of vis) m.visible = true; under.visible = uv; shadow.visible = shV; for (const p of parts) p.m.visible = true; for (const m of dm) m.visible = true;
   renderer.autoClear = false; renderer.render(olScene, cam); renderer.autoClear = true;
 }
 
@@ -2434,43 +2437,63 @@ function stepKzSay() {
   el.style.left = Math.round(cx - bw / 2) + 'px'; el.style.top = Math.round(cy - bh - 12) + 'px'; el.style.visibility = '';
 }
 
-/* ---------- мешок: кожаное полотно 2×3, которое Кирью расстилает на полу и связывает узлом за спиной ----------
+/* ---------- мешок: плащ-фуросики с сеткой 2×3, который Кирью расправляет на полу, как скатерть, и связывает узлом за спиной ----------
    выбрал мешок — сначала ищем, где его расстелить: прямоугольник перед Кирью должен лежать на ровном полу той же высоты,
    без стеллажа, стола, шины и без ничего над головой (ступеньки, низкий пролёт). Влезает прямо здесь — Кирью только
    разворачивается. Нет — ищем место в паре шагов на той же ровной площадке и доводим его туда; на ступеньке или
    на одиноком блоке такой площадки нет, и он просто говорит, что расстелить негде.
-   дальше: достаёт свёрток из-за спины, садится на корточки и бросает полотно вперёд, камера облетает его и смотрит
-   сверху; вещи с пола пальцем перетаскиваются в клетки (длинные — в две соседние). Свернуть — связывает углы узлом
-   и закидывает за спину; пустой мешок убирает в рюкзак. Всё, что сверху над полом выше 2,4 м, срезается ближней
-   плоскостью камеры, как у телефона, — облёт ни во что не врезается */
-const BAG = { CS: .42, BD: .08, NE: .58, RR: 2.7, LIFT: .28, CLIP: 2.4, ph: null, t: 0, k: 0, kT: 0, items: [], spot: null, drag: null, y0: 0, a: 0,
+   дальше: достаёт свёрток из-за спины, разворачивает у груди, взмахивает им вверх — плащ взлетает и опускается на пол;
+   камера в это время подлетает к Кирью, а когда плащ лёг — поднимается над передним углом участка и смотрит на слой под
+   60°. Вещи с пола пальцем перетаскиваются в клетки (длинные — в две соседние). Свернуть — связывает углы узлом
+   и закидывает за спину; пустой мешок убирает в рюкзак */
+const BAG = { CS: .5, NE: .45, RR: 2.7, LIFT: .3, CLIP: 2.4, ph: null, t: 0, k: 0, kT: 0, items: [], spot: null, drag: null, y0: 0, a: 0, lit: 0,
   f: new THREE.Vector3(0, 0, 1), c: new THREE.Vector3(), back: false, br: -1, store: new Map(), cam: new THREE.PerspectiveCamera(40, 1, .05, 300) };
-BAG.SW = 3 * BAG.CS + 2 * BAG.BD; BAG.SD = 2 * BAG.CS + 2 * BAG.BD;
-BAG.lamp = new THREE.PointLight(0xfff0d2, 0, 3.6, 1.4); BAG.lamp.position.set(0, .42, .3); KIRYU.head.add(BAG.lamp);
+BAG.SW = 2.0; BAG.SD = 1.5;                                       // плащ; сетка 3×2 клетки по 0,5 м — посередине, сверху воротник, снизу подол
+BAG.lamp = new THREE.PointLight(0xffe2b8, 0, 4.5, 1.2); BAG.lamp.position.set(0, .42, .3); KIRYU.head.add(BAG.lamp);
 const bagFill = () => BAG.items.reduce((n, it) => n + it.c.length, 0);
-/* полотно: тёмная кожа с крапинками, строчка по краю, белая сетка 2×3; 24 пикселя на клетку */
+/* плащ: тёмно-бордовая ткань с узором, золотая кайма, воротник с двумя застёжками, по сетке — светлая строчка; 48 пикселей на метр */
 const BAG_TEX = (() => {
-  const CP = 24, BP = 5, w = 3 * CP + 2 * BP, h = 2 * CP + 2 * BP, c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d');
+  const w = 96, h = 72, c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d');
+  const a = document.createElement('canvas'); a.width = w; a.height = h; const ax = a.getContext('2d'); ax.fillStyle = '#000'; ax.fillRect(0, 0, w, h);
   const nz = (px, py) => { let v = Math.imul(px * 374761393 + py * 668265263, 1274126177); v ^= v >>> 15; return (v >>> 0) / 4294967296 };
-  for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) { const e = px < BP || py < BP || px >= w - BP || py >= h - BP, n = nz(px, py);
-    x.fillStyle = e ? (n < .1 ? '#5a361c' : '#6b4122') : n < .05 ? '#7a4c27' : n < .09 ? '#9c6638' : '#8c5a30'; x.fillRect(px, py, 1, 1) }
-  x.fillStyle = '#e9c88c'; for (let px = 3; px < w - 3; px += 3) { x.fillRect(px, 2, 2, 1); x.fillRect(px, h - 3, 2, 1) } for (let py = 3; py < h - 3; py += 3) { x.fillRect(2, py, 1, 2); x.fillRect(w - 3, py, 1, 2) }
-  x.fillStyle = '#3e2412'; for (const [a, b] of [[0, 0], [w - 4, 0], [0, h - 4], [w - 4, h - 4]]) x.fillRect(a, b, 4, 4);   // уголки-завязки
-  x.fillStyle = '#f4f1e8'; x.fillRect(BP, BP, 3 * CP, 1); x.fillRect(BP, h - BP - 1, 3 * CP, 1); x.fillRect(BP, BP, 1, 2 * CP); x.fillRect(w - BP - 1, BP, 1, 2 * CP);   // белая сетка
-  for (const q of [1, 2]) x.fillRect(BP + q * CP, BP, 1, 2 * CP); x.fillRect(BP, BP + CP, 3 * CP, 1);
-  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t;
+  const half = py => py < 12 ? 30 + 14 * Math.sin(Math.PI / 2 * py / 12) : 44 + 4 * Math.min(1, (py - 12) / 40);   // плечи у воротника, книзу — шире
+  const inside = (px, py) => { const hw = half(py), dx = Math.abs(px + .5 - w / 2); if (dx > hw) return false;
+    if (py >= h - 6) { const k = (px % 8) - 3.5, cut = Math.abs(k) > 2.5 ? h - 2 : h; if (py >= cut) return false;   // подол фестонами
+      const cx = w / 2 - hw + 6, ex = Math.max(0, dx - (hw - 6)), ey = py - (h - 6); if (ex * ex + ey * ey > 36) return false }   // скруглённые нижние углы
+    return true };
+  const edge = (px, py) => !inside(px - 1, py) || !inside(px + 1, py) || !inside(px, py - 1) || !inside(px, py + 1);
+  const edge2 = (px, py) => !inside(px - 2, py) || !inside(px + 2, py) || !inside(px, py - 2) || !inside(px, py + 2);
+  for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) { if (!inside(px, py)) continue; const n = nz(px, py);
+    ax.fillStyle = '#fff'; ax.fillRect(px, py, 1, 1);
+    let col = n < .06 ? '#56161c' : n < .12 ? '#7e2830' : '#6a1d24';
+    if (((px + py) % 12 === 0 || (px - py + 600) % 12 === 0) && py > 10 && py < h - 8) col = '#7a252c';   // ромбы тканого узора
+    if (py < 10) col = n < .1 ? '#2a0c10' : '#38121a';                                                // воротник
+    if (edge(px, py)) col = '#3a1014'; else if (edge2(px, py)) col = n < .2 ? '#b98234' : '#d8a64a';   // кайма
+    x.fillStyle = col; x.fillRect(px, py, 1, 1) }
+  x.fillStyle = '#d8a64a'; for (let px = 20; px < 76; px++) if (inside(px, 10)) x.fillRect(px, 10, 1, 1);   // золотой шов под воротником
+  for (const cx of [40, 55]) { x.fillStyle = '#f2d27a'; x.fillRect(cx - 1, 3, 3, 3); x.fillStyle = '#8a5a1c'; x.fillRect(cx, 4, 1, 1) }   // застёжки
+  x.fillStyle = '#f0dcb0'; const G0 = 12, G1 = 84, V0 = 12, V1 = 60;                                // строчка сетки 3×2: пунктиром
+  for (let px = G0; px <= G1; px++) if (px % 3 !== 2) for (const py of [V0, (V0 + V1) / 2, V1]) x.fillRect(px, py, 1, 1);
+  for (let py = V0; py <= V1; py++) if (py % 3 !== 2) for (const px of [G0, G0 + 24, G0 + 48, G1]) x.fillRect(px, py, 1, 1);
+  const mk = cv => { const t = new THREE.CanvasTexture(cv); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; return t };
+  const t = mk(c); t.colorSpace = THREE.SRGBColorSpace; return { map: t, alpha: mk(a) };
 })();
 BAG.g = new THREE.Group(); BAG.g.visible = false; scene.add(BAG.g);
-{ const geo = new THREE.PlaneGeometry(BAG.SW, BAG.SD, 8, 6).rotateX(-Math.PI / 2);
+{ const geo = new THREE.PlaneGeometry(BAG.SW, BAG.SD, 10, 15).rotateX(-Math.PI / 2);   // ряд 0 — воротник, у Кирью (−z), подол — от него (+z)
   BAG.base = geo.attributes.position.array.slice();
-  BAG.flat = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: BAG_TEX, side: THREE.DoubleSide, flatShading: true })); BAG.flat.position.y = .012; BAG.flat.receiveShadow = true; BAG.flat.castShadow = true; BAG.g.add(BAG.flat);
-  const LEA = new THREE.MeshLambertMaterial({ color: 0x8c5a30, flatShading: true });
-  BAG.roll = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, BAG.SW, 10).rotateZ(Math.PI / 2), LEA); BAG.roll.castShadow = true; BAG.g.add(BAG.roll);
-  BAG.hroll = new THREE.Mesh(new THREE.CylinderGeometry(.065, .065, .34, 8).rotateZ(Math.PI / 2), LEA); BAG.hroll.castShadow = true; BAG.hroll.visible = false; scene.add(BAG.hroll);
-  BAG.hl = []; for (let c = 0; c < 6; c++) { const m = new THREE.Mesh(new THREE.PlaneGeometry(BAG.CS - .05, BAG.CS - .05).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7dff8a, transparent: true, opacity: .32, depthWrite: false }));
-    m.position.set(((c % 3) - 1) * BAG.CS, .02, ((c / 3 | 0) - .5) * BAG.CS); m.visible = false; m.renderOrder = 2; BAG.g.add(m); BAG.hl.push(m) }
+  BAG.flat = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: BAG_TEX.map, alphaMap: BAG_TEX.alpha, alphaTest: .5, side: THREE.DoubleSide, flatShading: true }));
+  BAG.flat.position.y = .012; BAG.flat.receiveShadow = true; BAG.flat.castShadow = true;
+  BAG.flat.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, alphaMap: BAG_TEX.alpha, alphaTest: .5, side: THREE.DoubleSide }); BAG.g.add(BAG.flat);
+  BAG.idMat = new THREE.MeshBasicMaterial({ color: DECO_ID.color.clone(), alphaMap: BAG_TEX.alpha, alphaTest: .5, side: THREE.DoubleSide });   // для обводки — по силуэту плаща
+  const LEA = new THREE.MeshLambertMaterial({ color: 0x6a1d24, flatShading: true }), LD = new THREE.MeshLambertMaterial({ color: 0x3a1014, flatShading: true }), LL = new THREE.MeshLambertMaterial({ color: 0x8e3036, flatShading: true });
+  // свёрток в руке, пока Кирью несёт его из-за спины к груди
+  const hr = new THREE.Group(), hb = (w, h, d, m, x, y, z) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.castShadow = true; hr.add(o) };
+  hb(.3, .13, .15, LEA, 0, 0, 0); hb(.26, .02, .155, new THREE.MeshLambertMaterial({ color: 0xd8a64a, flatShading: true }), 0, .05, 0); hb(.06, .14, .16, LD, .09, 0, 0);
+  BAG.hroll = hr; hr.visible = false; scene.add(hr);
+  BAG.hl = []; for (let c = 0; c < 6; c++) { const m = new THREE.Mesh(new THREE.PlaneGeometry(BAG.CS - .06, BAG.CS - .06).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7dff8a, transparent: true, opacity: .32, depthWrite: false }));
+    m.position.set(((c % 3) - 1) * BAG.CS, .022, ((c / 3 | 0) - .5) * BAG.CS); m.visible = false; m.renderOrder = 2; BAG.g.add(m); BAG.hl.push(m) }
   // узел, который едет с пола за спину (такой же, как у Кирью на спине)
-  const bun = new THREE.Group(), LD = new THREE.MeshLambertMaterial({ color: 0x6b4122, flatShading: true }), LL = new THREE.MeshLambertMaterial({ color: 0xa9733e, flatShading: true });
+  const bun = new THREE.Group();
   const bx = (w, h, d, m, x, y, z, rz = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.rotation.z = rz; o.castShadow = true; bun.add(o) };
   bx(.38, .28, .22, LEA, 0, 0, 0); bx(.32, .34, .2, LEA, 0, -.01, .005); bx(.3, .24, .27, LEA, 0, 0, -.01); bx(.2, .16, .02, LL, -.05, .03, -.15);
   for (const s of [-1, 1]) bx(.07, .1, .05, LD, s * .06, .17, .03, s * .5); bx(.09, .07, .07, LD, 0, .15, .02);
@@ -2484,7 +2507,7 @@ function bagSeat(it) {
   const along = cs.length === 2 ? (Math.abs(cs[1] - cs[0]) === 1 ? 'x' : 'z') : 'x';
   const sx = L.max.x - L.min.x, sy = L.max.y - L.min.y, sz = L.max.z - L.min.z, yaw = (sx >= sz) === (along === 'x') ? 0 : Math.PI / 2;
   const lx = yaw ? sz : sx, lz = yaw ? sx : sz, spX = (cs.length === 2 && along === 'x' ? 2 : 1) * CS - .07, spZ = (cs.length === 2 && along === 'z' ? 2 : 1) * CS - .07;
-  const s = Math.min(1, spX / lx, spZ / lz, .42 / sy);
+  const s = Math.min(1, spX / lx, spZ / lz, .45 / sy);
   t.g.scale.setScalar(s); t.g.quaternion.setFromAxisAngle(_UP, yaw);
   const com = t.com.clone().multiplyScalar(s).applyQuaternion(t.g.quaternion);
   t.g.position.set(cx - com.x, .02 - s * (t.com.y + L.min.y), cz - com.z);
@@ -2526,12 +2549,15 @@ const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)))
 function bagSpot() {
   const y0 = CH.y, yaw = Math.atan2(CH.face.x, CH.face.z), A = [];
   for (let k = 0; k < 16; k++) A.push(yaw + (k ? (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 8 : 0));   // сначала — куда он и так смотрит
-  for (const a of A) if (bagFits(CH.x, CH.z, a, y0)) return { x: CH.x, z: CH.z, a, walk: false };
+  const vl = Math.hypot(VIEW.x, VIEW.z), back = a => Math.max(0, -(Math.sin(a) * VIEW.x + Math.cos(a) * VIEW.z) / vl);   // плащ «от камеры» — Кирью заслонит клетки
+  const cost = a => angDiff(a, yaw) * .6 + back(a) * 1.4;
+  let here = null; for (const a of A) if (bagFits(CH.x, CH.z, a, y0) && (!here || cost(a) < here.cost)) here = { x: CH.x, z: CH.z, a, walk: false, cost: cost(a) };
+  if (here) return here;
   for (let r = .25; r < 1.8; r += .25) {                          // пара шагов по той же ровной площадке
     let best = null;
     for (let k = 0; k < 16; k++) { const b = k * Math.PI / 8, x = CH.x + Math.sin(b) * r, z = CH.z + Math.cos(b) * r;
       if (!bagPath(CH.x, CH.z, x, z, y0)) continue;
-      for (const a of A) if (bagFits(x, z, a, y0)) { const cost = angDiff(a, yaw) + angDiff(b, yaw) * .3; if (!best || cost < best.cost) best = { x, z, a, walk: true, cost }; break } }
+      for (const a of A) if (bagFits(x, z, a, y0)) { const c = cost(a) + angDiff(b, yaw) * .3; if (!best || c < best.cost) best = { x, z, a, walk: true, cost: c } } }
     if (best) return best;
   }
   return null;
@@ -2543,7 +2569,7 @@ function bagOpen() {
   if (CH.held) { shakeTool('bag'); toast('Руки заняты — сначала положи вещь', 0); return }
   const s = bagSpot(); if (!s) { shakeTool('bag'); toast('Тут мешок не расстелить — нужен ровный пол побольше', 1); return }
   joy.id = null; joy.x = joy.y = 0;
-  Object.assign(BAG, { spot: s, y0: CH.y, a: s.a, ph: s.walk ? 'go' : 'turn', t: 0 }); BAG.f.set(Math.sin(s.a), 0, Math.cos(s.a));
+  Object.assign(BAG, { spot: s, y0: CH.y, a: s.a, ph: s.walk ? 'go' : 'turn', t: 0, aside: null, fd: null }); BAG.f.set(Math.sin(s.a), 0, Math.cos(s.a));
   CH.state = 'bag'; bagOn = true; CH.moving = false; haptic('light');
 }
 function bagClose() {
@@ -2552,26 +2578,56 @@ function bagClose() {
   BAG.ph = 'tie'; BAG.t = 0; BAG.kT = 0; bagUI.classList.remove('on'); for (const m of BAG.hl) m.visible = false; haptic('light');
 }
 function bagEnd() { CH.state = 'walk'; bagOn = false; BAG.ph = null; CH.moving = false; CH.t = 0 }
-/* раскладка полотна на полу: перед Кирью, вещи с этого места отодвигаем к краю */
+/* раскладка плаща на полу: перед Кирью; вещи, на которые он ляжет, отодвигаем на ближайшее свободное место того же пола */
 function bagLay() {
   const f = BAG.f; BAG.c.set(CH.x, BAG.y0, CH.z).addScaledVector(f, BAG.NE + BAG.SD / 2);
   BAG.g.position.copy(BAG.c); BAG.g.rotation.set(0, BAG.a, 0); BAG.g.updateMatrixWorld(true);
-  const sx = Math.cos(BAG.a), sz = -Math.sin(BAG.a), hw = BAG.SW / 2 + .12, hd = BAG.SD / 2 + .12;
+  const sx = Math.cos(BAG.a), sz = -Math.sin(BAG.a), hw = BAG.SW / 2 + .1, hd = BAG.SD / 2 + .1;
+  const under = (x, z) => { const dx = x - BAG.c.x, dz = z - BAG.c.z; return Math.abs(dx * sx + dz * sz) < hw && Math.abs(dx * f.x + dz * f.z) < hd };
+  const taken = [];
   for (const t of trash) { if (!t.active || !t.body || t.held || t.mounted || t.kz || TYPES[t.type].heavy) continue;
-    const p = t.body.position; if (Math.abs(p.y - BAG.y0) > .8) continue;
-    const dx = p.x - BAG.c.x, dz = p.z - BAG.c.z, u = dx * sx + dz * sz, v = dx * f.x + dz * f.z; if (Math.abs(u) > hw || Math.abs(v) > hd) continue;
-    const eu = hw + .1 - Math.abs(u), ev = hd + .1 - Math.abs(v), nu = eu < ev ? Math.sign(u || 1) * (hw + .1) : u, nv = eu < ev ? v : Math.sign(v || 1) * (hd + .1);
-    p.x = BAG.c.x + sx * nu + f.x * nv; p.z = BAG.c.z + sz * nu + f.z * nv; t.body.velocity.set(0, 0, 0); t.body.wakeUp() }
+    const p = t.body.position; if (Math.abs(p.y - BAG.y0) > .8 || !under(p.x, p.z)) continue;
+    let best = null;                                              // кольцами вокруг плаща: ровный пол той же высоты, не под плащом, не у ног Кирью
+    for (let r = .15; r < 1.6 && !best; r += .15) for (let k = 0; k < 24; k++) { const b = k * Math.PI / 12, u = Math.cos(b) * (hw + r), v = Math.sin(b) * (hd + r);
+      const x = BAG.c.x + sx * u + f.x * v, z = BAG.c.z + sz * u + f.z * v;
+      if (under(x, z) || Math.hypot(x - CH.x, z - CH.z) < .45 || !bagFlat(x, z, BAG.y0) || taken.some(q => Math.hypot(q[0] - x, q[1] - z) < .22)) continue;
+      const dd = Math.hypot(x - p.x, z - p.z); if (!best || dd < best[2]) best = [x, z, dd] }
+    if (!best) continue;                                           // некуда — пусть лежит на плаще, его можно взять пальцем
+    taken.push(best); p.x = best[0]; p.z = best[1]; p.y = BAG.y0 + .2 + (t.local.max.y - t.local.min.y) / 2; t.body.velocity.set(0, 0, 0); t.body.angularVelocity.set(0, 0, 0); t.body.wakeUp() }
 }
-function bagShape(e, fold) {                                     // e — насколько раскатано полотно; fold — насколько связано в узел
-  BAG.flat.scale.z = Math.max(.02, e); BAG.flat.position.z = -BAG.SD / 2 * (1 - e);
-  const r = .065 * (1 - e) + .012; BAG.roll.visible = e < .999 && fold <= 0; BAG.roll.scale.set(1, r, r); BAG.roll.position.set(0, r, -BAG.SD / 2 + BAG.SD * e);
+function bagShape(fold) {                                        // плоский плащ; fold — насколько связан в узел
   const pos = BAG.flat.geometry.attributes.position, b = BAG.base, hx = BAG.SW / 2, hz = BAG.SD / 2;
   for (let i = 0; i < pos.count; i++) { const x0 = b[i * 3], z0 = b[i * 3 + 2], nx = x0 / hx, nz = z0 / hz, r2 = Math.min(1, (nx * nx + nz * nz) / 2), cr = (nx * nz) ** 2;
-    pos.setXYZ(i, x0 * (1 - .8 * fold), fold * (.28 * (1 - r2) + .34 * cr) + .02 * Math.sin(nz * 3 + e * 9) * (1 - e) * (1 - fold), z0 * (1 - .8 * fold)) }
+    pos.setXYZ(i, x0 * (1 - .82 * fold), fold * (.28 * (1 - r2) + .34 * cr), z0 * (1 - .82 * fold)) }
+  pos.needsUpdate = true; BAG.flat.geometry.computeVertexNormals();
+}
+/* плащ в руках: k — доля взмаха. Ближний край — в кистях Кирью, остальное — кривая в плоскости «вперёд-вверх»,
+   её наклон по длине меняется по ключам: висит → взлетает дугой вверх → парит → ложится. Ниже пола не проваливается */
+const _hl = new THREE.Vector3(), _hr = new THREE.Vector3();
+const lerp1 = (a, b, t) => a + (b - a) * t;
+function bagCloth(k, time) {
+  const g = BAG.g, H = KIRYU.hands, pos = BAG.flat.geometry.attributes.position, b = BAG.base, hz = BAG.SD / 2, hx = BAG.SW / 2, NR = 16, NC = 11;
+  g.updateMatrixWorld(true); H[0].getWorldPosition(_hl); H[1].getWorldPosition(_hr); g.worldToLocal(_hl); g.worldToLocal(_hr);
+  const rel = sm01((k - .72) / .16);                               // отпускает край у самого пола
+  const mz = lerp1((_hl.z + _hr.z) / 2, -hz, rel), my = lerp1((_hl.y + _hr.y) / 2 - .03, 0, rel), mx = lerp1((_hl.x + _hr.x) / 2, 0, rel);
+  const hand = lerp1(Math.max(.12, Math.abs(_hl.x - _hr.x) / 2), hx * .78, rel);   // ширина у ворота: между кистями
+  const len = BAG.SD * lerp1(.3, 1, sm01(k / .2));                 // сначала свёрнут — разворачивается у груди
+  const w01 = sm01((k - .12) / .26), w12 = sm01((k - .4) / .2), w23 = sm01((k - .58) / .28);
+  const th = u => { const T0 = -1.45 + .12 * u, T1 = 1.15 - 2.4 * u, T2 = .35 - .7 * u, T3 = 0;
+    let t = lerp1(lerp1(lerp1(T0, T1, w01), T2, w12), T3, w23);
+    t += .3 * Math.sin(9 * u - 16 * k) * u * sm01((k - .5) / .1) * (1 - sm01((k - .82) / .16));   // волна бежит к подолу и гаснет
+    return t };
+  const cz = [mz], cy = [my]; let z = mz, y = my; const ds = len / (NR - 1);
+  for (let r = 1; r < NR; r++) { const u = (r - .5) / (NR - 1), t = th(u); z += Math.cos(t) * ds; y += Math.sin(t) * ds; cz.push(z); cy.push(y) }
+  const air = (1 - sm01((k - .85) / .15)) * sm01((k - .1) / .1);
+  for (let i = 0; i < pos.count; i++) { const r = Math.round((b[i * 3 + 2] + hz) / BAG.SD * (NR - 1)), cn = b[i * 3] / hx, u = r / (NR - 1);
+    const wide = lerp1(hand, hx, sm01(u * 1.6 + rel));
+    const fl = air * (.05 * Math.sin(5 * cn + 11 * time + 4 * u) + .04 * Math.sin(7 * u - 9 * time)) * u;   // ткань полощется
+    pos.setXYZ(i, mx * (1 - u) + cn * wide, Math.max(.003 * u, cy[r] + fl), cz[r] + fl * .5) }
   pos.needsUpdate = true; BAG.flat.geometry.computeVertexNormals();
 }
 const _bp = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bq2 = new THREE.Quaternion();
+const BAG_PULL = .75, BAG_SPREAD = 2.1;
 function stepBag(dt, ix, iy) {
   const B = BAG; CH.moving = false;
   if ((B.ph === 'go' || B.ph === 'turn') && (Math.abs(ix) + Math.abs(iy) > .3)) { bagEnd(); return }   // игрок сам повёл Кирью — передумал
@@ -2580,31 +2636,32 @@ function stepBag(dt, ix, iy) {
     if (l <= st) { CH.x = B.spot.x; CH.z = B.spot.z; B.ph = 'turn' } else { CH.x += dx / l * st; CH.z += dz / l * st; CH.face.set(dx / l, 0, dz / l); CH.moving = true; CH.spd = 1 }
     return;
   }
-  if (B.ph === 'turn') { CH.face.copy(B.f); let d = B.a - CH.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); if (Math.abs(d) < .06) { B.ph = 'pull'; B.t = 0 } return }
-  CH.face.copy(B.f);
+  if (B.ph === 'turn') { CH.face.copy(B.f); let d = B.a - CH.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); if (Math.abs(d) < .06) { B.ph = 'pull'; B.t = 0; B.kT = 1; bagCamStart() } return }
+  CH.face.copy(B.fd || B.f);
   const H = KIRYU.hands, hand = H[0].getWorldPosition(_bp.set(0, 0, 0)).clone();
   if (B.ph === 'pull') {                                         // правая рука — за спину, свёрток — к груди
-    B.t += dt / .7; const k = Math.min(1, B.t);
+    B.t += dt / BAG_PULL; const k = Math.min(1, B.t);
     if (k > .35) { B.back = false; B.hroll.visible = true; const mid = H[1].getWorldPosition(new THREE.Vector3()).lerp(hand, .5);
-      B.hroll.position.copy(k < .6 ? hand.clone().add(new THREE.Vector3(0, -.08, 0)) : hand.lerp(mid, sm01((k - .6) / .3))); B.hroll.rotation.set(0, B.a, 0) }
-    if (k >= 1) { B.ph = 'spread'; B.t = 0; bagLay(); B.kT = 1 }
+      B.hroll.position.copy(k < .6 ? hand.clone().add(new THREE.Vector3(0, -.06, 0)) : hand.lerp(mid, sm01((k - .6) / .3))); B.hroll.rotation.set(0, B.a, 0) }
+    if (k >= 1) { B.ph = 'spread'; B.t = 0; bagLay() }
     return;
   }
-  if (B.ph === 'spread') {                                       // садится и бросает свёрток вперёд — полотно раскатывается от Кирью
-    B.t += dt / 1.05; const k = Math.min(1, B.t);
-    const mid = H[1].getWorldPosition(new THREE.Vector3()).lerp(hand, .5), edge = B.c.clone().addScaledVector(B.f, -B.SD / 2); edge.y = B.y0 + .08;
-    if (k < .38) { B.hroll.visible = true; B.hroll.position.copy(mid.lerp(edge, sm01((k - .12) / .26))); B.hroll.position.y += .18 * Math.sin(Math.PI * sm01((k - .12) / .26)) }
-    else { B.hroll.visible = false; B.g.visible = true }
-    const e = sm01((k - .38) / .5); if (k >= .38) bagShape(e, 0);
-    for (const it of B.items) it.t.g.visible = e > .85;
-    if (k >= 1) { B.ph = 'ui'; bagShape(1, 0); bagUI.classList.add('on'); bagCount(); if (!bagOpen.hint) { bagOpen.hint = true; toast('Перетаскивай вещи пальцем на полотно', 0) } }
+  if (B.ph === 'spread') {                                       // разворачивает у груди, взмах вверх — плащ взлетает и ложится на пол
+    B.t += dt / BAG_SPREAD; const k = Math.min(1, B.t);
+    B.hroll.visible = false; B.g.visible = true; bagCloth(k, performance.now() / 1000);
+    for (const it of B.items) it.t.g.visible = k > .9;
+    if (k >= 1) { B.ph = 'ui'; B.aside = bagAside(); bagShape(0); bagUI.classList.add('on'); bagCount(); if (!bagOpen.hint) { bagOpen.hint = true; toast('Перетаскивай вещи пальцем на плащ', 0) } }
     return;
   }
-  if (B.ph === 'ui') { bagDragStep(dt); return }
+  if (B.ph === 'ui') {
+    if (B.aside) { const dx = B.aside.x - CH.x, dz = B.aside.z - CH.z, l = Math.hypot(dx, dz), st = SPEED * .8 * dt;   // отходит к боку плаща
+      if (l <= st) { CH.x = B.aside.x; CH.z = B.aside.z; B.aside = null; const cx = B.c.x - CH.x, cz = B.c.z - CH.z, cl = Math.hypot(cx, cz) || 1; B.fd = new THREE.Vector3(cx / cl, 0, cz / cl) }
+      else { CH.x += dx / l * st; CH.z += dz / l * st; CH.face.set(dx / l, 0, dz / l); CH.moving = true; CH.spd = .8 } }
+    bagDragStep(dt); return }
   if (B.ph === 'tie') {                                          // углы — к середине, узел
     B.t += dt / 1.05; const k = Math.min(1, B.t), f = sm01(k / .85);
-    bagShape(1, f); for (const it of B.items) { it.t.g.visible = f < .55; it.t.g.scale.setScalar(it.s * Math.max(.01, 1 - f)) }
-    if (k >= 1) { B.ph = 'lift'; B.t = 0; B.g.visible = false; bagShape(1, 0); for (const it of B.items) bagSeat(it);
+    bagShape(f); for (const it of B.items) { it.t.g.visible = f < .55; it.t.g.scale.setScalar(it.s * Math.max(.01, 1 - f)) }
+    if (k >= 1) { B.ph = 'lift'; B.t = 0; B.g.visible = false; bagShape(0); for (const it of B.items) bagSeat(it);
       B.bun.visible = true; B.bun.scale.setScalar(.72 + .38 * bagFill() / 6); B.bun.position.copy(B.c).setY(B.y0 + .15); B.bun.rotation.set(0, B.a + Math.PI, 0) }
     return;
   }
@@ -2618,29 +2675,140 @@ function stepBag(dt, ix, iy) {
     if (k >= 1) bagEnd();
   }
 }
+/* плащ лёг «от камеры» — Кирью сидел бы между камерой и клетками; отходит к тому боку плаща, что дальше от камеры */
+function bagAside() {
+  const f = BAG.f, vl = Math.hypot(VIEW.x, VIEW.z); if ((f.x * VIEW.x + f.z * VIEW.z) / vl > -.3) return null;
+  const sx = Math.cos(BAG.a), sz = -Math.sin(BAG.a), sv = sx * VIEW.x + sz * VIEW.z;
+  for (const u of [1.2, 1.05, .92]) for (const s of sv > 0 ? [-1, 1] : [1, -1]) for (const v of [.55, .3, .8]) {   // сетка — до 0,75 м от оси, дальше подол
+    const x = CH.x + sx * s * u + f.x * v, z = CH.z + sz * s * u + f.z * v;
+    if (bagPath(CH.x, CH.z, x, z, BAG.y0)) return { x, z } }
+  return null;
+}
 /* поза для Кирью: на что он сейчас похож */
 function bagPoseNow() {
   const B = BAG; if (CH.state !== 'bag') return null;
   if (B.ph === 'pull') return { ph: 'pull', k: B.t }; if (B.ph === 'spread') return { ph: 'spread', k: B.t };
-  if (B.ph === 'ui') return { ph: 'squat', k: 0 }; if (B.ph === 'tie') return { ph: 'tie', k: B.t }; if (B.ph === 'lift') return { ph: 'lift', k: B.t };
+  if (B.ph === 'ui') return B.aside ? null : { ph: 'squat', k: 0 }; if (B.ph === 'tie') return { ph: 'tie', k: B.t }; if (B.ph === 'lift') return { ph: 'lift', k: B.t };
   return null;
 }
-/* ---------- облёт камеры: с обычного вида — дугой вверх и с разворотом — строго сверху на полотно ---------- */
+/* ---------- камера мешка ----------
+   пока Кирью достаёт и расправляет плащ — камера подлетает к нему (сбоку-спереди, откуда ничто не заслоняет);
+   плащ лёг — поднимается над передним углом участка и смотрит на слой под 60°, так, чтобы влезли плащ и весь пол вокруг;
+   свернул — возвращается в обычный изометрический вид. Все параметры камеры (куда смотрит, азимут, наклон, охват, перспектива)
+   догоняют цель двойной пружиной — разгон и торможение плавные, без рывков. Если между камерой и целью оказалась земля,
+   ближняя плоскость отсекает её, как у телефона */
+const BCK = ['tx', 'ty', 'tz', 'az', 'el', 'lv', 'pf'];
+const BC = { on: false, s: {}, v: {}, w: {}, u: {}, cu: null, ov: null, nf: 0, near: .05 };
+const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
+function bcIso() { const t = cam.position.clone().addScaledVector(VIEW, -60); return { tx: t.x, ty: t.y, tz: t.z, az: Math.atan2(VIEW.x, VIEW.z), el: Math.asin(VIEW.y), lv: Math.log(cam.top - cam.bottom), pf: 0 } }
+const bcFov = pf => 2 + 43 * pf;
+function bagLit(k) { BAG.lit = BAG.lp ? Math.round(sm01(k * 1.4) * 5) * 3 : 0 }   // рабочий свет у плаща: как фонарь послабее, ступенями — свет пересчитывается редко
+const bagClear = () => BC.on ? sm01((BC.s.pf - .15) / .5) : 0;
+function solidPt(x, y, z) {                                      // есть ли в точке земля (или стеллаж, ящик, стол)
+  if (kitHit(x, z, y)) return true; if (y >= 0) return false;
+  const i = Math.floor(x), j = Math.floor(z); if (i >= N || j >= N) return false; if (i < 0 || j < 0) return i >= -2 && j >= -2;
+  return solidAt(i, j, Math.floor(-y / BH));
+}
+const _bray = new THREE.Raycaster();
+function meshHit(T, P, skip) {                                   // дом, лестницы, стеллаж, стол, лавка — по настоящей геометрии
+  const d = P.clone().sub(T), L = d.length(); _bray.set(T, d.divideScalar(L)); _bray.near = skip; _bray.far = L;
+  const h = _bray.intersectObjects([houseG, KIT.g, KZ.g, shopG], true).find(h => h.object.visible); return h ? h.distance : Infinity;
+}
+function bagLos(T, P, skip = .35) {                              // от цели до камеры ничего нет
+  const d = P.clone().sub(T), L = d.length(), n = Math.ceil(L / .08);
+  for (let i = 0; i <= n; i++) { const s = i / n; if (s * L < skip) continue; if (solidPt(T.x + d.x * s, T.y + d.y * s, T.z + d.z * s)) return false }
+  return meshHit(T, P, skip) === Infinity;
+}
+const bcDir = (az, el) => new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+function bagCU() {                                               // крупный план: Кирью сбоку-спереди, плащ полетит поперёк кадра
+  const f = BAG.f, azf = Math.atan2(f.x, f.z), az0 = Math.atan2(VIEW.x, VIEW.z), T = new THREE.Vector3(CH.x, BAG.y0 + .95, CH.z).addScaledVector(f, .55), fov = 40;
+  const sd = new THREE.Vector3(f.z, 0, -f.x), C0 = new THREE.Vector3(CH.x, BAG.y0, CH.z), pts = [T, C0.clone().setY(BAG.y0 + .25), C0.clone().setY(BAG.y0 + 1.6),
+    C0.clone().setY(BAG.y0 + 1).addScaledVector(sd, .45), C0.clone().setY(BAG.y0 + 1).addScaledVector(sd, -.45), C0.clone().setY(BAG.y0 + .3).addScaledVector(f, BAG.NE + BAG.SD * .6)];
+  let best = null;
+  for (const vh of [3.3, 2.7]) { const r = vh / 2 / Math.tan(fov * Math.PI / 360);
+    for (let i = 0; i < 24; i++) { const az = az0 + i * Math.PI / 12; for (const el of [.45, .62, .8]) {
+      const P = T.clone().addScaledVector(bcDir(az, el), r); if (!pts.every(q => bagLos(q, P, .3))) continue;   // видно и Кирью целиком, и где ляжет плащ
+      const rel = wrapA(az - azf), sc = Math.cos(Math.abs(rel) - .8) * 1.5 - Math.abs(wrapA(az - az0)) * .25 - (el - .45) * .5 - (vh < 3 ? .25 : 0);   // спереди-сбоку ~45°: видно лицо и сам плащ, а не ребро ткани
+      if (!best || sc > best.sc) best = { sc, az, el, vh } } }
+    if (best) break }
+  if (!best) best = { az: az0, el: .9, vh: 3.3 };
+  return { az: best.az, el: best.el, lv: Math.log(best.vh), pf: (40 - 2) / 43 };
+}
+function bagOV() {                                               // общий план: азимут как у обычного вида, наклон 60°, влезают плащ, Кирью и пол слоя вокруг
+  const az = Math.atan2(VIEW.x, VIEW.z), el = Math.PI / 3, fov = bcFov(1), asp = W / H, tv = Math.tan(fov * Math.PI / 360), th = tv * asp;
+  const dir = bcDir(az, el), fw = dir.clone().negate(), rt = new THREE.Vector3().crossVectors(fw, _UP).normalize(), up = new THREE.Vector3().crossVectors(rt, fw);
+  const P = [], y0 = BAG.y0, ca = Math.cos(BAG.a), sa = Math.sin(BAG.a);
+  for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { const x = u * BAG.SW / 2, z = v * BAG.SD / 2; P.push(new THREE.Vector3(BAG.c.x + x * ca + z * sa, y0 + .1, BAG.c.z - x * sa + z * ca)) }
+  P.push(new THREE.Vector3(CH.x, y0 + 1.55, CH.z));
+  const rad = asp < .8 ? 1.2 : BAG.RR + .4;                        // на узком экране телефона — поближе: вещи крупнее, их удобно брать пальцем
+  ACT.forEach(([i, j], a) => { if (Math.abs(floorY(a) - y0) > .05 || Math.hypot(i + .5 - BAG.c.x, j + .5 - BAG.c.z) > rad) return;
+    for (const [x, z] of [[i, j], [i + 1, j], [i, j + 1], [i + 1, j + 1]]) P.push(new THREE.Vector3(x, y0, z)) });
+  const T = new THREE.Vector3(); for (const p of P) T.add(p); T.multiplyScalar(1 / P.length);
+  const MX = asp < .8 ? .94 : .86, YH = .8, YL = -.62;                             // снизу — место под кнопку и панель
+  let r = 3;
+  for (let pass = 0; pass < 2; pass++) {
+    r = 3; let lo = Infinity, hi = -Infinity;
+    for (const p of P) { const d = p.clone().sub(T), x = d.dot(rt), y = d.dot(up), z = d.dot(fw);
+      r = Math.max(r, Math.abs(x) / (th * MX) - z, y > 0 ? y / (tv * YH) - z : y / (tv * YL) - z) }
+    for (const p of P) { const d = p.clone().sub(T), y = d.dot(up), z = d.dot(fw); const ny = y / ((r + z) * tv); lo = Math.min(lo, ny); hi = Math.max(hi, ny) }
+    const hf = new THREE.Vector3(fw.x, 0, fw.z).normalize();       // по вертикали — в середину свободной части экрана: двигаем точку взгляда по полу, а не вниз сквозь него
+    T.addScaledVector(hf, ((lo + hi) / 2 - (YH + YL) / 2) * r * tv / hf.dot(up));
+  }
+  r = Math.min(r, 18);
+  return { tx: T.x, ty: T.y, tz: T.z, az, el, lv: Math.log(2 * r * tv), pf: 1 };
+}
+/* что-то между камерой и Кирью или плащом (земля, пол дома, перила) — ставим ближнюю плоскость сразу за ним, как у телефона;
+   но не дальше самого Кирью и плаща */
+function bagNear(c, T) {
+  const fw = new THREE.Vector3(); c.getWorldDirection(fw); const pts = [T], y0 = BAG.y0;
+  if (BAG.g.visible) { const ca = Math.cos(BAG.a), sa = Math.sin(BAG.a);
+    for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]) { const x = u * BAG.SW / 2, z = v * BAG.SD / 2; pts.push(new THREE.Vector3(BAG.c.x + x * ca + z * sa, y0 + .1, BAG.c.z - x * sa + z * ca)) } }
+  pts.push(new THREE.Vector3(CH.x, y0 + 1.5, CH.z), new THREE.Vector3(CH.x, y0 + .3, CH.z));
+  let need = 0, cap = Infinity;
+  for (const p of pts) { const dp = p.clone().sub(c.position).dot(fw); cap = Math.min(cap, dp - .25);
+    const d = c.position.clone().sub(p), L = d.length(); let h = Infinity;
+    for (let i = 1, m = Math.ceil(L / .08); i <= m; i++) { const s = i / m; if (s * L > .2 && solidPt(p.x + d.x * s, p.y + d.y * s, p.z + d.z * s)) { h = s * L; break } }
+    h = Math.min(h, meshHit(p, c.position, .2));
+    if (h < L) need = Math.max(need, p.clone().addScaledVector(d, h / L).sub(c.position).dot(fw) + .06) }
+  return Math.max(.05, Math.min(need, cap));
+}
+function bagCamStart() {
+  BAG.lp = new THREE.Vector3(CH.x, BAG.y0, CH.z).addScaledVector(BAG.f, BAG.NE + BAG.SD / 2);
+  if (!BC.on) { const s = bcIso(); BC.s = { ...s }; BC.w = { ...s }; BC.v = {}; BC.u = {}; for (const k of BCK) BC.v[k] = BC.u[k] = 0; BC.on = true }
+  BC.cu = bagCU(); BC.ov = null;
+}
+function bcGoal() {
+  const B = BAG, ph = B.ph;
+  if (ph === 'pull' || (ph === 'spread' && B.t < .8)) {
+    const k = ph === 'spread' ? B.t : 0, e = sm01((k - .3) / .5), T = new THREE.Vector3(CH.x, B.y0 + .95, CH.z).addScaledVector(B.f, .55);
+    T.lerp(B.c.clone().setY(B.y0 + .3), e);
+    return { tx: T.x, ty: T.y, tz: T.z, az: BC.cu.az, el: BC.cu.el + .15 * e, lv: BC.cu.lv + Math.log(1 + .35 * e), pf: BC.cu.pf, om: 3.6 } }
+  if (ph === 'spread' || ph === 'ui') { if (!BC.ov) BC.ov = bagOV(); return { ...BC.ov, om: 3.1 } }
+  return { ...bcIso(), om: 3.8 };
+}
 function stepBagCam(dt) {
-  const B = BAG; B.k = Math.max(0, Math.min(1, B.k + (B.kT > B.k ? dt / 1.1 : B.kT < B.k ? -dt / .85 : 0)));
-  B.lamp.intensity = 2.4 * Math.PI * sm01(B.k * 1.5);          // фонарь на каске светит на полотно
-  if (B.k <= 0 || PH.k > 0) return;
-  const e = ease3(B.k), f = B.f, asp = W / H;
-  const t1 = B.c.clone().addScaledVector(f, -.3); t1.y = B.y0 + .2;                // полотно сверху, Кирью у нижнего края
-  const vh1 = Math.min(8, Math.max(3.4, 3.8 / asp));
-  const az0 = Math.atan2(VIEW.x, VIEW.z), el0 = Math.asin(VIEW.y), az1 = Math.atan2(f.x, f.z), el1 = Math.PI / 2 - .24;   // чуть со стороны полотна: Кирью не заслоняет клетки, видна каска и лицо
-  let da = az1 - az0; da = Math.atan2(Math.sin(da), Math.cos(da));
-  const az = az0 + da * e + Math.sign(da || 1) * .35 * Math.sin(Math.PI * e), el = el0 + (el1 - el0) * sm01(e * 1.15);   // как в Персоне: с разворотом и лишним витком
-  const dir = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
-  const t0 = cam.position.clone().addScaledVector(VIEW, -60), tgt = t0.lerp(t1, e);
-  const h0 = cam.top - cam.bottom, vh = h0 * Math.pow(vh1 / h0, e), fov = 2 + 26 * e, dist = vh / 2 / Math.tan(fov * Math.PI / 360), c = B.cam;
-  c.fov = fov; c.aspect = asp; c.near = Math.max(.05, dist - (40 + (B.CLIP - .25 - 40) * e)); c.far = dist + 120; c.updateProjectionMatrix();
-  c.position.copy(tgt).addScaledVector(dir, dist); c.up.copy(_UP).lerp(f, sm01(e)).normalize(); c.lookAt(tgt); c.updateMatrixWorld();
+  const B = BAG; B.k = Math.max(0, Math.min(1, B.k + (B.kT > B.k ? dt / 1.1 : B.kT < B.k ? -dt / 1.2 : 0)));
+  B.lamp.intensity = 1.6 * Math.PI * sm01(B.k * 1.5);          // фонарь на каске светит на плащ
+  bagLit(B.k);
+  if (!BC.on) return;
+  const G = bcGoal(), om = G.om, S = BC.s, Wv = BC.w;
+  G.az = S.az + wrapA(G.az - S.az);
+  const n = Math.max(1, Math.ceil(dt / .01)), h = dt / n;           // двойная пружина: цель → w → s
+  for (let q = 0; q < n; q++) for (const k of BCK) {
+    const g = k === 'az' ? Wv.az + wrapA(G.az - Wv.az) : G[k];
+    BC.u[k] += (om * om * (g - Wv[k]) - 2 * om * BC.u[k]) * h; Wv[k] += BC.u[k] * h;
+    BC.v[k] += (om * om * (Wv[k] - S[k]) - 2 * om * BC.v[k]) * h; S[k] += BC.v[k] * h }
+  if (!B.ph) { const I = bcIso(); let near = true;
+    for (const k of BCK) if (Math.abs(k === 'az' ? wrapA(S[k] - I[k]) : S[k] - I[k]) > (k === 'pf' ? .004 : .003) || Math.abs(BC.v[k]) > .02) near = false;
+    if (near) { BC.on = false; VCAM = cam; return } }
+  if (PH.k > 0) return;
+  const fov = bcFov(Math.max(0, S.pf)), vh = Math.exp(S.lv), r = vh / 2 / Math.tan(fov * Math.PI / 360), c = B.cam, T = new THREE.Vector3(S.tx, S.ty, S.tz);
+  const dir = bcDir(S.az, S.el);
+  c.fov = fov; c.aspect = W / H; c.position.copy(T).addScaledVector(dir, r); c.up.copy(_UP); c.lookAt(T);
+  c.updateMatrixWorld();
+  let nr = Math.max(.05, r - 30);
+  if (r < 30) { if (BC.nf-- <= 0) { BC.nf = 2; BC.near = bagNear(c, T) } nr = Math.max(nr, BC.near) }
+  c.near = nr; c.far = r + 120; c.updateProjectionMatrix(); c.updateMatrixWorld();
   VCAM = c;
 }
 /* ---------- перетаскивание: вещи с пола — в клетки, из клеток — на пол или в другие клетки ---------- */
@@ -2682,7 +2850,7 @@ function bagMove(e) {
   D.pt.copy(p);
   const loc = BAG.g.worldToLocal(q.clone()), size = Math.min(2, TYPES[D.t.type].size || 1);
   D.cand = null; D.bad = null; D.floor = null;
-  if (Math.abs(loc.x) < BAG.SW / 2 && Math.abs(loc.z) < BAG.SD / 2) {
+  if (Math.abs(loc.x) < 1.5 * BAG.CS + .14 && Math.abs(loc.z) < BAG.CS + .14) {
     const col = Math.max(0, Math.min(2, Math.floor((loc.x + 1.5 * BAG.CS) / BAG.CS))), row = Math.max(0, Math.min(1, Math.floor((loc.z + BAG.CS) / BAG.CS))), c = row * 3 + col;
     const busy = new Set(); for (const it of BAG.items) if (it !== D.it) for (const x of it.c) busy.add(x);
     const u = loc.x - cellXZ(c)[0];
@@ -2720,10 +2888,10 @@ cv.addEventListener('pointerdown', e => { if (CH.state !== 'bag') return;
   e.stopImmediatePropagation(); if (BAG.ph === 'ui' && !BAG.drag) bagPick(e) }, true);
 cv.addEventListener('pointermove', e => { if (CH.state !== 'bag') return; e.stopImmediatePropagation(); if (BAG.drag && e.pointerId === BAG.drag.id) bagMove(e) }, true);
 for (const ev of ['pointerup', 'pointercancel']) cv.addEventListener(ev, e => { if (CH.state !== 'bag' && !BAG.drag) return; e.stopImmediatePropagation(); if (BAG.drag && e.pointerId === BAG.drag.id) bagDrop() }, true);
-/* свет на полотне и вещах в нём — как в этой точке пола */
+/* свет на плаще и вещах в нём — как в этой точке пола, но не темнее 0,62: его освещает фонарь на каске */
 function bagLight() {
-  if (!BAG.g.visible) return; const br = lightAt(BAG.c.x, BAG.y0 + .3, BAG.c.z); if (Math.abs(br - BAG.br) < .004) return; BAG.br = br;
-  dimGroup(BAG.flat, br, BAG.store); dimGroup(BAG.roll, br, BAG.store);
+  if (!BAG.g.visible) return; const br = Math.max(.62, lightAt(BAG.c.x, BAG.y0 + .3, BAG.c.z)); if (Math.abs(br - BAG.br) < .004) return; BAG.br = br;   // в темноте плащ не чернеет
+  dimGroup(BAG.flat, br, BAG.store);
   for (const it of BAG.items) { if (!it.t.base) it.t.base = new Map(); dimGroup(it.t.g, br, it.t.base); it.t.br = br }
 }
 
@@ -3001,7 +3169,7 @@ function frame(now) {
   shopG.userData.mer.update(dt, { near: nearShop(), px: CH.x - MERCH.x, pz: CH.z - MERCH.z }); stepKZ(dt);
   const Tp = performance.now(); world.step(1 / 60, dt, 3); const Tq = performance.now();
   const sold = [];
-  for (const t of trash) if (t.body) {
+  for (const t of trash) if (t.body && !t.inBag) {                // вещь в мешке физикой не двигаем (на всякий случай: в списке её быть не должно)
     if (!t.held) {
       if (winZone(t.body.position)) {                          // летит в корзину: продаём, когда опустится ниже края (или застрянет над ней)
         t.zoneT = (t.zoneT || 0) + dt; if (t.body.position.y < SHOP.floor + BASKET.h + .12 || t.zoneT > .8) { sold.push(t); continue } }
@@ -3035,7 +3203,7 @@ function frame(now) {
   renderer.shadowMap.needsUpdate = true;
   const T2 = performance.now();
   SAY.ready = true; stepSay();
-  renderer.setClearColor(0x07050a, BAG.k > 0 ? sm01((BAG.k - .35) / .5) : 0);   // над мешком срезанные стенки — тёмный фон, а не небо
+  renderer.setClearColor(0x07050a, bagClear());   // над мешком срезанные стенки — тёмный фон, а не небо
   renderer.render(scene, VCAM); perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
   const T3 = performance.now();
   drawOutlines();
@@ -3109,7 +3277,7 @@ const SUP_TERMS = `1. «Поддержать автора» — добровол
    раз в 3 секунды сверяем «снимок» (монеты, раскопки, вещи вне дома с точностью 5 см); изменилось — пишем. Свернули игру — пишем сразу. */
 const GSAVE = { sig: '', busy: false, warned: false };
 function gameItems() {
-  return trash.filter(t => t.active && t.body && !t.kz && TYPES[t.type] && !inHouse(t.body.position))
+  return trash.filter(t => t.active && t.body && !t.kz && !t.inBag && TYPES[t.type] && !inHouse(t.body.position))
     .map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') })
     .concat(BAG.drag && BAG.drag.from === 'floor' ? [[BAG.drag.t.type, r3(BAG.drag.p0.x), r3(BAG.drag.p0.y + .3), r3(BAG.drag.p0.z), 0, 0, 0, 1].join(',')] : [])   // вещь в пальцах над мешком
     .concat(CH.state === 'ladder' && (CH.lad.carry || CH.lad.ph === 'sling' || (CH.lad.ph === 'place' && !LADS.has(ladKey(CH.lad.C.s, CH.lad.C.k, CH.lad.ext.z)))) ? ['ladder,' + r3(CH.x) + ',' + r3(Math.max(.3, CH.y + .5)) + ',' + r3(CH.z) + ',0,0,0,1'] : []);   // лестница на боку
