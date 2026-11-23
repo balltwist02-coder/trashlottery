@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu.js?v=7';
+import { createKiryu } from './kiryu.js?v=8';
 import { createMerchant } from './merchant.js?v=1';
 import { createKudzuya } from './kudzuya.js?v=1';
 
@@ -87,14 +87,16 @@ icon(MAPI, { k: '#10141f', p: '#e7d7a4', P: '#c4ad74', g: '#5f9c4f', b: '#7a4836
 const XI = ["................", ".kk..........kk.", ".kxk........kxk.", "..kxk......kxk..", "...kxk....kxk...", "....kxk..kxk....", ".....kxkkxk.....", "......kxxk......", "......kxxk......", ".....kxkkxk.....", "....kxk..kxk....", "...kxk....kxk...", "..kxk......kxk..", ".kxk........kxk.", ".kk..........kk.", "................"];
 
 /* ---------- инструменты в кожаной сумке: телефон (пока неактивен), кирка, лом, перчатка, садовая лопатка ---------- */
-const TOOLS = ['phone', 'pick', 'bar', 'glove', 'trowel', null, null, null, null];
-const TOOL_NAME = { phone: 'Телефон', pick: 'Кирка', bar: 'Лом', glove: 'Перчатка', trowel: 'Садовая лопатка' };
+const TOOLS = ['phone', 'pick', 'bar', 'glove', 'trowel', 'bag', null, null, null];
+const TOOL_NAME = { phone: 'Телефон', pick: 'Кирка', bar: 'Лом', glove: 'Перчатка', trowel: 'Садовая лопатка', bag: 'Мешок' };
 const toolBtns = [...document.querySelectorAll('.tool')];
-let tool = null;
+let tool = null, bagOn = false;                            // bagOn — Кирью занят мешком
 const iconFx = {};                                         // тряска и подъём 3D-иконок
 for (const t of TOOLS) if (t) iconFx[t] = { shake: 0, lift: 0 };
 function shakeTool(t) { if (iconFx[t]) iconFx[t].shake = .4; haptic('warn') }
 function setTool(t) {
+  if (t === 'bag') { bagToggle(); return }
+  if (bagOn) { shakeTool(t); toast('Сначала сверну мешок', 0); return }
   if (t === 'phone') { openPhone(); return }
   tool = tool === t ? null : t; haptic('light');
   if (tool === 'trowel' && !setTool.tw) { setTool.tw = true; toast('Лопатка… ей рыхлят землю, где на стенке черви', 0) }
@@ -1003,6 +1005,10 @@ function drawOutlines() {
   KIT.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
   KZ.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = o.userData.kz ? KZ_ID : DECO_ID } });   // Кудзуя-сан обведён, как Кирью
   saved.push([EXT.mesh, EXT.mesh.material]); EXT.mesh.material = ID_BLOCK;
+  for (const o of [BAG.flat, BAG.roll, BAG.hroll, ...BAG.hl]) { saved.push([o, o.material]); o.material = DECO_ID }
+  BAG.bun.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = DECO_ID } });
+  [...BAG.items.map(it => it.t), ...(BAG.drag ? [BAG.drag.t] : [])].forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial(); t.idMat.color.setRGB((235 + k) / 255, 0, 0);   // вещи в мешке и в пальцах — свои номера
+    t.g.traverse(o => { if (o.isMesh) { saved.push([o, o.material]); o.material = t.idMat } }) });
   const uv = under.visible; under.visible = false;
   trash.forEach((t, k) => { if (!t.idMat) t.idMat = new THREE.MeshBasicMaterial();
     t.idMat.color.setRGB((k % 250 + 1) / 255, 0, 0);
@@ -1049,6 +1055,7 @@ function digCell(a) {
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
   if (!tool) { haptic('warn'); return }
+  if (CH.state === 'bag') return;
   if (CH.state === 'ladder') { ladPlaceTap(null); return }
   if (CH.state === 'jump' || CH.state === 'fall') return;
   if (CH.held && CH.held.type === 'ladder') { const L = ladderAhead(); if (L) { placeLadder(L.s, L.k, L.z); return } if (tool === 'glove' && rackNear()) { useRack(); return } }
@@ -1775,6 +1782,7 @@ function stepChar(dt) {
   const dir = SCR_R.clone().multiplyScalar(ix).addScaledVector(G_UP, -iy); dir.y = 0;
   if (PH.on) dir.set(0, 0, 0);                                // телефон открыт — стоит на месте
   const m = Math.min(1, dir.length()); if (m > 0) dir.normalize(); CH.spd = m;
+  if (CH.state === 'bag') { stepBag(dt, ix, iy); chP.position.set(CH.x, CH.y + .72, CH.z); chP.velocity.set(0, 0, 0); return }   // мешок: подходит, расстилает, сидит над ним
   if (CH.state === 'ladder') { stepLadder(dt, PH.on ? 0 : iy); chP.position.set(CH.x, CH.y + .72, CH.z); chP.velocity.set(0, 0, 0); return }
   const fl0 = groundAt(CH.x, CH.z, CH.y), fl = fl0 === null ? CH.y : fl0;   // яма, верх стенок, лестница, дом
   const p0x = CH.x, p0z = CH.z, p0y = CH.y;
@@ -1825,7 +1833,7 @@ function drawChar(dt, now) {
   chG.position.set(CH.x, CH.state === 'ladder' ? CH.yd : CH.y, CH.z);
   let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 10); chG.rotation.y = CH.yaw;
   CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
-  KIRYU.update(dt, { state: CH.state, moving: CH.moving, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, lad: CH.state === 'ladder' ? CH.lad.pose : null, sideLad: CH.state === 'ladder' && !!CH.lad.carry, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
+  KIRYU.update(dt, { state: CH.state === 'bag' ? 'walk' : CH.state, moving: CH.moving, bag: bagPoseNow(), bagBack: BAG.back ? bagFill() / 6 : null, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, lad: CH.state === 'ladder' ? CH.lad.pose : null, sideLad: CH.state === 'ladder' && !!CH.lad.carry, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
 }
 
 /* ---------- 3D-иконки инструментов: маленькие лоуполи-модели, рисуются отдельной камерой в пиксельный холст ----------
@@ -1877,6 +1885,12 @@ const ICON3D = {
     icPart(s, IB(.04, .32, .05), 0x8e989f, 0, .02, .015);               // ребро жёсткости
     for (const x of [-.18, .18]) icPart(s, IB(.035, .22, .07), 0xa9b4bd, x, -.05, .025, x > 0 ? .12 : -.12);   // загнутые бортики
     g.rotation.set(.35, .55, -.6); return g },
+  bag() { const g = new THREE.Group();                                   // кожаный узел-фуросики, уголки торчат сверху
+    icPart(g, IB(.7, .5, .42), 0x8c5a30, 0, -.12, 0); icPart(g, IB(.58, .62, .38), 0x8c5a30, 0, -.14, .01); icPart(g, IB(.5, .42, .5), 0x8c5a30, 0, -.1, -.01);
+    icPart(g, IB(.32, .22, .02), 0xa9733e, -.1, -.02, .26); icPart(g, IB(.04, .4, .36), 0x6b4122, .34, -.14, 0);
+    for (const s of [-1, 1]) icPart(g, IB(.14, .26, .1), 0x6b4122, s * .11, .26, .02, s * .5); icPart(g, IB(.18, .13, .13), 0x5a361c, 0, .2, .02);
+    for (let k = 0; k < 5; k++) icPart(g, IB(.05, .02, .02), 0xe9c88c, -.24 + k * .12, -.33, .23);
+    g.rotation.set(.25, .5, 0); return g },
 };
 const icObj = {};
 for (const t of TOOLS) if (t) { icObj[t] = ICON3D[t](); icObj[t].userData.base = icObj[t].rotation.clone(); }
@@ -2420,6 +2434,299 @@ function stepKzSay() {
   el.style.left = Math.round(cx - bw / 2) + 'px'; el.style.top = Math.round(cy - bh - 12) + 'px'; el.style.visibility = '';
 }
 
+/* ---------- мешок: кожаное полотно 2×3, которое Кирью расстилает на полу и связывает узлом за спиной ----------
+   выбрал мешок — сначала ищем, где его расстелить: прямоугольник перед Кирью должен лежать на ровном полу той же высоты,
+   без стеллажа, стола, шины и без ничего над головой (ступеньки, низкий пролёт). Влезает прямо здесь — Кирью только
+   разворачивается. Нет — ищем место в паре шагов на той же ровной площадке и доводим его туда; на ступеньке или
+   на одиноком блоке такой площадки нет, и он просто говорит, что расстелить негде.
+   дальше: достаёт свёрток из-за спины, садится на корточки и бросает полотно вперёд, камера облетает его и смотрит
+   сверху; вещи с пола пальцем перетаскиваются в клетки (длинные — в две соседние). Свернуть — связывает углы узлом
+   и закидывает за спину; пустой мешок убирает в рюкзак. Всё, что сверху над полом выше 2,4 м, срезается ближней
+   плоскостью камеры, как у телефона, — облёт ни во что не врезается */
+const BAG = { CS: .42, BD: .08, NE: .58, RR: 2.7, LIFT: .28, CLIP: 2.4, ph: null, t: 0, k: 0, kT: 0, items: [], spot: null, drag: null, y0: 0, a: 0,
+  f: new THREE.Vector3(0, 0, 1), c: new THREE.Vector3(), back: false, br: -1, store: new Map(), cam: new THREE.PerspectiveCamera(40, 1, .05, 300) };
+BAG.SW = 3 * BAG.CS + 2 * BAG.BD; BAG.SD = 2 * BAG.CS + 2 * BAG.BD;
+BAG.lamp = new THREE.PointLight(0xfff0d2, 0, 3.6, 1.4); BAG.lamp.position.set(0, .42, .3); KIRYU.head.add(BAG.lamp);
+const bagFill = () => BAG.items.reduce((n, it) => n + it.c.length, 0);
+/* полотно: тёмная кожа с крапинками, строчка по краю, белая сетка 2×3; 24 пикселя на клетку */
+const BAG_TEX = (() => {
+  const CP = 24, BP = 5, w = 3 * CP + 2 * BP, h = 2 * CP + 2 * BP, c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d');
+  const nz = (px, py) => { let v = Math.imul(px * 374761393 + py * 668265263, 1274126177); v ^= v >>> 15; return (v >>> 0) / 4294967296 };
+  for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) { const e = px < BP || py < BP || px >= w - BP || py >= h - BP, n = nz(px, py);
+    x.fillStyle = e ? (n < .1 ? '#5a361c' : '#6b4122') : n < .05 ? '#7a4c27' : n < .09 ? '#9c6638' : '#8c5a30'; x.fillRect(px, py, 1, 1) }
+  x.fillStyle = '#e9c88c'; for (let px = 3; px < w - 3; px += 3) { x.fillRect(px, 2, 2, 1); x.fillRect(px, h - 3, 2, 1) } for (let py = 3; py < h - 3; py += 3) { x.fillRect(2, py, 1, 2); x.fillRect(w - 3, py, 1, 2) }
+  x.fillStyle = '#3e2412'; for (const [a, b] of [[0, 0], [w - 4, 0], [0, h - 4], [w - 4, h - 4]]) x.fillRect(a, b, 4, 4);   // уголки-завязки
+  x.fillStyle = '#f4f1e8'; x.fillRect(BP, BP, 3 * CP, 1); x.fillRect(BP, h - BP - 1, 3 * CP, 1); x.fillRect(BP, BP, 1, 2 * CP); x.fillRect(w - BP - 1, BP, 1, 2 * CP);   // белая сетка
+  for (const q of [1, 2]) x.fillRect(BP + q * CP, BP, 1, 2 * CP); x.fillRect(BP, BP + CP, 3 * CP, 1);
+  const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+BAG.g = new THREE.Group(); BAG.g.visible = false; scene.add(BAG.g);
+{ const geo = new THREE.PlaneGeometry(BAG.SW, BAG.SD, 8, 6).rotateX(-Math.PI / 2);
+  BAG.base = geo.attributes.position.array.slice();
+  BAG.flat = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: BAG_TEX, side: THREE.DoubleSide, flatShading: true })); BAG.flat.position.y = .012; BAG.flat.receiveShadow = true; BAG.flat.castShadow = true; BAG.g.add(BAG.flat);
+  const LEA = new THREE.MeshLambertMaterial({ color: 0x8c5a30, flatShading: true });
+  BAG.roll = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, BAG.SW, 10).rotateZ(Math.PI / 2), LEA); BAG.roll.castShadow = true; BAG.g.add(BAG.roll);
+  BAG.hroll = new THREE.Mesh(new THREE.CylinderGeometry(.065, .065, .34, 8).rotateZ(Math.PI / 2), LEA); BAG.hroll.castShadow = true; BAG.hroll.visible = false; scene.add(BAG.hroll);
+  BAG.hl = []; for (let c = 0; c < 6; c++) { const m = new THREE.Mesh(new THREE.PlaneGeometry(BAG.CS - .05, BAG.CS - .05).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7dff8a, transparent: true, opacity: .32, depthWrite: false }));
+    m.position.set(((c % 3) - 1) * BAG.CS, .02, ((c / 3 | 0) - .5) * BAG.CS); m.visible = false; m.renderOrder = 2; BAG.g.add(m); BAG.hl.push(m) }
+  // узел, который едет с пола за спину (такой же, как у Кирью на спине)
+  const bun = new THREE.Group(), LD = new THREE.MeshLambertMaterial({ color: 0x6b4122, flatShading: true }), LL = new THREE.MeshLambertMaterial({ color: 0xa9733e, flatShading: true });
+  const bx = (w, h, d, m, x, y, z, rz = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.rotation.z = rz; o.castShadow = true; bun.add(o) };
+  bx(.38, .28, .22, LEA, 0, 0, 0); bx(.32, .34, .2, LEA, 0, -.01, .005); bx(.3, .24, .27, LEA, 0, 0, -.01); bx(.2, .16, .02, LL, -.05, .03, -.15);
+  for (const s of [-1, 1]) bx(.07, .1, .05, LD, s * .06, .17, .03, s * .5); bx(.09, .07, .07, LD, 0, .15, .02);
+  BAG.bun = bun; bun.visible = false; scene.add(bun);
+}
+const cellXZ = c => [((c % 3) - 1) * BAG.CS, ((c / 3 | 0) - .5) * BAG.CS];     // центр клетки в осях полотна (+z — от Кирью)
+/* вещь в клетке: длинной стороной вдоль пары клеток, уменьшена, чтобы влезть, стоит на коже */
+function bagSeat(it) {
+  const t = it.t, L = t.local, cs = it.c, CS = BAG.CS;
+  const cx = cs.reduce((s, c) => s + cellXZ(c)[0], 0) / cs.length, cz = cs.reduce((s, c) => s + cellXZ(c)[1], 0) / cs.length;
+  const along = cs.length === 2 ? (Math.abs(cs[1] - cs[0]) === 1 ? 'x' : 'z') : 'x';
+  const sx = L.max.x - L.min.x, sy = L.max.y - L.min.y, sz = L.max.z - L.min.z, yaw = (sx >= sz) === (along === 'x') ? 0 : Math.PI / 2;
+  const lx = yaw ? sz : sx, lz = yaw ? sx : sz, spX = (cs.length === 2 && along === 'x' ? 2 : 1) * CS - .07, spZ = (cs.length === 2 && along === 'z' ? 2 : 1) * CS - .07;
+  const s = Math.min(1, spX / lx, spZ / lz, .42 / sy);
+  t.g.scale.setScalar(s); t.g.quaternion.setFromAxisAngle(_UP, yaw);
+  const com = t.com.clone().multiplyScalar(s).applyQuaternion(t.g.quaternion);
+  t.g.position.set(cx - com.x, .02 - s * (t.com.y + L.min.y), cz - com.z);
+  it.s = s; it.yaw = yaw;
+}
+function bagDetach(t) { if (t.body) world.removeBody(t.body); const i = trash.indexOf(t); if (i >= 0) trash.splice(i, 1); t.inBag = true }
+function bagRelease(t, p, q) {                                   // обратно на пол: низ предмета — на p.y, физика снова включена
+  scene.attach(t.g); t.g.scale.setScalar(1); t.g.quaternion.copy(q);
+  let lo = Infinity; const v = new THREE.Vector3(), L = t.local;
+  for (const x of [L.min.x, L.max.x]) for (const y of [L.min.y, L.max.y]) for (const z of [L.min.z, L.max.z]) lo = Math.min(lo, v.set(x, y, z).applyQuaternion(q).y);
+  const c = new THREE.Vector3(p.x, p.y - lo + .01, p.z); t.g.position.copy(c).sub(t.com.clone().applyQuaternion(q)); t.g.updateMatrixWorld(true);
+  const b = t.body; b.position.set(c.x, c.y, c.z); b.quaternion.set(q.x, q.y, q.z, q.w); b.type = CANNON.Body.DYNAMIC; b.updateMassProperties();
+  b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.collisionFilterMask = G_BLOCK | G_CHAR; t.ghost = false; world.addBody(b); b.wakeUp();
+  if (trash.indexOf(t) < 0) trash.push(t); t.inBag = false; t.held = false; t.br = undefined;
+  if (charHits(t)) { t.ghost = true; b.collisionFilterMask = G_BLOCK }
+}
+/* ровный пол на высоте y0: есть поверхность ровно там и ничего не нависает ниже 2,4 м; не стеллаж, не ящик, не стол */
+function bagFlat(x, z, y0) {
+  if (kitHit(x, z, y0 + .1)) return false;
+  const s = outerSurfaces(x, z), a = cellAt(x, z); if (a >= 0) s.push(floorY(a));
+  let on = false; for (const h of s) { if (Math.abs(h - y0) < .03) on = true; else if (h > y0 + .03 && h < y0 + BAG.CLIP) return false }
+  return on;
+}
+function bagFits(px, pz, a, y0) {                                // полотно перед Кирью, если он стоит в (px, pz) лицом по углу a
+  const fx = Math.sin(a), fz = Math.cos(a), sx = Math.cos(a), sz = -Math.sin(a), hw = BAG.SW / 2 + .05, v0 = BAG.NE - .05, v1 = BAG.NE + BAG.SD + .05;
+  for (let i = 0; i <= 5; i++) { const v = v0 + (v1 - v0) * i / 5;
+    for (let j = 0; j <= 6; j++) { const u = -hw + 2 * hw * j / 6; if (!bagFlat(px + fx * v + sx * u, pz + fz * v + sz * u, y0)) return false } }
+  for (const t of trash) if (t.active && t.body && TYPES[t.type].heavy) { const p = t.body.position; if (Math.abs(p.y - y0) > 1.2) continue;   // шину не сдвинуть — на неё не стелим
+    const dx = p.x - px, dz = p.z - pz, v = dx * fx + dz * fz, u = dx * sx + dz * sz; if (v > v0 - .4 && v < v1 + .4 && Math.abs(u) < hw + .4) return false }
+  return true;
+}
+function bagPath(x0, z0, x1, z1, y0) {                           // дойти по ровному, не сходя со своей высоты
+  const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / .1));
+  for (let i = 1; i <= n; i++) { const x = x0 + (x1 - x0) * i / n, z = z0 + (z1 - z0) * i / n;
+    for (const [ox, oz] of [[0, 0], [R, 0], [-R, 0], [0, R], [0, -R]]) if (!bagFlat(x + ox, z + oz, y0)) return false }
+  return true;
+}
+const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+function bagSpot() {
+  const y0 = CH.y, yaw = Math.atan2(CH.face.x, CH.face.z), A = [];
+  for (let k = 0; k < 16; k++) A.push(yaw + (k ? (k % 2 ? 1 : -1) * Math.ceil(k / 2) * Math.PI / 8 : 0));   // сначала — куда он и так смотрит
+  for (const a of A) if (bagFits(CH.x, CH.z, a, y0)) return { x: CH.x, z: CH.z, a, walk: false };
+  for (let r = .25; r < 1.8; r += .25) {                          // пара шагов по той же ровной площадке
+    let best = null;
+    for (let k = 0; k < 16; k++) { const b = k * Math.PI / 8, x = CH.x + Math.sin(b) * r, z = CH.z + Math.cos(b) * r;
+      if (!bagPath(CH.x, CH.z, x, z, y0)) continue;
+      for (const a of A) if (bagFits(x, z, a, y0)) { const cost = angDiff(a, yaw) + angDiff(b, yaw) * .3; if (!best || cost < best.cost) best = { x, z, a, walk: true, cost }; break } }
+    if (best) return best;
+  }
+  return null;
+}
+function bagToggle() { if (CH.state === 'bag') bagClose(); else bagOpen() }
+function bagOpen() {
+  if (CH.state === 'ladder') { shakeTool('bag'); toast('На лестнице мешок не развернуть', 1); return }
+  if (CH.state !== 'walk' || PH.on) { shakeTool('bag'); toast('Не сейчас', 0); return }
+  if (CH.held) { shakeTool('bag'); toast('Руки заняты — сначала положи вещь', 0); return }
+  const s = bagSpot(); if (!s) { shakeTool('bag'); toast('Тут мешок не расстелить — нужен ровный пол побольше', 1); return }
+  joy.id = null; joy.x = joy.y = 0;
+  Object.assign(BAG, { spot: s, y0: CH.y, a: s.a, ph: s.walk ? 'go' : 'turn', t: 0 }); BAG.f.set(Math.sin(s.a), 0, Math.cos(s.a));
+  CH.state = 'bag'; bagOn = true; CH.moving = false; haptic('light');
+}
+function bagClose() {
+  if (BAG.ph === 'go' || BAG.ph === 'turn') { bagEnd(); return }
+  if (BAG.ph !== 'ui' || BAG.drag) return;
+  BAG.ph = 'tie'; BAG.t = 0; BAG.kT = 0; bagUI.classList.remove('on'); for (const m of BAG.hl) m.visible = false; haptic('light');
+}
+function bagEnd() { CH.state = 'walk'; bagOn = false; BAG.ph = null; CH.moving = false; CH.t = 0 }
+/* раскладка полотна на полу: перед Кирью, вещи с этого места отодвигаем к краю */
+function bagLay() {
+  const f = BAG.f; BAG.c.set(CH.x, BAG.y0, CH.z).addScaledVector(f, BAG.NE + BAG.SD / 2);
+  BAG.g.position.copy(BAG.c); BAG.g.rotation.set(0, BAG.a, 0); BAG.g.updateMatrixWorld(true);
+  const sx = Math.cos(BAG.a), sz = -Math.sin(BAG.a), hw = BAG.SW / 2 + .12, hd = BAG.SD / 2 + .12;
+  for (const t of trash) { if (!t.active || !t.body || t.held || t.mounted || t.kz || TYPES[t.type].heavy) continue;
+    const p = t.body.position; if (Math.abs(p.y - BAG.y0) > .8) continue;
+    const dx = p.x - BAG.c.x, dz = p.z - BAG.c.z, u = dx * sx + dz * sz, v = dx * f.x + dz * f.z; if (Math.abs(u) > hw || Math.abs(v) > hd) continue;
+    const eu = hw + .1 - Math.abs(u), ev = hd + .1 - Math.abs(v), nu = eu < ev ? Math.sign(u || 1) * (hw + .1) : u, nv = eu < ev ? v : Math.sign(v || 1) * (hd + .1);
+    p.x = BAG.c.x + sx * nu + f.x * nv; p.z = BAG.c.z + sz * nu + f.z * nv; t.body.velocity.set(0, 0, 0); t.body.wakeUp() }
+}
+function bagShape(e, fold) {                                     // e — насколько раскатано полотно; fold — насколько связано в узел
+  BAG.flat.scale.z = Math.max(.02, e); BAG.flat.position.z = -BAG.SD / 2 * (1 - e);
+  const r = .065 * (1 - e) + .012; BAG.roll.visible = e < .999 && fold <= 0; BAG.roll.scale.set(1, r, r); BAG.roll.position.set(0, r, -BAG.SD / 2 + BAG.SD * e);
+  const pos = BAG.flat.geometry.attributes.position, b = BAG.base, hx = BAG.SW / 2, hz = BAG.SD / 2;
+  for (let i = 0; i < pos.count; i++) { const x0 = b[i * 3], z0 = b[i * 3 + 2], nx = x0 / hx, nz = z0 / hz, r2 = Math.min(1, (nx * nx + nz * nz) / 2), cr = (nx * nz) ** 2;
+    pos.setXYZ(i, x0 * (1 - .8 * fold), fold * (.28 * (1 - r2) + .34 * cr) + .02 * Math.sin(nz * 3 + e * 9) * (1 - e) * (1 - fold), z0 * (1 - .8 * fold)) }
+  pos.needsUpdate = true; BAG.flat.geometry.computeVertexNormals();
+}
+const _bp = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bq2 = new THREE.Quaternion();
+function stepBag(dt, ix, iy) {
+  const B = BAG; CH.moving = false;
+  if ((B.ph === 'go' || B.ph === 'turn') && (Math.abs(ix) + Math.abs(iy) > .3)) { bagEnd(); return }   // игрок сам повёл Кирью — передумал
+  if (B.ph === 'go') {
+    const dx = B.spot.x - CH.x, dz = B.spot.z - CH.z, l = Math.hypot(dx, dz), st = SPEED * dt;
+    if (l <= st) { CH.x = B.spot.x; CH.z = B.spot.z; B.ph = 'turn' } else { CH.x += dx / l * st; CH.z += dz / l * st; CH.face.set(dx / l, 0, dz / l); CH.moving = true; CH.spd = 1 }
+    return;
+  }
+  if (B.ph === 'turn') { CH.face.copy(B.f); let d = B.a - CH.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); if (Math.abs(d) < .06) { B.ph = 'pull'; B.t = 0 } return }
+  CH.face.copy(B.f);
+  const H = KIRYU.hands, hand = H[0].getWorldPosition(_bp.set(0, 0, 0)).clone();
+  if (B.ph === 'pull') {                                         // правая рука — за спину, свёрток — к груди
+    B.t += dt / .7; const k = Math.min(1, B.t);
+    if (k > .35) { B.back = false; B.hroll.visible = true; const mid = H[1].getWorldPosition(new THREE.Vector3()).lerp(hand, .5);
+      B.hroll.position.copy(k < .6 ? hand.clone().add(new THREE.Vector3(0, -.08, 0)) : hand.lerp(mid, sm01((k - .6) / .3))); B.hroll.rotation.set(0, B.a, 0) }
+    if (k >= 1) { B.ph = 'spread'; B.t = 0; bagLay(); B.kT = 1 }
+    return;
+  }
+  if (B.ph === 'spread') {                                       // садится и бросает свёрток вперёд — полотно раскатывается от Кирью
+    B.t += dt / 1.05; const k = Math.min(1, B.t);
+    const mid = H[1].getWorldPosition(new THREE.Vector3()).lerp(hand, .5), edge = B.c.clone().addScaledVector(B.f, -B.SD / 2); edge.y = B.y0 + .08;
+    if (k < .38) { B.hroll.visible = true; B.hroll.position.copy(mid.lerp(edge, sm01((k - .12) / .26))); B.hroll.position.y += .18 * Math.sin(Math.PI * sm01((k - .12) / .26)) }
+    else { B.hroll.visible = false; B.g.visible = true }
+    const e = sm01((k - .38) / .5); if (k >= .38) bagShape(e, 0);
+    for (const it of B.items) it.t.g.visible = e > .85;
+    if (k >= 1) { B.ph = 'ui'; bagShape(1, 0); bagUI.classList.add('on'); bagCount(); if (!bagOpen.hint) { bagOpen.hint = true; toast('Перетаскивай вещи пальцем на полотно', 0) } }
+    return;
+  }
+  if (B.ph === 'ui') { bagDragStep(dt); return }
+  if (B.ph === 'tie') {                                          // углы — к середине, узел
+    B.t += dt / 1.05; const k = Math.min(1, B.t), f = sm01(k / .85);
+    bagShape(1, f); for (const it of B.items) { it.t.g.visible = f < .55; it.t.g.scale.setScalar(it.s * Math.max(.01, 1 - f)) }
+    if (k >= 1) { B.ph = 'lift'; B.t = 0; B.g.visible = false; bagShape(1, 0); for (const it of B.items) bagSeat(it);
+      B.bun.visible = true; B.bun.scale.setScalar(.72 + .38 * bagFill() / 6); B.bun.position.copy(B.c).setY(B.y0 + .15); B.bun.rotation.set(0, B.a + Math.PI, 0) }
+    return;
+  }
+  if (B.ph === 'lift') {                                         // узел — к груди, через правое плечо — за спину
+    B.t += dt / 1.0; const k = Math.min(1, B.t), bun = B.bun, mid = H[1].getWorldPosition(new THREE.Vector3()).lerp(hand, .5);
+    if (k < .3) bun.position.copy(B.c).setY(B.y0 + .15).lerp(mid, sm01(k / .3));
+    else if (k < .72) bun.position.copy(mid.lerp(hand, sm01((k - .3) / .2)));
+    else if (k < .86) { KIRYU.bagBack.getWorldPosition(_bp); KIRYU.bagBack.getWorldQuaternion(_bq); const e = sm01((k - .72) / .14);
+      bun.position.copy(hand.lerp(_bp, e)); _bq2.setFromEuler(new THREE.Euler(0, B.a + Math.PI, 0)); bun.quaternion.copy(_bq2.slerp(_bq, e)) }
+    if (k >= .86 && bun.visible) { bun.visible = false; B.back = B.items.length > 0; if (!B.back) toast('Пустой мешок — обратно в рюкзак', 0); haptic('light'); saveTick && saveTick() }
+    if (k >= 1) bagEnd();
+  }
+}
+/* поза для Кирью: на что он сейчас похож */
+function bagPoseNow() {
+  const B = BAG; if (CH.state !== 'bag') return null;
+  if (B.ph === 'pull') return { ph: 'pull', k: B.t }; if (B.ph === 'spread') return { ph: 'spread', k: B.t };
+  if (B.ph === 'ui') return { ph: 'squat', k: 0 }; if (B.ph === 'tie') return { ph: 'tie', k: B.t }; if (B.ph === 'lift') return { ph: 'lift', k: B.t };
+  return null;
+}
+/* ---------- облёт камеры: с обычного вида — дугой вверх и с разворотом — строго сверху на полотно ---------- */
+function stepBagCam(dt) {
+  const B = BAG; B.k = Math.max(0, Math.min(1, B.k + (B.kT > B.k ? dt / 1.1 : B.kT < B.k ? -dt / .85 : 0)));
+  B.lamp.intensity = 2.4 * Math.PI * sm01(B.k * 1.5);          // фонарь на каске светит на полотно
+  if (B.k <= 0 || PH.k > 0) return;
+  const e = ease3(B.k), f = B.f, asp = W / H;
+  const t1 = B.c.clone().addScaledVector(f, -.3); t1.y = B.y0 + .2;                // полотно сверху, Кирью у нижнего края
+  const vh1 = Math.min(8, Math.max(3.4, 3.8 / asp));
+  const az0 = Math.atan2(VIEW.x, VIEW.z), el0 = Math.asin(VIEW.y), az1 = Math.atan2(f.x, f.z), el1 = Math.PI / 2 - .24;   // чуть со стороны полотна: Кирью не заслоняет клетки, видна каска и лицо
+  let da = az1 - az0; da = Math.atan2(Math.sin(da), Math.cos(da));
+  const az = az0 + da * e + Math.sign(da || 1) * .35 * Math.sin(Math.PI * e), el = el0 + (el1 - el0) * sm01(e * 1.15);   // как в Персоне: с разворотом и лишним витком
+  const dir = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+  const t0 = cam.position.clone().addScaledVector(VIEW, -60), tgt = t0.lerp(t1, e);
+  const h0 = cam.top - cam.bottom, vh = h0 * Math.pow(vh1 / h0, e), fov = 2 + 26 * e, dist = vh / 2 / Math.tan(fov * Math.PI / 360), c = B.cam;
+  c.fov = fov; c.aspect = asp; c.near = Math.max(.05, dist - (40 + (B.CLIP - .25 - 40) * e)); c.far = dist + 120; c.updateProjectionMatrix();
+  c.position.copy(tgt).addScaledVector(dir, dist); c.up.copy(_UP).lerp(f, sm01(e)).normalize(); c.lookAt(tgt); c.updateMatrixWorld();
+  VCAM = c;
+}
+/* ---------- перетаскивание: вещи с пола — в клетки, из клеток — на пол или в другие клетки ---------- */
+const bagUI = document.createElement('div'); bagUI.id = 'bagui';
+bagUI.innerHTML = '<button type="button">Свернуть мешок <b>0/6</b></button>';
+{ const st = document.createElement('style'); st.textContent = `#bagui{position:fixed;right:max(12px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:30;display:none}
+#bagui.on{display:block}
+#bagui button{font:700 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#ffe9c4;background:#2b1a12;border:0;border-radius:6px;padding:11px 15px;box-shadow:0 0 0 2px #e9c88c,0 0 0 4px #2b1a12,0 6px 14px rgba(0,0,0,.45);cursor:pointer}
+#bagui button b{font:800 14px ui-monospace,Menlo,Consolas,monospace;color:#ffe08a;margin-left:6px}
+#bagui button:active{transform:translateY(1px)}`; document.head.append(st) }
+document.body.append(bagUI);
+bagUI.querySelector('button').addEventListener('click', e => { e.stopPropagation(); bagClose() });
+const bagCount = () => { bagUI.querySelector('b').textContent = bagFill() + '/6' };
+const bagReach = t => t.active && t.body && !t.held && !t.mounted && !t.kz && Math.abs(t.body.position.y - BAG.y0) < .75 && Math.hypot(t.body.position.x - BAG.c.x, t.body.position.z - BAG.c.z) < BAG.RR;
+function bagRay(e, y) { ray.setFromCamera(ndc(e), VCAM); const r = ray.ray, d = r.direction.y; if (Math.abs(d) < 1e-4) return null; const s = (y - r.origin.y) / d; return s > 0 ? r.origin.clone().addScaledVector(r.direction, s) : null }
+function bagPick(e) {
+  ray.setFromCamera(ndc(e), VCAM);
+  const objs = []; for (const it of BAG.items) objs.push(it.t.g); for (const t of trash) if (bagReach(t)) objs.push(t.g);
+  const h = ray.intersectObjects(objs, true)[0]; if (!h) return;
+  let o = h.object; while (o && !o.userData.t) o = o.parent; const t = o && o.userData.t; if (!t) return;
+  const hv = TYPES[t.type].heavy; if (hv) { haptic('warn'); toast(hv === true ? 'Слишком тяжёлая — даже не сдвинуть' : hv, 0); return }
+  if (TYPES[t.type].size > 2) { haptic('warn'); toast('Такое в мешок не влезет', 0); return }
+  const it = BAG.items.find(x => x.t === t), D = { t, it, id: e.pointerId, q0: t.g.quaternion.clone(), cand: null, floor: null };
+  if (it) { scene.attach(t.g); D.from = 'cell' }
+  else { D.from = 'floor'; const b = t.body.position; D.p0 = new THREE.Vector3(b.x, BAG.y0, b.z); D.q0 = new THREE.Quaternion(t.body.quaternion.x, t.body.quaternion.y, t.body.quaternion.z, t.body.quaternion.w); bagDetach(t) }
+  t.g.updateMatrixWorld(true); D.pos = t.g.localToWorld(t.com.clone()); D.pt = D.pos.clone(); BAG.drag = D; haptic('light');
+  try { cv.setPointerCapture(e.pointerId) } catch (_) { }
+  bagMove(e);
+}
+function bagCells(size, c, u) {                                  // куда ляжет вещь, если отпустить над клеткой c (u — где палец в клетке)
+  if (size <= 1) return [[c]];
+  const r = c / 3 | 0, q = c % 3, L = q > 0 ? [c - 1, c] : null, Rr = q < 2 ? [c, c + 1] : null;
+  return (u < 0 ? [L, Rr] : [Rr, L]).concat([[q, q + 3]]).filter(Boolean);
+}
+function bagMove(e) {
+  const D = BAG.drag; if (!D) return;
+  const p = bagRay(e, BAG.y0 + BAG.LIFT), q = bagRay(e, BAG.y0); if (!p || !q) return;
+  const dx = p.x - BAG.c.x, dz = p.z - BAG.c.z, l = Math.hypot(dx, dz); if (l > BAG.RR) { p.x = BAG.c.x + dx / l * BAG.RR; p.z = BAG.c.z + dz / l * BAG.RR }
+  D.pt.copy(p);
+  const loc = BAG.g.worldToLocal(q.clone()), size = Math.min(2, TYPES[D.t.type].size || 1);
+  D.cand = null; D.bad = null; D.floor = null;
+  if (Math.abs(loc.x) < BAG.SW / 2 && Math.abs(loc.z) < BAG.SD / 2) {
+    const col = Math.max(0, Math.min(2, Math.floor((loc.x + 1.5 * BAG.CS) / BAG.CS))), row = Math.max(0, Math.min(1, Math.floor((loc.z + BAG.CS) / BAG.CS))), c = row * 3 + col;
+    const busy = new Set(); for (const it of BAG.items) if (it !== D.it) for (const x of it.c) busy.add(x);
+    const u = loc.x - cellXZ(c)[0];
+    D.cand = bagCells(size, c, u).find(cs => cs.every(x => !busy.has(x))) || null; if (!D.cand) D.bad = c;
+  } else {
+    const fx = BAG.f.x, fz = BAG.f.z, sx = Math.cos(BAG.a), sz = -Math.sin(BAG.a), qx = q.x - BAG.c.x, qz = q.z - BAG.c.z, u = qx * sx + qz * sz, v = qx * fx + qz * fz;
+    const nearSheet = Math.abs(u) < BAG.SW / 2 + .12 && Math.abs(v) < BAG.SD / 2 + .12, nearCH = Math.hypot(q.x - CH.x, q.z - CH.z) < .35;
+    if (!nearSheet && !nearCH && Math.hypot(qx, qz) < BAG.RR && bagFlat(q.x, q.z, BAG.y0)) D.floor = q;
+  }
+  for (let c = 0; c < 6; c++) { const m = BAG.hl[c], on = D.cand ? D.cand.includes(c) : c === D.bad; m.visible = on; m.material.color.setHex(D.cand ? 0x7dff8a : 0xff5a4a) }
+}
+function bagDragStep(dt) {
+  const D = BAG.drag; if (!D) return;
+  const t = D.t, k = 1 - Math.exp(-dt * 18);
+  let ts = 1, tq = D.q0;
+  if (D.cand) { const tmp = { t, c: D.cand }; const sv = [t.g.position.clone(), t.g.quaternion.clone(), t.g.scale.x]; bagSeat(tmp); ts = tmp.s;   // как ляжет — так и держим над клетками
+    tq = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, BAG.a + tmp.yaw, 0)); t.g.position.copy(sv[0]); t.g.quaternion.copy(sv[1]); t.g.scale.setScalar(sv[2]) }
+  const s = t.g.scale.x + (ts - t.g.scale.x) * k; t.g.scale.setScalar(s); t.g.quaternion.slerp(tq, k);
+  const com = t.com.clone().multiplyScalar(s).applyQuaternion(t.g.quaternion);
+  D.pos.lerp(D.pt, k); t.g.position.copy(D.pos).sub(com);
+}
+function bagDrop() {
+  const D = BAG.drag; if (!D) return; BAG.drag = null; const t = D.t;
+  for (const m of BAG.hl) m.visible = false;
+  const upright = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, BAG.a + (D.it ? D.it.yaw || 0 : 0), 0));
+  if (D.cand) { let it = D.it; if (!it) { it = { t, c: D.cand }; BAG.items.push(it) } else it.c = D.cand;
+    BAG.g.attach(t.g); bagSeat(it); haptic('light') }
+  else if (D.floor) { if (D.it) BAG.items.splice(BAG.items.indexOf(D.it), 1); bagRelease(t, D.floor, D.from === 'floor' ? D.q0 : upright); haptic('light') }
+  else if (D.it) { BAG.g.attach(t.g); bagSeat(D.it) }
+  else bagRelease(t, D.p0, D.q0);
+  bagCount(); saveTick && saveTick();
+}
+cv.addEventListener('pointerdown', e => { if (CH.state !== 'bag') return;
+  if (BAG.ph === 'go' || BAG.ph === 'turn') { bagEnd(); return }          // коснулся — передумал, обычное управление
+  e.stopImmediatePropagation(); if (BAG.ph === 'ui' && !BAG.drag) bagPick(e) }, true);
+cv.addEventListener('pointermove', e => { if (CH.state !== 'bag') return; e.stopImmediatePropagation(); if (BAG.drag && e.pointerId === BAG.drag.id) bagMove(e) }, true);
+for (const ev of ['pointerup', 'pointercancel']) cv.addEventListener(ev, e => { if (CH.state !== 'bag' && !BAG.drag) return; e.stopImmediatePropagation(); if (BAG.drag && e.pointerId === BAG.drag.id) bagDrop() }, true);
+/* свет на полотне и вещах в нём — как в этой точке пола */
+function bagLight() {
+  if (!BAG.g.visible) return; const br = lightAt(BAG.c.x, BAG.y0 + .3, BAG.c.z); if (Math.abs(br - BAG.br) < .004) return; BAG.br = br;
+  dimGroup(BAG.flat, br, BAG.store); dimGroup(BAG.roll, br, BAG.store);
+  for (const it of BAG.items) { if (!it.t.base) it.t.base = new Map(); dimGroup(it.t.g, br, it.t.base); it.t.br = br }
+}
+
 /* ---------- по лестнице: хват снизу, лазание, вылезание наверх; сверху — разворот и спуск ----------
    фазы: grab (снизу берётся за ступеньки), climb (вверх-вниз джойстиком; отпустил — встаёт на ближайшую ступеньку),
    over (руки на край, колено на край, встал), mount (сверху: развернулся, спустил ноги — over задом наперёд), off (сошёл на дно) */
@@ -2717,17 +3024,18 @@ function frame(now) {
   setHighlight(hl);
   const T1 = performance.now();
   // рисуем только открытые блоки в слоях рядом с камерой
-  updateLight();
+  updateLight(); bagLight();
   let maxD = 0; for (const v of d) maxD = Math.max(maxD, v);
   const cl = -camF.y / BH, z0 = Math.floor(cl - 10), z1 = Math.min(BOT, Math.ceil(cl + 10), Math.max(SKY_D, maxD + 5));
   under.position.y = -(z1 + 1) * BH; clipU.value = under.position.y;
   for (const c of chunks) if (c) c.mesh.visible = c.faces.length > 0 && c.mesh.userData.chunk >= z0 && c.mesh.userData.chunk <= z1;
-  placeCam(dt); stepHouse(); stepPhone(dt); stepLadCam(dt);
+  placeCam(dt); stepHouse(); stepPhone(dt); stepLadCam(dt); stepBagCam(dt);
   // солнце едет вместе с камерой по слоям (ступенькой, чтобы тень не мерцала)
   const ty = Math.round(camF.y / BH) * BH; sun.target.position.set(Math.round(camF.x), ty, Math.round(camF.z)); sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 15); sun.target.updateMatrixWorld();
   renderer.shadowMap.needsUpdate = true;
   const T2 = performance.now();
   SAY.ready = true; stepSay();
+  renderer.setClearColor(0x07050a, BAG.k > 0 ? sm01((BAG.k - .35) / .5) : 0);   // над мешком срезанные стенки — тёмный фон, а не небо
   renderer.render(scene, VCAM); perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
   const T3 = performance.now();
   drawOutlines();
@@ -2749,6 +3057,11 @@ for (const [type, x, y, z, qx, qy, qz, qw] of GAME.items) { if (!TYPES[type]) co
 KIT.rk = GAME.rk == null ? 4 : Math.max(0, Math.min(4, GAME.rk | 0)); rackShow();   // новый участок — полный стеллаж и фонарь на ящике
 if (GAME.rk == null) { const t = makeTrash('lantern', (CRATE.x0 + CRATE.x1) / 2, CRATE.top + .005, (CRATE.z0 + CRATE.z1) / 2, .4, -1); activate(t) }
 for (const key of GAME.lad || []) { const m = /^([LR])(\d),(\d+)$/.exec(key); if (m) mountLadder(m[1], +m[2], +m[3], true) }
+{ const busy = new Set();                                         // мешок: что в каких клетках — узел за спиной
+  for (const [type, c0, c1] of Array.isArray(GAME.bag) ? GAME.bag : []) { const cs = c1 >= 0 ? [c0, c1] : [c0];
+    if (!TYPES[type] || cs.some(c => !(c >= 0 && c < 6) || busy.has(c))) continue; cs.forEach(c => busy.add(c));
+    const t = makeTrash(type, 0, -60, 0, 0, -1); activate(t); bagDetach(t); BAG.g.add(t.g); const it = { t, c: cs }; BAG.items.push(it); bagSeat(it) }
+  BAG.back = BAG.items.length > 0 }
 if (ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) { SHOP.revealed = true; lightDirty = true }
 if (GAME.w) buildWorms();
 if (!Q.s) setTimeout(qSend, 4500);                              // Кудзуя-сан пишет первым (или следующую просьбу после перезапуска)
@@ -2798,13 +3111,14 @@ const GSAVE = { sig: '', busy: false, warned: false };
 function gameItems() {
   return trash.filter(t => t.active && t.body && !t.kz && TYPES[t.type] && !inHouse(t.body.position))
     .map(t => { const p = t.g.position, q = t.g.quaternion; return [t.type, r3(p.x), r3(p.y), r3(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w)].join(',') })
+    .concat(BAG.drag && BAG.drag.from === 'floor' ? [[BAG.drag.t.type, r3(BAG.drag.p0.x), r3(BAG.drag.p0.y + .3), r3(BAG.drag.p0.z), 0, 0, 0, 1].join(',')] : [])   // вещь в пальцах над мешком
     .concat(CH.state === 'ladder' && (CH.lad.carry || CH.lad.ph === 'sling' || (CH.lad.ph === 'place' && !LADS.has(ladKey(CH.lad.C.s, CH.lad.C.k, CH.lad.ext.z)))) ? ['ladder,' + r3(CH.x) + ',' + r3(Math.max(.3, CH.y + .5)) + ',' + r3(CH.z) + ',0,0,0,1'] : []);   // лестница на боку
 }
 async function saveGame(force, items) {
   if (!GAME.ok) { if (!GSAVE.warned) { GSAVE.warned = true; toast('Сохранение не загрузилось — прогресс этой сессии не запишется') } return false }
   if (GSAVE.busy || GAME.moving && !items) return false;          // переезд: пишем только запись нового участка, остальное ждёт перезагрузки
   const recs = items || gameItems();
-  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk, q: Q };
+  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk, q: Q, bag: BAG.items.map(it => [it.t.type, it.c[0], it.c.length > 1 ? it.c[1] : -1]) };
   const sig = JSON.stringify(head) + '|' + recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');
   if (!force && sig === GSAVE.sig) return true;
   const parts = []; let cur = '';
