@@ -3551,3 +3551,6 @@ function plotIcon(r) {
   mapclose.addEventListener('click', () => { if (spinning) return; mapwrap.hidden = true; mapbtn.focus(); haptic('light') });
 }
 Object.assign(window.__dbg, { GAME, saveGame, digAll: () => { for (let k = 0; k < 600 && cur() < DIG; k++) digCell(d.indexOf(cur())) } });
+// для автопроверок (tests/): создать вещь, мешок, телефон, проверки переноски — игре это ничем не мешает
+Object.assign(window.__dbg, { makeTrash, TYPES, CATS, PRICE, BAG, BC, bagOpen, bagClose, floorY, ACT, holdFreeAt, upFreeAt, trashOverlap, openPhone, closePhone, PH, SMS });
+Object.defineProperty(window.__dbg, 'VCAM', { get: () => VCAM });   // живая ссылка: Object.assign скопировал бы только текущее значение
