@@ -330,6 +330,7 @@ export function createKiryu(THREE) {
     blinkT -= dt; const bl = blinkT < .12; if (blinkT < 0) blinkT = 2 + Math.random() * 4;
     for (const e of eyes) e.scale.y = bl ? .15 : 1;
     const ik = st.lad && ladderIK(st.lad); if (ik) applyIK(ik);
+    if (st.carry && st.grip) applyIK({ H: st.grip, F: [], wa: [1, 1], wl: [0, 0] });   // ладони — на бока вещи, которую несёт
   }
   root.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true });
   // ---------- склейка: все детали, которые не двигаются друг относительно друга, — один меш на сустав ----------

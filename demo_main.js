@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createKiryu } from './kiryu_demo.js?v=6';
+import { createKiryu } from './kiryu_demo.js?v=7';
 import { createMerchant } from './merchant.js?v=1';
 import { createKudzuya } from './kudzuya.js?v=1';
 
@@ -179,7 +179,7 @@ const VIEW_W = 300;
 function resize() {
   const r = stage.getBoundingClientRect();
   const sc = r.width / VIEW_W; SCALE = sc >= 2 ? Math.floor(sc) : Math.max(1, sc);   // ширина кадра ≈ VIEW_W «пикселей игры»: яма 4×4 целиком и немного запаса
-  W = Math.ceil(r.width / SCALE); H = Math.ceil(r.height / SCALE);
+  W = Math.ceil(r.width / SCALE / 2) * 2; H = Math.ceil(r.height / SCALE / 2) * 2;   // чётные: центр кадра — между пикселями, края текселей не ложатся на центры пикселей (иначе мерцают)
   renderer.setSize(W, H, false);
   for (const c of [cv, bgc]) { c.style.width = W * SCALE + 'px'; c.style.height = H * SCALE + 'px' }
   cam.left = -W / 2 / PX; cam.right = W / 2 / PX; cam.top = H / 2 / PX; cam.bottom = -H / 2 / PX; cam.updateProjectionMatrix();
@@ -199,12 +199,14 @@ function makeBg() {
 }
 /* камера следует за персонажем и двигается только на целые пиксели — иначе пиксельные текстуры «дрожат» */
 const camF = new THREE.Vector3(PC, 0, PC);                   // точка, за которой следит камера (сглаженная)
-let camO = 0;                                                // сдвиг камеры вбок по экрану
+let camO = 0, camSX = null, camSY = null;                    // сдвиг камеры вбок по экрану; на каком целом пикселе стоит камера
 function placeCam(dt) {
   const k = 1 - Math.exp(-dt * 4);                           // по горизонтали камера стоит на центре ямы, по глубине плавно идёт за персонажем
   const cs = (CH.x - CH.z) * Math.SQRT1_2, half = Math.max(.5, W / 2 / PX - 2), o = Math.abs(cs) > half ? cs - Math.sign(cs) * half : 0;   // ушёл к краю кадра — камера сдвигается вбок
   camO += (o - camO) * k; camF.x = PC + camO * Math.SQRT1_2; camF.z = PC - camO * Math.SQRT1_2; camF.y += (CH.y + .3 - camF.y) * k;
-  let sx = Math.round(camF.dot(SCR_R) * PX), sy = Math.round(camF.dot(SCR_U) * PX);
+  const fx = camF.dot(SCR_R) * PX, fy = camF.dot(SCR_U) * PX;   // переходим на соседний пиксель только с запасом — иначе на границе картинка дёргается туда-сюда на пиксель
+  if (camSX === null || Math.abs(fx - camSX) > .75) camSX = Math.round(fx); if (camSY === null || Math.abs(fy - camSY) > .75) camSY = Math.round(fy);
+  const sx = camSX, sy = camSY;
   const t = SCR_R.clone().multiplyScalar(sx / PX).addScaledVector(SCR_U, sy / PX);
   cam.position.copy(t).addScaledVector(VIEW, 60); cam.lookAt(t);
 }
@@ -871,7 +873,7 @@ function tap(e) {
     if (CH.held) { busy(); return }
     const { i, j, z } = h.object.userData, a = isAct(i, j);
     if (a >= 0 && diggable(a, z) && reach(a)) {
-      if (a !== charCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
+      if (a !== standCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
       digCell(a); return }
   }
   act();                                                       // иначе — инструмент в ту сторону, куда смотрит персонаж
@@ -1032,9 +1034,10 @@ const R = .22, SPEED = 1.5;
 const G_UP = new THREE.Vector3(-1, 0, -1).normalize();          // «вверх по экрану» на полу
 const cellAt = (x, z) => ACT.findIndex(([i, j]) => x >= i && x < i + 1 && z >= j && z < j + 1);
 const charCell = () => cellAt(CH.x, CH.z);
+const standCell = () => { const a = cellAt(CH.x, CH.z); return a >= 0 && Math.abs(CH.y - floorY(a)) < .3 ? a : -1 };   // клетка ямы, на полу которой стоим (а не высоко над ней — на лестнице дома, в доме)
 CH.y = floorY(cellAt(CH.x, CH.z));
 function reach(a) {                                            // можно ли копать блок клетки a, стоя там, где стоим
-  const c = charCell(); if (c < 0) return false; if (a === c) return true;
+  const c = standCell(); if (c < 0) return false; if (a === c) return true;
   if (floorY(a) <= floorY(c) + .01) return false;              // соседняя клетка должна быть выше — это стенка перед нами
   const [i, j] = ACT[a], dx = Math.max(i - CH.x, 0, CH.x - (i + 1)), dz = Math.max(j - CH.z, 0, CH.z - (j + 1));
   return Math.hypot(dx, dz) < R + .5;                          // до стенки — до половины блока
@@ -1071,7 +1074,7 @@ function act() {
   if (tool === 'bar') {                                        // лом: ближайший ломаемый предмет перед персонажем
     const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
   if (tool === 'trowel') { const s = spotAhead(); if (s && !s.state) loosen(s); else { shakeTool('trowel'); toast(s ? 'Уже разрыхлено — подставь консервную банку' : 'Лопатка рыхлит землю там, где на стенке черви') } return }
-  const a = charCell(), nb = cellAt(CH.x + CH.face.x * (R + .48), CH.z + CH.face.z * (R + .48));
+  const a = standCell(), nb = a < 0 ? -1 : cellAt(CH.x + CH.face.x * (R + .48), CH.z + CH.face.z * (R + .48));
   if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else shakeTool('pick'); return }   // стенка перед нами
   if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
   shakeTool('pick');
@@ -1093,7 +1096,8 @@ function nearItem(ok) {                                        // ближайш
 /* перчатка: предмет поднимается к груди и едет вместе с персонажем; повторное действие ставит его перед собой */
 function grabItem(t) {
   const hv = TYPES[t.type].heavy; if (hv) { shakeTool('glove'); haptic('warn'); toast(hv === true ? 'Слишком тяжёлая — даже не сдвинуть' : hv); return }
-  const b = t.body; t.held = true; CH.held = t; t.hinted = false;
+  const b = t.body; t.held = true; CH.held = t; t.hinted = false; CH.grip = null;
+  { const L = t.local; t.carryRot = (L.max.z - L.min.z) > (L.max.x - L.min.x) * 1.15 ? ZR : 0 }   // длинную сторону — поперёк себя
   b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
   CH.swing = 0; haptic('medium'); toast('Взял: ' + TYPES[t.type].name.toLowerCase(), 0);
 }
@@ -1109,21 +1113,46 @@ function poseFree(t, x, y, z, yaw, sell) {                    // весь пре
     if (!heldFree(x + lx * c + lz * s, y, z - lx * s + lz * c, sell)) return false;
   return true;
 }
+/* ---------- как Кирью держит вещь ----------
+   вещь — жёстко перед ним: ближней гранью вплотную к животу (не сквозь него), повёрнута вместе с телом, не крутится.
+   Длинное держит поперёк себя; если поперёк не влезает — вдоль. Руки берутся за бока вещи (широкую — обнимает за ближний край).
+   Вещь упёрлась в стенку — дальше не идёт и Кирью: он останавливается, а не протаскивает её сквозь землю (лестницу в руках
+   это не касается — с ней по-прежнему подходят к стенке вплотную и лезут) */
+function holdBox(t, rot) {                                     // габариты вещи в системе Кирью (x — вбок, z — вперёд) при повороте rot
+  const L = t.local, c = Math.cos(rot), s = Math.sin(rot); let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const lx of [L.min.x, L.max.x]) for (const lz of [L.min.z, L.max.z]) { const x = lx * c + lz * s, z = -lx * s + lz * c;
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z) }
+  return { x0, x1, z0, z1 };
+}
+const HOLD_GAP = .05;                                          // зазор между животом и вещью
+function holdAt(t, x, y, z, yaw, rot) {                         // где окажется центр вещи, если Кирью стоит в (x, y, z) и смотрит по yaw
+  const hb = holdBox(t, rot), f = R + HOLD_GAP - hb.z0, up = t.local.max.y - t.local.min.y;
+  return { x: x + Math.sin(yaw) * f, y: y + .95 + up * .3, z: z + Math.cos(yaw) * f, yaw: yaw + rot, hb, f };
+}
+function holdFreeAt(t, x, y, z, yaw, rot = t.carryRot || 0) { const p = holdAt(t, x, y, z, yaw, rot); return poseFree(t, p.x, p.y, p.z, p.yaw, !!PRICE[t.type]) }
+const holdBlocks = t => t && t.type !== 'ladder';              // упирается ли Кирью вещью в стенки
 function carryPose(t) {
-  const b = t.body, up = t.local.max.y - t.local.min.y, y = CH.y + .95 + up * .3, sell = !!PRICE[t.type];
-  let k = 1, rot = t.carryRot || 0, found = false;               // упёрлись — подтягиваем к себе; поперёк не влезает — разворачиваем вдоль
-  for (const r of [rot, rot ? 0 : ZR]) { for (k = 1; k >= 0; k -= .125) if (poseFree(t, CH.x + CH.face.x * .42 * k, y, CH.z + CH.face.z * .42 * k, CH.yaw + r, sell)) { found = true; break }
-    if (found) { rot = r; break } }
-  let sx = 0, sz = 0;                                            // в углу не влезает никак — сдвигаем вдоль длинной стороны к середине ямы
-  if (!found) for (const r of [rot, rot ? 0 : ZR]) { const ax = Math.cos(CH.yaw + r), az = -Math.sin(CH.yaw + r);
-    for (const sh of [.25, -.25, .5, -.5, .75, -.75, 1, -1]) if (poseFree(t, CH.x + ax * sh, y, CH.z + az * sh, CH.yaw + r, sell)) { found = true; rot = r; sx = ax * sh; sz = az * sh; break }
-    if (found) break }
-  if (!found) rot = t.carryRot || 0; if (sx || sz || !found) k = 0; t.carryRot = rot;
-  if (k < 1 && !sell && !t.hinted && heldFree(CH.x + CH.face.x * .42, y, CH.z + CH.face.z * .42, true)) {   // несёт к корзине то, что не продаётся
-    t.hinted = true; toast(t.type === 'pipe' ? 'Целиком не влезет — сначала разломай ломом' : TYPES[t.type].light ? 'Фонарь лучше оставить себе' : 'Это торговцу не нужно') }
-  b.position.set(CH.x + sx + CH.face.x * .42 * Math.max(0, k), y, CH.z + sz + CH.face.z * .42 * Math.max(0, k));
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, CH.yaw + rot, 0));   // длинные вещи держит поперёк себя
+  const b = t.body, sell = !!PRICE[t.type], yaw = CH.yaw;
+  let rot = t.carryRot || 0, P = null;
+  for (const r of [rot, rot ? 0 : ZR]) { const p = holdAt(t, CH.x, CH.y, CH.z, yaw, r); if (poseFree(t, p.x, p.y, p.z, p.yaw, sell)) { P = p; rot = r; break } }
+  if (!P) {                                                    // застрял (взял вещь вплотную к стенке, спрыгнул): подтягиваем к себе / сдвигаем вдоль, как раньше
+    const p = holdAt(t, CH.x, CH.y, CH.z, yaw, rot), fx = Math.sin(yaw), fz = Math.cos(yaw);
+    for (let k = 1; k >= 0 && !P; k -= .125) { const x = CH.x + fx * p.f * k, z = CH.z + fz * p.f * k; if (poseFree(t, x, p.y, z, p.yaw, sell)) P = { ...p, x, z } }
+    if (!P) { const ax = Math.cos(p.yaw), az = -Math.sin(p.yaw);
+      for (const sh of [.25, -.25, .5, -.5, .75, -.75]) if (poseFree(t, CH.x + ax * sh, p.y, CH.z + az * sh, p.yaw, sell)) { P = { ...p, x: CH.x + ax * sh, z: CH.z + az * sh }; break } }
+    if (!P) P = { ...p, x: CH.x, z: CH.z };
+  }
+  t.carryRot = rot;
+  if (!sell && !t.hinted) { const p = holdAt(t, CH.x, CH.y, CH.z, yaw, rot);   // упёрся в окно лавки с тем, что не продаётся
+    if (!poseFree(t, p.x, p.y, p.z, p.yaw, false) && poseFree(t, p.x, p.y, p.z, p.yaw, true)) { t.hinted = true; toast(t.type === 'pipe' ? 'Целиком не влезет — сначала разломай ломом' : TYPES[t.type].light ? 'Фонарь лучше оставить себе' : 'Это торговцу не нужно') } }
+  b.position.set(P.x, P.y, P.z);
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, P.yaw, 0));
   b.quaternion.set(q.x, q.y, q.z, q.w); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+  // за что берутся руки — в системе Кирью: бока вещи, а широкую — ближний край снизу
+  const c = Math.cos(yaw), s = Math.sin(yaw), dx = P.x - CH.x, dz = P.z - CH.z, lx = dx * c - dz * s, lz = dx * s + dz * c, hb = P.hb;
+  const ly = P.y - CH.y, hy = (t.local.max.y - t.local.min.y) / 2;
+  if (hb.x1 - hb.x0 < .86) { const zg = Math.min(lz, .4); CH.grip = [[lx + hb.x0 - .015, ly - hy * .15, zg], [lx + hb.x1 + .015, ly - hy * .15, zg]] }
+  else { const zg = lz + hb.z0 - .01; CH.grip = [[lx - .2, ly - hy * .6, zg], [lx + .2, ly - hy * .6, zg]] }
 }
 /* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
 function lostItem(t) {
@@ -1132,7 +1161,11 @@ function lostItem(t) {
   const a = cellAt(p.x, p.z); return a >= 0 ? p.y < floorY(a) - 1.2 : p.y < -(BOT + 1) * BH;   // в яме — только если провалилась сквозь пол своей клетки
 }
 function returnItem(t) {
-  const b = t.body; b.position.set(CH.x, Math.min(1.5, CH.y + 9), CH.z);
+  const b = t.body, now = performance.now(); t.retN = now - (t.retT || 0) < 8000 ? (t.retN || 0) + 1 : 1; t.retT = now;
+  if (t.retN > 2) {                                              // опять провалилась — значит, под Кирью нечему её держать: роняем на середину ямы
+    let a = 0; for (let k = 0; k < ACT.length; k++) if (Math.hypot(ACT[k][0] + .5 - PC, ACT[k][1] + .5 - PC) < Math.hypot(ACT[a][0] + .5 - PC, ACT[a][1] + .5 - PC)) a = k;
+    b.position.set(ACT[a][0] + .5, floorY(a) + 1.2, ACT[a][1] + .5); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.wakeUp(); t.falling = false; t.fallV = 0; return }
+  b.position.set(CH.x, Math.min(1.5, CH.y + 9), CH.z);
   b.velocity.set(0, 0, 0); b.angularVelocity.set((Math.random() - .5) * 4, 0, (Math.random() - .5) * 4); b.wakeUp(); t.falling = false; t.fallV = 0;
   toast('Сверху что-то летит!');
 }
@@ -1171,7 +1204,12 @@ const ROOM = [[.25, 5.75, .25, 3.75]];                          // комнат�
 const BALC = [[1, 3.85, 4.1, 5.75], [.25, 3.85, 5, 5.75]], DOOR = [1.65, 2.35, 3.7, 4.15];   // балкон снаружи стены с дверью
 const INSIDE = [...ROOM, ...BALC, DOOR];
 for (const r of INSIDE) SURF.push([...r, () => HF]);
-const STEP_UP = .45;                                           // на сколько можно шагнуть вверх-вниз (крутой пролёт круче обычного)
+const STEP_UP = .45;
+{ // земля для предметов там, где можно ходить снаружи ямы: верх декоративных стенок и расширение за ними, по краю мира — бортик.
+  // раньше этих тел не было: поставленная туда вещь проваливалась сквозь картинку и бесконечно «летела сверху»
+  for (const [x0, x1, z0, z1] of [[-1.75, PIT0 - .45, -1.75, 6], [PIT0 - .45, 3, -1.75, PIT0 - 1], [3, 6, -1.75, -.05]]) wall(x0, x1, -.5, 0, z0, z1);
+  wall(-1.9, -1.75, 0, .45, -1.9, 6); wall(-1.9, 6, 0, .45, -1.9, -1.75); wall(-1.75, PIT0 - .45, 0, .45, 6, 6.15); wall(6, 6.15, 0, .45, -1.75, -.05);
+}                                           // на сколько можно шагнуть вверх-вниз (крутой пролёт круче обычного)
 function outerSurfaces(x, z) { const s = []; for (const r of SURF) if (inR(r, x, z)) s.push(r[4](x, z)); return s }
 function groundAt(x, z, yRef) {                                // на какой высоте стоять в точке; null — там пусто или не залезть
   const s = outerSurfaces(x, z), a = cellAt(x, z); if (a >= 0) s.push(floorY(a)); if (!s.length) return null;
@@ -1811,7 +1849,9 @@ function stepChar(dt) {
         const nx = ax === 'x' ? CH.x + dv : CH.x, nz = ax === 'z' ? CH.z + dv : CH.z, px = ax === 'x' ? nx + Math.sign(dv) * R : nx, pz = ax === 'z' ? nz + Math.sign(dv) * R : nz;
         const h = groundAt(px, pz, fl);
         if (h === null || kitHit(px, pz, fl)) { if (Math.abs(dir[ax]) > .55) push = new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0); continue }   // край мира, высокая стенка, стеллаж, ящик
-        if (Math.abs(h - fl) < STEP_UP) { CH.x = nx; CH.z = nz; CH.moving = true }
+        if (Math.abs(h - fl) < STEP_UP) {
+          const HT = CH.held; if (holdBlocks(HT) && holdFreeAt(HT, CH.x, fl, CH.z, CH.yaw) && !holdFreeAt(HT, nx, h, nz, CH.yaw)) continue;   // вещь в руках упёрлась — стоим
+          CH.x = nx; CH.z = nz; CH.moving = true }
         else if (Math.abs(dir[ax]) > .55) blocked = { h, ad: new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0) };
       }
       const pad = blocked ? blocked.ad : push, lc = pad && ladFrom(pad);                  // упёрлись в лестницу (снизу) или в край над ней (сверху) — лезем
@@ -1834,9 +1874,14 @@ function stepChar(dt) {
 const lerp = (a, b, k) => a + (b - a) * k;
 function drawChar(dt, now) {
   chG.position.set(CH.x, CH.state === 'ladder' ? CH.yd : CH.y, CH.z);
-  let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); CH.yaw += dy * Math.min(1, dt * 10); chG.rotation.y = CH.yaw;
+  let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); let st = dy * Math.min(1, dt * 10);
+  const HT = CH.held;                                           // с вещью в руках не разворачивается сквозь стенку: поворачивает, насколько пускает
+  if (holdBlocks(HT) && CH.state === 'walk' && Math.abs(st) > 1e-4 && holdFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw)) { let ok = false;
+    for (const f of [1, .5, .25, .1]) if (holdFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw + st * f)) { st *= f; ok = true; break }
+    if (!ok) st = 0 }
+  CH.yaw += st; chG.rotation.y = CH.yaw; if (CH.held) carryPose(CH.held);   // вещь — за телом в этом же кадре, руки — на неё
   CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
-  KIRYU.update(dt, { state: CH.state === 'bag' ? 'walk' : CH.state, moving: CH.moving, bag: bagPoseNow(), bagBack: BAG.back ? bagFill() / 6 : null, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, lad: CH.state === 'ladder' ? CH.lad.pose : null, sideLad: CH.state === 'ladder' && !!CH.lad.carry, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
+  KIRYU.update(dt, { state: CH.state === 'bag' ? 'walk' : CH.state, moving: CH.moving, bag: bagPoseNow(), bagBack: BAG.back ? bagFill() / 6 : null, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, grip: CH.held && CH.grip && CH.state !== 'ladder' && CH.state !== 'jump' && CH.state !== 'fall' ? CH.grip : null, lad: CH.state === 'ladder' ? CH.lad.pose : null, sideLad: CH.state === 'ladder' && !!CH.lad.carry, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
 }
 
 /* ---------- 3D-иконки инструментов: маленькие лоуполи-модели, рисуются отдельной камерой в пиксельный холст ----------
@@ -2513,8 +2558,8 @@ function bagSeat(it) {
   t.g.position.set(cx - com.x, .02 - s * (t.com.y + L.min.y), cz - com.z);
   it.s = s; it.yaw = yaw;
 }
-function bagDetach(t) { if (t.body) world.removeBody(t.body); const i = trash.indexOf(t); if (i >= 0) trash.splice(i, 1); t.inBag = true }
-function bagRelease(t, p, q) {                                   // обратно на пол: низ предмета — на p.y, физика снова включена
+function bagDetach(t) { t.vp = null; if (t.body) world.removeBody(t.body); const i = trash.indexOf(t); if (i >= 0) trash.splice(i, 1); t.inBag = true }
+function bagRelease(t, p, q) { t.vp = null;                                   // обратно на пол: низ предмета — на p.y, физика снова включена
   scene.attach(t.g); t.g.scale.setScalar(1); t.g.quaternion.copy(q);
   let lo = Infinity; const v = new THREE.Vector3(), L = t.local;
   for (const x of [L.min.x, L.max.x]) for (const y of [L.min.y, L.max.y]) for (const z of [L.min.z, L.max.z]) lo = Math.min(lo, v.set(x, y, z).applyQuaternion(q).y);
@@ -2704,6 +2749,7 @@ function bcIso() { const t = cam.position.clone().addScaledVector(VIEW, -60); re
 const bcFov = pf => 2 + 43 * pf;
 function bagLit(k) { BAG.lit = BAG.lp ? Math.round(sm01(k * 1.4) * 5) * 3 : 0 }   // рабочий свет у плаща: как фонарь послабее, ступенями — свет пересчитывается редко
 const bagClear = () => BC.on ? sm01((BC.s.pf - .15) / .5) : 0;
+const bagClearCol = () => BAG.y0 < -.5 ? 0x07050a : 0x5a9cb0;   // вокруг: под землёй — темнота; на поверхности — ровное небо (силуэты города сверху выглядят полосками)
 function solidPt(x, y, z) {                                      // есть ли в точке земля (или стеллаж, ящик, стол)
   if (kitHit(x, z, y)) return true; if (y >= 0) return false;
   const i = Math.floor(x), j = Math.floor(z); if (i >= N || j >= N) return false; if (i < 0 || j < 0) return i >= -2 && j >= -2;
@@ -2798,6 +2844,7 @@ function stepBagCam(dt) {
     const g = k === 'az' ? Wv.az + wrapA(G.az - Wv.az) : G[k];
     BC.u[k] += (om * om * (g - Wv[k]) - 2 * om * BC.u[k]) * h; Wv[k] += BC.u[k] * h;
     BC.v[k] += (om * om * (Wv[k] - S[k]) - 2 * om * BC.v[k]) * h; S[k] += BC.v[k] * h }
+  if (B.ph === 'ui' && BCK.every(k => Math.abs(BC.v[k]) < .006 && Math.abs(BC.u[k]) < .006)) for (const k of BCK) { S[k] = Wv[k] = G[k]; BC.v[k] = BC.u[k] = 0 }   // долетела — замираем точно в цели, без дрожи на доли пикселя
   if (!B.ph) { const I = bcIso(); let near = true;
     for (const k of BCK) if (Math.abs(k === 'az' ? wrapA(S[k] - I[k]) : S[k] - I[k]) > (k === 'pf' ? .004 : .003) || Math.abs(BC.v[k]) > .02) near = false;
     if (near) { BC.on = false; VCAM = cam; return } }
@@ -3165,7 +3212,7 @@ function frame(now) {
   const raw = now - last, T0 = performance.now();
   const dt = Math.min(.05, (now - last) / 1000); last = now; timeU.value = now / 1000;
   for (const g of grabs.values()) stepHeld(g);
-  stepChar(dt); drawChar(dt, now); if (CH.held) carryPose(CH.held);
+  stepChar(dt); drawChar(dt, now);
   shopG.userData.mer.update(dt, { near: nearShop(), px: CH.x - MERCH.x, pz: CH.z - MERCH.z }); stepKZ(dt);
   const Tp = performance.now(); world.step(1 / 60, dt, 3); const Tq = performance.now();
   const sold = [];
@@ -3175,7 +3222,10 @@ function frame(now) {
         t.zoneT = (t.zoneT || 0) + dt; if (t.body.position.y < SHOP.floor + BASKET.h + .12 || t.zoneT > .8) { sold.push(t); continue } }
       else { t.zoneT = 0; depenetrate(t); if (lostItem(t)) returnItem(t);
         if (t.ghost ? !charHits(t) : CH.state !== 'walk' && charHits(t)) { t.ghost = !t.ghost; t.body.collisionFilterMask = t.ghost ? G_BLOCK : G_BLOCK | G_CHAR } } }   // упал или запрыгнул прямо на предмет — не расталкиваем
-    t.g.quaternion.copy(t.body.quaternion); t.g.position.copy(t.body.position).sub(t.com.clone().applyQuaternion(t.g.quaternion));
+    { const bp = t.body.position, bq = t.body.quaternion, lp = t.vp || (t.vp = new THREE.Vector3(1e9, 0, 0)), lq = t.vq || (t.vq = new THREE.Quaternion());   // картинку двигаем, только если тело сдвинулось заметно:
+      const dq = Math.abs(lq.x * bq.x + lq.y * bq.y + lq.z * bq.z + lq.w * bq.w);                                                                // дрожь лежащих друг на друге вещей не видна
+      if (t.held || lp.distanceToSquared(bp) > 1e-5 || dq < .99998) { lp.set(bp.x, bp.y, bp.z); lq.set(bq.x, bq.y, bq.z, bq.w);
+        t.g.quaternion.copy(lq); t.g.position.copy(lp).sub(t.com.clone().applyQuaternion(lq)) } }
     const vy = t.body.velocity.y;                             // удар об пол: тряска и пыль — один раз за падение
     if (!t.held && t.falling && vy > -1) { t.falling = false; if (t.fallV < -5) { haptic('medium'); const p = t.g.position; burst(p.x, p.y + .05, p.z, ['#8c7a6a', '#5e4c42', '#b8a48c'], 10, .5) } }
     if (!t.held && vy < -3) { t.falling = true; t.fallV = Math.min(t.fallV || 0, vy) } else if (!t.falling) t.fallV = 0;
@@ -3203,7 +3253,7 @@ function frame(now) {
   renderer.shadowMap.needsUpdate = true;
   const T2 = performance.now();
   SAY.ready = true; stepSay();
-  renderer.setClearColor(0x07050a, bagClear());   // над мешком срезанные стенки — тёмный фон, а не небо
+  renderer.setClearColor(bagClearCol(), bagClear());   // над мешком срезанные стенки — тёмный фон, а не небо
   renderer.render(scene, VCAM); perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
   const T3 = performance.now();
   drawOutlines();
