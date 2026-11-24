@@ -538,16 +538,27 @@ const SKEL_SHAPES = {
   skelLegs: () => [[new CANNON.Box(new CANNON.Vec3(.37, .07, .2)), [.35, .07, 0]], [new CANNON.Box(new CANNON.Vec3(.05, .14, .18)), [.7, .14, 0]]],
 };
 const BOTTLE_SH = R => () => [[new CANNON.Cylinder(R, R, .56, 10), [-.21, R, 0], QZ90], [new CANNON.Cylinder(R * .55, R * .55, .42, 8), [.28, R, 0], QZ90]];
+/* ---------- категории вещей ----------
+   у каждого типа в TYPES есть cat — по ней группируем вещи, когда будем заново считать цены, шансы и глубину появления */
+const CATS = {
+  bytovoy: 'Бытовой мусор',     // банки, бутылки, пакеты — мелочь, которой больше всего
+  metal: 'Металлолом',          // трубы и прочее железо
+  rubber: 'Резина',             // шины и куски шин
+  bones: 'Кости',               // скелеты и их части
+  bait: 'Наживка',              // банки с червями
+  gear: 'Снаряжение',           // то, чем пользуется сам Кирью: фонари, лестницы
+  story: 'Сюжетное',            // улики и находки для истории (пока пусто)
+};
 const TYPES = {
-  coffee: { name: 'Банка кофе', size: 1, mass: 1,
+  coffee: { name: 'Банка кофе', cat: 'bytovoy', size: 1, mass: 1,
     build(g) { const red = M(0xa8383a), band = M(0xe8d3a0), lid = M(0xc9d3dc);
       part(g, new THREE.CylinderGeometry(.15, .15, .3, 10), [red, lid, lid], 0, .15, 0);
       part(g, new THREE.CylinderGeometry(.153, .153, .09, 10, 1, true), band, 0, .15, 0) },
     shapes: () => [[new CANNON.Cylinder(.15, .15, .3, 10), [0, .15, 0]]] },
-  pipe: { name: 'Ржавая труба', size: 2, mass: 2, breaks: true, pieces: [['pipeHalf', [-.43, 0, 0]], ['pipeHalf', [.43, 0, 0]]],
+  pipe: { name: 'Ржавая труба', cat: 'metal', size: 2, mass: 2, breaks: true, pieces: [['pipeHalf', [-.43, 0, 0]], ['pipeHalf', [.43, 0, 0]]],
     build(g) { pipeMesh(g, 1.7, 17) },
     shapes: () => rod(1.7) },
-  lantern: { name: 'Фонарь', size: 1, mass: .8, light: 15,
+  lantern: { name: 'Фонарь', cat: 'gear', size: 1, mass: .8, light: 15,
     build(g) { const metal = M(0x2b2f36), glass = new THREE.MeshBasicMaterial({ color: 0xffd27a }); glass.userData.glow = true;
       part(g, new THREE.BoxGeometry(.2, .04, .2), metal, 0, .02, 0);
       part(g, new THREE.BoxGeometry(.14, .17, .14), glass, 0, .125, 0);
@@ -556,43 +567,43 @@ const TYPES = {
       part(g, new THREE.ConeGeometry(.1, .07, 4), metal, 0, .285, 0, Math.PI / 4);
       part(g, new THREE.TorusGeometry(.055, .012, 4, 8, Math.PI), metal, 0, .31, 0) },
     shapes: () => [[new CANNON.Box(new CANNON.Vec3(.1, .16, .1)), [0, .16, 0]]] },
-  tin: { name: 'Консервная банка', size: 1, mass: .6,
+  tin: { name: 'Консервная банка', cat: 'bytovoy', size: 1, mass: .6,
     build(g) { tinCan(g, false) },
     shapes: () => [[new CANNON.Cylinder(.105, .105, .15, 8), [0, .075, 0]]] },
-  wormTin: { name: 'Банка с червями', size: 1, mass: .7,
+  wormTin: { name: 'Банка с червями', cat: 'bait', size: 1, mass: .7,
     build(g) { tinCan(g, true) },
     shapes: () => [[new CANNON.Cylinder(.105, .105, .15, 8), [0, .075, 0]]] },
-  pipeHalf: { name: 'Половина трубы', size: 1, mass: 1,
+  pipeHalf: { name: 'Половина трубы', cat: 'metal', size: 1, mass: 1,
     build(g) { pipeMesh(g, .82, 5) },
     shapes: () => rod(.82) },
-  beer: { name: 'Банка пива', size: 1, mass: .5,
+  beer: { name: 'Банка пива', cat: 'bytovoy', size: 1, mass: .5,
     build(g) { beerCan(g) },
     shapes: () => [[new CANNON.Cylinder(.105, .105, .36, 10), [0, .18, 0]]] },
-  glass: { name: 'Зелёная бутылка', size: 1, mass: .8,
+  glass: { name: 'Зелёная бутылка', cat: 'bytovoy', size: 1, mass: .8,
     build(g) { const s = new THREE.Group(); s.scale.setScalar(.9); g.add(s); glassBottle(s) },   // на 10% меньше исходной
     shapes: () => [[new CANNON.Cylinder(.1125, .1125, .504, 10), [-.189, .1125, 0], QZ90], [new CANNON.Cylinder(.062, .062, .378, 8), [.252, .1125, 0], QZ90]] },
-  milk: { name: 'Пакет молока', size: 1, mass: .4,
+  milk: { name: 'Пакет молока', cat: 'bytovoy', size: 1, mass: .4,
     build(g) { milkCarton(g) },
     shapes: () => [[new CANNON.Box(new CANNON.Vec3(.065, .14, .065)), [0, .14, 0]]] },
-  tire: { name: 'Огромная шина', size: 4, mass: 10, heavy: 'Слишком тяжёлая — даже не сдвинуть. Разруби ломом', breaks: true, brokeMsg: 'Шина разрублена пополам', chips: TIRE_CHIPS,
+  tire: { name: 'Огромная шина', cat: 'rubber', size: 4, mass: 10, heavy: 'Слишком тяжёлая — даже не сдвинуть. Разруби ломом', breaks: true, brokeMsg: 'Шина разрублена пополам', chips: TIRE_CHIPS,
     pieces: [['tireHalf', [0, 0, 0], 0, [0, 0, 1]], ['tireHalf', [0, 0, 0], Math.PI, [0, 0, -1]]],
     build(g) { tireArc(g, 0, TAU) },
     shapes: () => tireShapes(0, TAU) },
-  tireHalf: { name: 'Половина шины', size: 2, mass: 5, heavy: 'Всё ещё тяжело — разруби ещё раз', breaks: true, brokeMsg: 'Половина шины разрублена', chips: TIRE_CHIPS,
+  tireHalf: { name: 'Половина шины', cat: 'rubber', size: 2, mass: 5, heavy: 'Всё ещё тяжело — разруби ещё раз', breaks: true, brokeMsg: 'Половина шины разрублена', chips: TIRE_CHIPS,
     pieces: [['tireQuarter', [0, 0, 0], 0, [.7, 0, .7]], ['tireQuarter', [0, 0, 0], -ZR, [-.7, 0, .7]]],
     build(g) { tireArc(g, 0, Math.PI) },
     shapes: () => tireShapes(0, Math.PI) },
-  tireQuarter: { name: 'Кусок шины', size: 1, mass: 2,
+  tireQuarter: { name: 'Кусок шины', cat: 'rubber', size: 1, mass: 2,
     build(g) { tireArc(g, 0, ZR) },
     shapes: () => tireShapes(0, ZR) },
-  skeleton: { name: 'Скелет Егора Филатова', size: 2, mass: 3, breaks: true, brokeMsg: 'Егор Филатов разобран на части', chips: ['#e9e0c6', '#c4b692', '#8c8170'],
+  skeleton: { name: 'Скелет Егора Филатова', cat: 'bones', size: 2, mass: 3, breaks: true, brokeMsg: 'Егор Филатов разобран на части', chips: ['#e9e0c6', '#c4b692', '#8c8170'],
     pieces: Object.entries(SKEL).map(([k, [ox, , push]]) => [k, [ox, 0, 0], 0, push]),
     build(g) { for (const [ox, fn] of Object.values(SKEL)) { const p = new THREE.Group(); p.position.x = ox; g.add(p); fn(p) } },
     shapes: () => Object.entries(SKEL_SHAPES).flatMap(([k, f]) => f().map(([sh, o]) => [sh, [o[0] + SKEL[k][0], o[1], o[2]]])) },
-  skull: { name: 'Череп Егора Филатова', size: 1, mass: 1, build(g) { skullPart(g) }, shapes: SKEL_SHAPES.skull },
-  skelChest: { name: 'Рёбра Егора Филатова', size: 1, mass: 1.1, build(g) { chestPart(g) }, shapes: SKEL_SHAPES.skelChest },
-  skelLegs: { name: 'Ноги Егора Филатова', size: 1, mass: 1, build(g) { legsPart(g) }, shapes: SKEL_SHAPES.skelLegs },
-  ladder: { name: 'Лестница', size: 2, mass: 1.2,                // высотой ровно в блок, три ступеньки
+  skull: { name: 'Череп Егора Филатова', cat: 'bones', size: 1, mass: 1, build(g) { skullPart(g) }, shapes: SKEL_SHAPES.skull },
+  skelChest: { name: 'Рёбра Егора Филатова', cat: 'bones', size: 1, mass: 1.1, build(g) { chestPart(g) }, shapes: SKEL_SHAPES.skelChest },
+  skelLegs: { name: 'Ноги Егора Филатова', cat: 'bones', size: 1, mass: 1, build(g) { legsPart(g) }, shapes: SKEL_SHAPES.skelLegs },
+  ladder: { name: 'Лестница', cat: 'gear', size: 2, mass: 1.2,                // высотой ровно в блок, три ступеньки
     build(g) { const rl = M(0xd9a35c), rg = M(0xa8692f);
       for (const z of [-.2, .2]) part(g, new THREE.BoxGeometry(BH, .07, .085), rl, 0, .035, z);           // толстые брусья
       for (const x of [-BH / 3, 0, BH / 3]) part(g, new THREE.BoxGeometry(.065, .05, .33), rg, x, .035, 0) },   // и широкие ступеньки
@@ -1114,12 +1125,13 @@ function nearItem(ok) {                                        // ближайш
 /* перчатка: предмет поднимается к груди и едет вместе с персонажем; повторное действие ставит его перед собой */
 function grabItem(t) {
   const hv = TYPES[t.type].heavy; if (hv) { shakeTool('glove'); haptic('warn'); toast(hv === true ? 'Слишком тяжёлая — даже не сдвинуть' : hv); return }
-  const b = t.body; t.held = true; CH.held = t; t.hinted = false; CH.grip = null; CH.up = 0; CH.upW = 0;
+  const b = t.body; t.held = true; CH.held = t; t.hinted = false; CH.grip = null; CH.up = 0; CH.upW = 0; CH.upAsk = 0;
   { const L = t.local, a = (L.max.z - L.min.z) > (L.max.x - L.min.x) * 1.15 ? ZR : 0, b = a ? 0 : ZR, f = r => holdFreeAt(t, CH.x, CH.y, CH.z, CH.yaw, r) || upFreeAt(t, CH.x, CH.y, CH.z, CH.yaw, r);
     t.carryRot = f(a) || !f(b) ? a : b }   // длинную сторону — поперёк себя; поперёк здесь не помещается — вдоль. Дальше так и держит
   b.type = CANNON.Body.KINEMATIC; b.collisionResponse = false; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();   // в руках никого не расталкивает
   CH.swing = 0; haptic('medium'); toast('Взял: ' + TYPES[t.type].name.toLowerCase(), 0);
 }
+for (const k in TYPES) if (!CATS[TYPES[k].cat]) console.warn('У вещи без категории:', k);   // новая вещь — не забудь cat
 const PRICE = { tin: 1, coffee: 2, beer: 1, glass: 1, milk: 1, pipeHalf: 4, wormTin: 5, tireQuarter: 1, skeleton: 1, skull: 1, skelChest: 1, skelLegs: 1 };   // сколько монет даёт торговец за кусочек мусора
 function heldFree(x, y, z, sell) {                             // можно ли держать предмет в этой точке
   const inPit = x > PIT0 + .12 && x < PIT1 - .12 && z > PIT0 + .12 && z < PIT1 - .12;
@@ -1153,8 +1165,8 @@ const holdBlocks = t => !!t;                                   // упирает
 /* ---------- вещь над головой ----------
    упёрся вещью в стенку или в край участка — Кирью поднимает её над головой и идёт дальше вплотную (как без вещи);
    впереди снова свободно — опускает к животу. Над головой вещь может чуть свисать за край участка — там пусто */
-const UP_LIFT = 1.68;                                          // низ вещи над головой — на такой высоте от ног
-function upAt(t, x, y, z, yaw, rot) { const hh = (t.local.max.y - t.local.min.y) / 2, hb = holdBox(t, rot), f = .04 - (hb.z0 + hb.z1) / 2;
+const UP_LIFT = 1.75;                                          // низ вещи над головой — над каской с фонарём (её верх — около 1,72 от ног); выше руки не дотянутся
+function upAt(t, x, y, z, yaw, rot) { const hh = (t.local.max.y - t.local.min.y) / 2, hb = holdBox(t, rot), f = .2 - (hb.z0 + hb.z1) / 2;   // над головой, а голова у Кирью вынесена вперёд
   return { x: x + Math.sin(yaw) * f, y: y + UP_LIFT + hh, z: z + Math.cos(yaw) * f, yaw: yaw + rot, hb, f, hh } }
 function upPtFree(x, y0, y1, z) {                               // точка вещи над головой: не в земле, не в стеллаже, не сквозь пол и потолок дома
   const inD = INSIDE.some(r => inR(r, x, z, .05));
@@ -1170,14 +1182,22 @@ function upFreeAt(t, x, y, z, yaw, rot = t.carryRot || 0) {
     if (!upPtFree(p.x + lx * c + lz * s, p.y - p.hh, p.y + p.hh, p.z - lx * s + lz * c)) return false;
   return true;
 }
-const carryFreeAt = (t, x, y, z, yaw) => holdFreeAt(t, x, y, z, yaw) || upFreeAt(t, x, y, z, yaw);   // пройти можно — перед собой или над головой
+const carryFreeAt = (t, x, y, z, yaw) => holdFreeAt(t, x, y, z, yaw) || upFreeAt(t, x, y, z, yaw);
+/* можно ли шагнуть/повернуться в позу (x, z, yaw): перед собой свободно; или вещь уже целиком над головой и там свободно.
+   Пока поднимает — стоит на месте (иначе вещь по пути вверх влезла бы в стенку). Застрял совсем — отпускаем, чтобы выбрался */
+function carryMoveOk(t, x0, y0, z0, yaw0, x, y, z, yaw) {
+  if (holdFreeAt(t, x, y, z, yaw)) return true;
+  if ((CH.up || 0) >= .999 && upFreeAt(t, x, y, z, yaw)) return true;
+  return !holdFreeAt(t, x0, y0, z0, yaw0) && !upFreeAt(t, x0, y0, z0, yaw0);
+}
 function carryPose(t, dt = 0) {
   const b = t.body, sell = !!PRICE[t.type], yaw = CH.yaw;
   let rot = t.carryRot || 0, P = null;
   { const p = holdAt(t, CH.x, CH.y, CH.z, yaw, rot); if (poseFree(t, p.x, p.y, p.z, p.yaw, sell)) P = p }   // как взял — так и несёт: сам по себе не перехватывает (скелет не встаёт «за голову»)
   // перед собой не помещается — над голову (если там есть место); опускает, когда впереди свободно уже четверть секунды
   const upOk = holdBlocks(t) && CH.state === 'walk' && upFreeAt(t, CH.x, CH.y, CH.z, yaw, rot);
-  if (!P && upOk) { CH.upW = 1; CH.upF = 0 } else if (P) { CH.upF = (CH.upF || 0) + dt; if (CH.upF > .25 || !upOk) CH.upW = 0 } else CH.upW = 0;
+  CH.upAsk = Math.max(0, (CH.upAsk || 0) - dt);
+  if ((!P || CH.upAsk > 0) && upOk) { CH.upW = 1; CH.upF = 0 } else if (P) { CH.upF = (CH.upF || 0) + dt; if (CH.upF > .25 || !upOk) CH.upW = 0 } else CH.upW = 0;
   if (CH.state !== 'walk') CH.upW = 0;
   CH.up = Math.max(0, Math.min(1, (CH.up || 0) + (CH.upW ? 1 : -1) * dt / .3));
   if (!P) {                                                    // застрял (взял вещь вплотную к стенке, спрыгнул): подтягиваем к себе / сдвигаем вдоль, как раньше
@@ -1188,8 +1208,12 @@ function carryPose(t, dt = 0) {
     if (!P) P = { ...p, x: CH.x, z: CH.z };
   }
   t.carryRot = rot; CH.dropP = P;                            // куда ставить, если сейчас опустить
-  if (CH.up > 0) { const U = upAt(t, CH.x, CH.y, CH.z, yaw, rot), e = CH.up * CH.up * (3 - 2 * CH.up), a = Math.min(1, e * 1.6);   // по дуге: сначала вверх, потом к голове
-    P = { ...P, x: P.x + (U.x - P.x) * e, y: P.y + (U.y - P.y) * a, z: P.z + (U.z - P.z) * e } }
+  if (CH.up > 0) {                                             // голова — препятствие: сначала поднимает перед лицом выше каски, потом переносит назад над головой
+    const U = upAt(t, CH.x, CH.y, CH.z, yaw, rot), F = holdAt(t, CH.x, CH.y, CH.z, yaw, rot), u = CH.up, sm = k => k * k * (3 - 2 * k);
+    const e0 = sm(Math.min(1, u / .3)), e1 = sm(Math.max(0, Math.min(1, (u - .25) / .4))), e2 = sm(Math.max(0, (u - .6) / .4));
+    const out = .22 * e0 * (1 - e2);                               // три шага: отводит от лица (волосы торчат вперёд), поднимает выше каски, переносит над головой
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    P = { ...F, x: F.x + (U.x - F.x) * e2 + fx * out, y: F.y + (U.y - F.y) * e1, z: F.z + (U.z - F.z) * e2 + fz * out } }
   if (!sell && !t.hinted) { const p = holdAt(t, CH.x, CH.y, CH.z, yaw, rot);   // упёрся в окно лавки с тем, что не продаётся
     if (!poseFree(t, p.x, p.y, p.z, p.yaw, false) && poseFree(t, p.x, p.y, p.z, p.yaw, true)) { t.hinted = true; toast(t.type === 'pipe' ? 'Целиком не влезет — сначала разломай ломом' : TYPES[t.type].light ? 'Фонарь лучше оставить себе' : 'Это торговцу не нужно') } }
   b.position.set(P.x, P.y, P.z);
@@ -1198,7 +1222,7 @@ function carryPose(t, dt = 0) {
   // за что берутся руки — в системе Кирью: бока вещи, а широкую — ближний край снизу; над головой — бока снизу
   const c = Math.cos(yaw), s = Math.sin(yaw), dx = P.x - CH.x, dz = P.z - CH.z, lx = dx * c - dz * s, lz = dx * s + dz * c, hb = P.hb;
   const ly = P.y - CH.y, hy = (t.local.max.y - t.local.min.y) / 2;
-  if (hb.x1 - hb.x0 < .86) { const zg = Math.min(lz, .4); CH.grip = [[lx + hb.x0 - .015, ly - hy * (.15 + .6 * CH.up), zg], [lx + hb.x1 + .015, ly - hy * (.15 + .6 * CH.up), zg]] }
+  if (hb.x1 - hb.x0 < .86) { const zg = Math.min(lz, .4); CH.grip = [[lx + hb.x0 - .015, ly - hy * (.15 + .85 * CH.up), zg], [lx + hb.x1 + .015, ly - hy * (.15 + .85 * CH.up), zg]] }
   else { const zg = lz + hb.z0 * (1 - CH.up) - .01; CH.grip = [[lx - .2, ly - hy * (.6 + .4 * CH.up), zg], [lx + .2, ly - hy * (.6 + .4 * CH.up), zg]] }
 }
 /* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
@@ -1666,7 +1690,7 @@ const cap = s => s[0].toUpperCase() + s.slice(1);
 .tool .ph-dot{position:absolute;top:2px;right:2px;width:11px;height:11px;border-radius:50%;background:#ff3b5c;box-shadow:0 0 0 2px #2a1a10;animation:ph-dot 1s ease-in-out infinite;pointer-events:none}
 @keyframes ph-dot{50%{transform:scale(1.25)}}
 `; document.head.appendChild(st) }
-const DT_PEOPLE = { stranger: { id: 'stranger', name: 'Неизвестный номер', hair: 'long', bg: ['#ffc2dc', '#a8406f'] } };
+const DT_PEOPLE = { stranger: { id: 'stranger', name: 'Розовые', hair: 'long', bg: ['#ffc2dc', '#a8406f'] } };
 /* сценарии переписки — их собирает редактор диалогов («Скопировать для игры»).
    узел: {say:[реплики собеседника], ask:[{t:текст ответа, to:следующий узел}]}; без ask или с пустым to — пока конец */
 const DT_SCRIPTS = {
@@ -1743,7 +1767,7 @@ const SMS = PHONE.register({
   unlock(id) {                                       // новый собеседник с неизвестного номера
     if (this.m[id]) return;
     this.m[id] = { c: [], nw: true }; this.badge(); this.buzz(); this.refresh();
-    toast('СМС с неизвестного номера…', 2);
+    toast('СМС от ' + (DT_PEOPLE[id] ? DT_PEOPLE[id].name : 'незнакомки') + '…', 2);
   },
   start(ctx) { this.main(ctx) },
 
@@ -1898,7 +1922,8 @@ function stepChar(dt) {
         const h = groundAt(px, pz, fl);
         if (h === null || kitHit(px, pz, fl)) { if (Math.abs(dir[ax]) > .55) push = new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0); continue }   // край мира, высокая стенка, стеллаж, ящик
         if (Math.abs(h - fl) < STEP_UP) {
-          const HT = CH.held; if (holdBlocks(HT) && carryFreeAt(HT, CH.x, fl, CH.z, CH.yaw) && !carryFreeAt(HT, nx, h, nz, CH.yaw)) continue;   // вещь в руках упёрлась — стоим
+          const HT = CH.held; if (holdBlocks(HT)) { if (!holdFreeAt(HT, nx, h, nz, CH.yaw)) CH.upAsk = .3;   // впереди вещь не пройдёт — поднять над головой
+            if (!carryMoveOk(HT, CH.x, fl, CH.z, CH.yaw, nx, h, nz, CH.yaw)) continue }   // вещь в руках упёрлась — стоим
           CH.x = nx; CH.z = nz; CH.moving = true }
         else if (Math.abs(dir[ax]) > .55) blocked = { h, ad: new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0) };
       }
@@ -1924,8 +1949,9 @@ function drawChar(dt, now) {
   chG.position.set(CH.x, CH.state === 'ladder' ? CH.yd : CH.y, CH.z);
   let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); let st = dy * Math.min(1, dt * 10);
   const HT = CH.held;                                           // с вещью в руках не разворачивается сквозь стенку: поворачивает, насколько пускает
-  if (holdBlocks(HT) && CH.state === 'walk' && Math.abs(st) > 1e-4 && carryFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw)) { let ok = false;
-    for (const f of [1, .5, .25, .1]) if (carryFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw + st * f)) { st *= f; ok = true; break }
+  if (holdBlocks(HT) && CH.state === 'walk' && Math.abs(st) > 1e-4) { let ok = false;
+    if (!holdFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw + st)) CH.upAsk = .3;
+    for (const f of [1, .5, .25, .1]) if (carryMoveOk(HT, CH.x, CH.y, CH.z, CH.yaw, CH.x, CH.y, CH.z, CH.yaw + st * f)) { st *= f; ok = true; break }
     if (!ok) st = 0 }
   CH.yaw += st; chG.rotation.y = CH.yaw; if (CH.held) carryPose(CH.held, dt);   // вещь — за телом в этом же кадре, руки — на неё
   CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
