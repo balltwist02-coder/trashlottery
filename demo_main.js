@@ -244,6 +244,24 @@ world.broadphase = new CANNON.SAPBroadphase(world); world.allowSleep = true;
 world.solver.iterations = 15;
 world.defaultContactMaterial.friction = .4; world.defaultContactMaterial.restitution = 0;   // без отскоков
 const G_BLOCK = 1, G_TRASH = 2, G_CHAR = 4;
+/* с чем сталкивается предмет: всегда с землёй; с Кирью — если не «призрак» (упал прямо на него); с другими вещами — если не застрял в них при появлении.
+   Раньше вещи друг с другом не сталкивались вовсе: поставленная на кучу проваливалась сквозь соседей */
+const tMask = t => G_BLOCK | (t.ghost ? 0 : G_CHAR) | (t.sep ? 0 : G_TRASH);
+function trashOverlap(t) {                                     // с какой вещью пересекается предмет (по коробкам, с небольшим допуском); null — ни с какой
+  const a = t.body; a.updateAABB(); const m = .02;
+  for (const o of trash) { if (o === t || !o.body || o.held || o.inBag || o.kz || !o.active) continue; const b = o.body; b.updateAABB();
+    if (a.aabb.lowerBound.x + m < b.aabb.upperBound.x && a.aabb.upperBound.x - m > b.aabb.lowerBound.x && a.aabb.lowerBound.y + m < b.aabb.upperBound.y && a.aabb.upperBound.y - m > b.aabb.lowerBound.y
+      && a.aabb.lowerBound.z + m < b.aabb.upperBound.z && a.aabb.upperBound.z - m > b.aabb.lowerBound.z) return o }
+  return null;
+}
+function wakeNear(t) { const p = t.body.position; for (const o of trash) if (o.body && o !== t && Math.abs(o.body.position.x - p.x) < 1.5 && Math.abs(o.body.position.z - p.z) < 1.5) o.body.wakeUp() }
+function sepStep(t, dt) {                                      // застрявшие друг в друге вещи понемногу раздвигаем вбок; через 2 с — включаем столкновения как есть
+  const o = trashOverlap(t); t.sepT = (t.sepT || 0) + dt;
+  if (!o || t.sepT > 2) { t.sep = false; t.sepT = 0; t.body.collisionFilterMask = tMask(t); t.body.wakeUp(); return }
+  const a = t.body.position, b = o.body.position; let dx = a.x - b.x, dz = a.z - b.z, l = Math.hypot(dx, dz); if (l < 1e-3) { dx = Math.random() - .5; dz = Math.random() - .5; l = Math.hypot(dx, dz) }
+  a.x += dx / l * .6 * dt; a.z += dz / l * .6 * dt; t.body.wakeUp();
+}
+function sepCheck(t) { t.sep = !!trashOverlap(t); t.sepT = 0; if (t.body) t.body.collisionFilterMask = tMask(t) }   // появился внутри другой вещи — пока не разойдутся, проходит сквозь
 const blockShape = new CANNON.Box(new CANNON.Vec3(.5, BH / 2, .5));
 for (let z = 0; z <= BOT; z++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (code(i, j, z) !== '.') blocks.set(i + ',' + j + ',' + z, { k: matKey(i, j, z), body: null });
 for (let z = SHOP.z0; z <= SHOP.z1; z++) for (let i = SHOP.i0; i < SHOP.i1; i++) blocks.set(i + ',-1,' + z, { k: ['З', 'З1', 'З2'][hash(i, -1, z)], body: null });   // задняя стенка выемки
@@ -653,14 +671,14 @@ function activate(t) {
   t.g.traverse(o => { if (o.isMesh) { o.geometry.computeBoundingBox(); bb.union(o.geometry.boundingBox.clone().applyMatrix4(inv.clone().multiply(o.matrixWorld))) } });
   const c = bb.getCenter(new THREE.Vector3()); t.com = c; t.local = bb.translate(c.clone().negate());
   // умеренное торможение: предмет не «липнет» к стенкам и не застывает в наклоне
-  const body = new CANNON.Body({ mass: TYPES[t.type].mass, collisionFilterGroup: G_TRASH, collisionFilterMask: G_BLOCK | G_CHAR, linearDamping: .3, angularDamping: .45 });
+  const body = new CANNON.Body({ mass: TYPES[t.type].mass, collisionFilterGroup: G_TRASH, collisionFilterMask: G_BLOCK | G_CHAR | G_TRASH, linearDamping: .3, angularDamping: .45 });
   for (const [s, o, q] of TYPES[t.type].shapes()) body.addShape(s, new CANNON.Vec3(o[0] - c.x, o[1] - c.y, o[2] - c.z), q);
   const wc = c.clone().applyQuaternion(t.g.quaternion).add(t.g.position);
   body.position.set(wc.x, wc.y, wc.z);
   body.quaternion.set(t.g.quaternion.x, t.g.quaternion.y, t.g.quaternion.z, t.g.quaternion.w);
   body.sleepSpeedLimit = .12; body.sleepTimeLimit = .5;
   world.addBody(body); t.body = body;
-  if (charHits(t)) { body.collisionFilterMask = G_BLOCK; t.ghost = true }
+  t.ghost = charHits(t); sepCheck(t);
 }
 /* ---------- освещение по блокам (как в Minecraft) ----------
    в каждой клетке мира хранится уровень света 0..15. Небо светит сверху и слабеет с глубиной — ниже SKY_D слоёв полный мрак.
@@ -1096,9 +1114,10 @@ function nearItem(ok) {                                        // ближайш
 /* перчатка: предмет поднимается к груди и едет вместе с персонажем; повторное действие ставит его перед собой */
 function grabItem(t) {
   const hv = TYPES[t.type].heavy; if (hv) { shakeTool('glove'); haptic('warn'); toast(hv === true ? 'Слишком тяжёлая — даже не сдвинуть' : hv); return }
-  const b = t.body; t.held = true; CH.held = t; t.hinted = false; CH.grip = null;
-  { const L = t.local; t.carryRot = (L.max.z - L.min.z) > (L.max.x - L.min.x) * 1.15 ? ZR : 0 }   // длинную сторону — поперёк себя
-  b.type = CANNON.Body.KINEMATIC; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();
+  const b = t.body; t.held = true; CH.held = t; t.hinted = false; CH.grip = null; CH.up = 0; CH.upW = 0;
+  { const L = t.local, a = (L.max.z - L.min.z) > (L.max.x - L.min.x) * 1.15 ? ZR : 0, b = a ? 0 : ZR, f = r => holdFreeAt(t, CH.x, CH.y, CH.z, CH.yaw, r) || upFreeAt(t, CH.x, CH.y, CH.z, CH.yaw, r);
+    t.carryRot = f(a) || !f(b) ? a : b }   // длинную сторону — поперёк себя; поперёк здесь не помещается — вдоль. Дальше так и держит
+  b.type = CANNON.Body.KINEMATIC; b.collisionResponse = false; b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.updateMassProperties();   // в руках никого не расталкивает
   CH.swing = 0; haptic('medium'); toast('Взял: ' + TYPES[t.type].name.toLowerCase(), 0);
 }
 const PRICE = { tin: 1, coffee: 2, beer: 1, glass: 1, milk: 1, pipeHalf: 4, wormTin: 5, tireQuarter: 1, skeleton: 1, skull: 1, skelChest: 1, skelLegs: 1 };   // сколько монет даёт торговец за кусочек мусора
@@ -1130,11 +1149,37 @@ function holdAt(t, x, y, z, yaw, rot) {                         // где ока
   return { x: x + Math.sin(yaw) * f, y: y + .95 + up * .3, z: z + Math.cos(yaw) * f, yaw: yaw + rot, hb, f };
 }
 function holdFreeAt(t, x, y, z, yaw, rot = t.carryRot || 0) { const p = holdAt(t, x, y, z, yaw, rot); return poseFree(t, p.x, p.y, p.z, p.yaw, !!PRICE[t.type]) }
-const holdBlocks = t => t && t.type !== 'ladder';              // упирается ли Кирью вещью в стенки
-function carryPose(t) {
+const holdBlocks = t => !!t;                                   // упирается ли Кирью вещью в стенки (лестницей тоже — с ней, как со всем, поднимает над головой)
+/* ---------- вещь над головой ----------
+   упёрся вещью в стенку или в край участка — Кирью поднимает её над головой и идёт дальше вплотную (как без вещи);
+   впереди снова свободно — опускает к животу. Над головой вещь может чуть свисать за край участка — там пусто */
+const UP_LIFT = 1.68;                                          // низ вещи над головой — на такой высоте от ног
+function upAt(t, x, y, z, yaw, rot) { const hh = (t.local.max.y - t.local.min.y) / 2, hb = holdBox(t, rot), f = .04 - (hb.z0 + hb.z1) / 2;
+  return { x: x + Math.sin(yaw) * f, y: y + UP_LIFT + hh, z: z + Math.cos(yaw) * f, yaw: yaw + rot, hb, f, hh } }
+function upPtFree(x, y0, y1, z) {                               // точка вещи над головой: не в земле, не в стеллаже, не сквозь пол и потолок дома
+  const inD = INSIDE.some(r => inR(r, x, z, .05));
+  if (inD && y1 > HF - .25 && y0 < HF + .05) return false;      // пол дома снизу
+  if (y0 > HF - .2 && y1 > HF + 2.3) return false;              // потолок
+  if (x > PIT0 - .45 && x < PIT1 + .45 && z > PIT0 - .45 && z < PIT1 + .45 && y1 < HF - .25)
+    return !solidAt(Math.floor(x), Math.floor(z), Math.floor(-y0 / BH)) && !solidAt(Math.floor(x), Math.floor(z), Math.floor(-y1 / BH)) && !kitHit(x, z, y0);
+  return outerHoldFree(x, y0, z) && outerHoldFree(x, y1, z);
+}
+function upFreeAt(t, x, y, z, yaw, rot = t.carryRot || 0) {
+  const p = upAt(t, x, y, z, yaw, rot), c = Math.cos(p.yaw), s = Math.sin(p.yaw), L = t.local, m = .06;
+  for (const lx of [L.min.x + m, 0, L.max.x - m]) for (const lz of [L.min.z + m, 0, L.max.z - m])
+    if (!upPtFree(p.x + lx * c + lz * s, p.y - p.hh, p.y + p.hh, p.z - lx * s + lz * c)) return false;
+  return true;
+}
+const carryFreeAt = (t, x, y, z, yaw) => holdFreeAt(t, x, y, z, yaw) || upFreeAt(t, x, y, z, yaw);   // пройти можно — перед собой или над головой
+function carryPose(t, dt = 0) {
   const b = t.body, sell = !!PRICE[t.type], yaw = CH.yaw;
   let rot = t.carryRot || 0, P = null;
-  for (const r of [rot, rot ? 0 : ZR]) { const p = holdAt(t, CH.x, CH.y, CH.z, yaw, r); if (poseFree(t, p.x, p.y, p.z, p.yaw, sell)) { P = p; rot = r; break } }
+  { const p = holdAt(t, CH.x, CH.y, CH.z, yaw, rot); if (poseFree(t, p.x, p.y, p.z, p.yaw, sell)) P = p }   // как взял — так и несёт: сам по себе не перехватывает (скелет не встаёт «за голову»)
+  // перед собой не помещается — над голову (если там есть место); опускает, когда впереди свободно уже четверть секунды
+  const upOk = holdBlocks(t) && CH.state === 'walk' && upFreeAt(t, CH.x, CH.y, CH.z, yaw, rot);
+  if (!P && upOk) { CH.upW = 1; CH.upF = 0 } else if (P) { CH.upF = (CH.upF || 0) + dt; if (CH.upF > .25 || !upOk) CH.upW = 0 } else CH.upW = 0;
+  if (CH.state !== 'walk') CH.upW = 0;
+  CH.up = Math.max(0, Math.min(1, (CH.up || 0) + (CH.upW ? 1 : -1) * dt / .3));
   if (!P) {                                                    // застрял (взял вещь вплотную к стенке, спрыгнул): подтягиваем к себе / сдвигаем вдоль, как раньше
     const p = holdAt(t, CH.x, CH.y, CH.z, yaw, rot), fx = Math.sin(yaw), fz = Math.cos(yaw);
     for (let k = 1; k >= 0 && !P; k -= .125) { const x = CH.x + fx * p.f * k, z = CH.z + fz * p.f * k; if (poseFree(t, x, p.y, z, p.yaw, sell)) P = { ...p, x, z } }
@@ -1142,17 +1187,19 @@ function carryPose(t) {
       for (const sh of [.25, -.25, .5, -.5, .75, -.75]) if (poseFree(t, CH.x + ax * sh, p.y, CH.z + az * sh, p.yaw, sell)) { P = { ...p, x: CH.x + ax * sh, z: CH.z + az * sh }; break } }
     if (!P) P = { ...p, x: CH.x, z: CH.z };
   }
-  t.carryRot = rot;
+  t.carryRot = rot; CH.dropP = P;                            // куда ставить, если сейчас опустить
+  if (CH.up > 0) { const U = upAt(t, CH.x, CH.y, CH.z, yaw, rot), e = CH.up * CH.up * (3 - 2 * CH.up), a = Math.min(1, e * 1.6);   // по дуге: сначала вверх, потом к голове
+    P = { ...P, x: P.x + (U.x - P.x) * e, y: P.y + (U.y - P.y) * a, z: P.z + (U.z - P.z) * e } }
   if (!sell && !t.hinted) { const p = holdAt(t, CH.x, CH.y, CH.z, yaw, rot);   // упёрся в окно лавки с тем, что не продаётся
     if (!poseFree(t, p.x, p.y, p.z, p.yaw, false) && poseFree(t, p.x, p.y, p.z, p.yaw, true)) { t.hinted = true; toast(t.type === 'pipe' ? 'Целиком не влезет — сначала разломай ломом' : TYPES[t.type].light ? 'Фонарь лучше оставить себе' : 'Это торговцу не нужно') } }
   b.position.set(P.x, P.y, P.z);
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, P.yaw, 0));
   b.quaternion.set(q.x, q.y, q.z, q.w); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
-  // за что берутся руки — в системе Кирью: бока вещи, а широкую — ближний край снизу
+  // за что берутся руки — в системе Кирью: бока вещи, а широкую — ближний край снизу; над головой — бока снизу
   const c = Math.cos(yaw), s = Math.sin(yaw), dx = P.x - CH.x, dz = P.z - CH.z, lx = dx * c - dz * s, lz = dx * s + dz * c, hb = P.hb;
   const ly = P.y - CH.y, hy = (t.local.max.y - t.local.min.y) / 2;
-  if (hb.x1 - hb.x0 < .86) { const zg = Math.min(lz, .4); CH.grip = [[lx + hb.x0 - .015, ly - hy * .15, zg], [lx + hb.x1 + .015, ly - hy * .15, zg]] }
-  else { const zg = lz + hb.z0 - .01; CH.grip = [[lx - .2, ly - hy * .6, zg], [lx + .2, ly - hy * .6, zg]] }
+  if (hb.x1 - hb.x0 < .86) { const zg = Math.min(lz, .4); CH.grip = [[lx + hb.x0 - .015, ly - hy * (.15 + .6 * CH.up), zg], [lx + hb.x1 + .015, ly - hy * (.15 + .6 * CH.up), zg]] }
+  else { const zg = lz + hb.z0 * (1 - CH.up) - .01; CH.grip = [[lx - .2, ly - hy * (.6 + .4 * CH.up), zg], [lx + .2, ly - hy * (.6 + .4 * CH.up), zg]] }
 }
 /* предмет провалился за карту: возвращаем его — он падает сверху ямы прямо на персонажа */
 function lostItem(t) {
@@ -1177,11 +1224,12 @@ function basketTake(t) {                                       // корзина
   removeTrash(t); addCoins(price, BASKET.x, SHOP.floor + BASKET.h, BASKET.z); GAME.st.e += price;
   burst(BASKET.x, SHOP.floor + BASKET.h, BASKET.z, ['#f2c14e', '#fff6c8', '#d99a2b'], 14, .7); haptic('medium');
 }
-function dropItem() {
+function dropItem(here) {
   const t = CH.held; if (!t) return; const b = t.body;        // ставим там, где держали (место уже проверено: не в стене и не за краем)
-  b.type = CANNON.Body.DYNAMIC; b.updateMassProperties(); b.velocity.set(CH.face.x * .4, 0, CH.face.z * .4); b.angularVelocity.set(0, 0, 0); b.wakeUp();
+  if (!here && CH.up > 0 && CH.dropP) { b.position.set(CH.dropP.x, CH.dropP.y, CH.dropP.z); CH.up = 0; CH.upW = 0 }   // над головой — сначала опускает перед собой (или к ногам, если впереди стенка)
+  b.type = CANNON.Body.DYNAMIC; b.collisionResponse = true; b.updateMassProperties(); b.velocity.set(CH.face.x * .4, 0, CH.face.z * .4); b.angularVelocity.set(0, 0, 0); b.wakeUp();
   t.held = false; CH.held = null; haptic('light');
-  if (charHits(t)) { t.ghost = true; b.collisionFilterMask = G_BLOCK }
+  t.ghost = charHits(t); sepCheck(t); wakeNear(t);
 }
 /* ---------- дом на сваях над участком: постоянная часть мира, одинаковая для всех участков ----------
    схема из редактора: первый пролёт с правой стенки на площадку в дальнем углу, второй — вдоль задней правой стенки к дальнему углу,
@@ -1850,7 +1898,7 @@ function stepChar(dt) {
         const h = groundAt(px, pz, fl);
         if (h === null || kitHit(px, pz, fl)) { if (Math.abs(dir[ax]) > .55) push = new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0); continue }   // край мира, высокая стенка, стеллаж, ящик
         if (Math.abs(h - fl) < STEP_UP) {
-          const HT = CH.held; if (holdBlocks(HT) && holdFreeAt(HT, CH.x, fl, CH.z, CH.yaw) && !holdFreeAt(HT, nx, h, nz, CH.yaw)) continue;   // вещь в руках упёрлась — стоим
+          const HT = CH.held; if (holdBlocks(HT) && carryFreeAt(HT, CH.x, fl, CH.z, CH.yaw) && !carryFreeAt(HT, nx, h, nz, CH.yaw)) continue;   // вещь в руках упёрлась — стоим
           CH.x = nx; CH.z = nz; CH.moving = true }
         else if (Math.abs(dir[ax]) > .55) blocked = { h, ad: new THREE.Vector3(ax === 'x' ? Math.sign(dv) : 0, 0, ax === 'z' ? Math.sign(dv) : 0) };
       }
@@ -1876,10 +1924,10 @@ function drawChar(dt, now) {
   chG.position.set(CH.x, CH.state === 'ladder' ? CH.yd : CH.y, CH.z);
   let dy = Math.atan2(CH.face.x, CH.face.z) - CH.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); let st = dy * Math.min(1, dt * 10);
   const HT = CH.held;                                           // с вещью в руках не разворачивается сквозь стенку: поворачивает, насколько пускает
-  if (holdBlocks(HT) && CH.state === 'walk' && Math.abs(st) > 1e-4 && holdFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw)) { let ok = false;
-    for (const f of [1, .5, .25, .1]) if (holdFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw + st * f)) { st *= f; ok = true; break }
+  if (holdBlocks(HT) && CH.state === 'walk' && Math.abs(st) > 1e-4 && carryFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw)) { let ok = false;
+    for (const f of [1, .5, .25, .1]) if (carryFreeAt(HT, CH.x, CH.y, CH.z, CH.yaw + st * f)) { st *= f; ok = true; break }
     if (!ok) st = 0 }
-  CH.yaw += st; chG.rotation.y = CH.yaw; if (CH.held) carryPose(CH.held);   // вещь — за телом в этом же кадре, руки — на неё
+  CH.yaw += st; chG.rotation.y = CH.yaw; if (CH.held) carryPose(CH.held, dt);   // вещь — за телом в этом же кадре, руки — на неё
   CH.swing = Math.max(0, CH.swing - dt); CH.land = Math.max(0, CH.land - dt);
   KIRYU.update(dt, { state: CH.state === 'bag' ? 'walk' : CH.state, moving: CH.moving, bag: bagPoseNow(), bagBack: BAG.back ? bagFill() / 6 : null, speed: CH.spd || 0, anim: CH.anim, swing: CH.swing, land: CH.land, carry: !!CH.held, grip: CH.held && CH.grip && CH.state !== 'ladder' && CH.state !== 'jump' && CH.state !== 'fall' ? CH.grip : null, lad: CH.state === 'ladder' ? CH.lad.pose : null, sideLad: CH.state === 'ladder' && !!CH.lad.carry, phone: PH.k > 0 ? Math.min(1, PH.k * 1.7) ** 2 * (3 - 2 * Math.min(1, PH.k * 1.7)) : 0 });
 }
@@ -2410,7 +2458,7 @@ const nearTable = (m = .75) => Math.hypot(Math.max(TBL.x0 - CH.x, 0, CH.x - TBL.
 function putOnTable() {                                          // вещь из рук — на стол, в ближнюю к Кирью точку столешницы
   const t = CH.held, b = t.body, up = t.local.max.y - t.local.min.y, m = .2;
   const x = Math.max(TBL.x0 + m, Math.min(TBL.x1 - m, CH.x)), z = Math.max(TBL.z0 + m, Math.min(TBL.z1 - m, CH.z));
-  faceTo(x, z); b.position.set(x, TBL.top + up * .55 + .04, z); dropItem(); b.velocity.set(0, 0, 0);
+  faceTo(x, z); b.position.set(x, TBL.top + up * .55 + .04, z); dropItem(true); b.velocity.set(0, 0, 0);
 }
 function tableTap() {
   if (!CH.held) { kzTalk(); return }
@@ -2565,9 +2613,9 @@ function bagRelease(t, p, q) { t.vp = null;                                   //
   for (const x of [L.min.x, L.max.x]) for (const y of [L.min.y, L.max.y]) for (const z of [L.min.z, L.max.z]) lo = Math.min(lo, v.set(x, y, z).applyQuaternion(q).y);
   const c = new THREE.Vector3(p.x, p.y - lo + .01, p.z); t.g.position.copy(c).sub(t.com.clone().applyQuaternion(q)); t.g.updateMatrixWorld(true);
   const b = t.body; b.position.set(c.x, c.y, c.z); b.quaternion.set(q.x, q.y, q.z, q.w); b.type = CANNON.Body.DYNAMIC; b.updateMassProperties();
-  b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.collisionFilterMask = G_BLOCK | G_CHAR; t.ghost = false; world.addBody(b); b.wakeUp();
+  b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.collisionResponse = true; t.ghost = false; world.addBody(b); b.wakeUp();
   if (trash.indexOf(t) < 0) trash.push(t); t.inBag = false; t.held = false; t.br = undefined;
-  if (charHits(t)) { t.ghost = true; b.collisionFilterMask = G_BLOCK }
+  t.ghost = charHits(t); sepCheck(t);
 }
 /* ровный пол на высоте y0: есть поверхность ровно там и ничего не нависает ниже 2,4 м; не стеллаж, не ящик, не стол */
 function bagFlat(x, z, y0) {
@@ -2772,7 +2820,7 @@ function bagCU() {                                               // крупны
     C0.clone().setY(BAG.y0 + 1).addScaledVector(sd, .45), C0.clone().setY(BAG.y0 + 1).addScaledVector(sd, -.45), C0.clone().setY(BAG.y0 + .3).addScaledVector(f, BAG.NE + BAG.SD * .6)];
   let best = null;
   for (const vh of [3.3, 2.7]) { const r = vh / 2 / Math.tan(fov * Math.PI / 360);
-    for (let i = 0; i < 24; i++) { const az = az0 + i * Math.PI / 12; for (const el of [.45, .62, .8]) {
+    for (let i = -5; i <= 5; i++) { const az = az0 + i * Math.PI / 24; for (const el of [.45, .62, .8]) {   // только с нашей стороны участка: у блоков нарисованы лишь грани, обращённые к обычной камере, — сзади видно бы было внутренности
       const P = T.clone().addScaledVector(bcDir(az, el), r); if (!pts.every(q => bagLos(q, P, .3))) continue;   // видно и Кирью целиком, и где ляжет плащ
       const rel = wrapA(az - azf), sc = Math.cos(Math.abs(rel) - .8) * 1.5 - Math.abs(wrapA(az - az0)) * .25 - (el - .45) * .5 - (vh < 3 ? .25 : 0);   // спереди-сбоку ~45°: видно лицо и сам плащ, а не ребро ткани
       if (!best || sc > best.sc) best = { sc, az, el, vh } } }
@@ -2803,21 +2851,19 @@ function bagOV() {                                               // общий �
   r = Math.min(r, 18);
   return { tx: T.x, ty: T.y, tz: T.z, az, el, lv: Math.log(2 * r * tv), pf: 1 };
 }
-/* что-то между камерой и Кирью или плащом (земля, пол дома, перила) — ставим ближнюю плоскость сразу за ним, как у телефона;
-   но не дальше самого Кирью и плаща */
-function bagNear(c, T) {
-  const fw = new THREE.Vector3(); c.getWorldDirection(fw); const pts = [T], y0 = BAG.y0;
+/* что-то между камерой и Кирью или плащом (доски дома, лестница, стеллаж, стол, лавка) — прячем именно эти детали, пока они мешают.
+   Раньше вместо этого ближняя плоскость камеры срезала всё до помехи — вместе с землёй перед Кирью, и в срезе мелькали
+   нижние слои и лавка под землёй. Землю теперь не режем: камера смотрит только с открытой стороны участка */
+const BHID = new Map();                                          // спрятанная деталь -> сколько ещё секунд прятать
+function bagHide(c, dt) {
+  const y0 = BAG.y0, pts = [new THREE.Vector3(CH.x, y0 + 1.5, CH.z), new THREE.Vector3(CH.x, y0 + .9, CH.z), new THREE.Vector3(CH.x, y0 + .3, CH.z)];
   if (BAG.g.visible) { const ca = Math.cos(BAG.a), sa = Math.sin(BAG.a);
     for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]) { const x = u * BAG.SW / 2, z = v * BAG.SD / 2; pts.push(new THREE.Vector3(BAG.c.x + x * ca + z * sa, y0 + .1, BAG.c.z - x * sa + z * ca)) } }
-  pts.push(new THREE.Vector3(CH.x, y0 + 1.5, CH.z), new THREE.Vector3(CH.x, y0 + .3, CH.z));
-  let need = 0, cap = Infinity;
-  for (const p of pts) { const dp = p.clone().sub(c.position).dot(fw); cap = Math.min(cap, dp - .25);
-    const d = c.position.clone().sub(p), L = d.length(); let h = Infinity;
-    for (let i = 1, m = Math.ceil(L / .08); i <= m; i++) { const s = i / m; if (s * L > .2 && solidPt(p.x + d.x * s, p.y + d.y * s, p.z + d.z * s)) { h = s * L; break } }
-    h = Math.min(h, meshHit(p, c.position, .2));
-    if (h < L) need = Math.max(need, p.clone().addScaledVector(d, h / L).sub(c.position).dot(fw) + .06) }
-  return Math.max(.05, Math.min(need, cap));
+  for (const p of pts) { const d = c.position.clone().sub(p), L = d.length(); _bray.set(p, d.divideScalar(L)); _bray.near = .2; _bray.far = L;
+    for (const h of _bray.intersectObjects([houseG, KIT.g, KZ.g, shopG], true)) if (h.object.isMesh) BHID.set(h.object, .4) }
+  bagHideStep(dt);
 }
+function bagHideStep(dt) { for (const [m, t] of BHID) { if (t - dt <= 0) { m.visible = true; BHID.delete(m) } else { BHID.set(m, t - dt); m.visible = false } } }
 function bagCamStart() {
   BAG.lp = new THREE.Vector3(CH.x, BAG.y0, CH.z).addScaledVector(BAG.f, BAG.NE + BAG.SD / 2);
   if (!BC.on) { const s = bcIso(); BC.s = { ...s }; BC.w = { ...s }; BC.v = {}; BC.u = {}; for (const k of BCK) BC.v[k] = BC.u[k] = 0; BC.on = true }
@@ -2847,15 +2893,14 @@ function stepBagCam(dt) {
   if (B.ph === 'ui' && BCK.every(k => Math.abs(BC.v[k]) < .006 && Math.abs(BC.u[k]) < .006)) for (const k of BCK) { S[k] = Wv[k] = G[k]; BC.v[k] = BC.u[k] = 0 }   // долетела — замираем точно в цели, без дрожи на доли пикселя
   if (!B.ph) { const I = bcIso(); let near = true;
     for (const k of BCK) if (Math.abs(k === 'az' ? wrapA(S[k] - I[k]) : S[k] - I[k]) > (k === 'pf' ? .004 : .003) || Math.abs(BC.v[k]) > .02) near = false;
-    if (near) { BC.on = false; VCAM = cam; return } }
+    if (near) { BC.on = false; VCAM = cam; bagHideStep(1); return } }
   if (PH.k > 0) return;
   const fov = bcFov(Math.max(0, S.pf)), vh = Math.exp(S.lv), r = vh / 2 / Math.tan(fov * Math.PI / 360), c = B.cam, T = new THREE.Vector3(S.tx, S.ty, S.tz);
   const dir = bcDir(S.az, S.el);
   c.fov = fov; c.aspect = W / H; c.position.copy(T).addScaledVector(dir, r); c.up.copy(_UP); c.lookAt(T);
   c.updateMatrixWorld();
-  let nr = Math.max(.05, r - 30);
-  if (r < 30) { if (BC.nf-- <= 0) { BC.nf = 2; BC.near = bagNear(c, T) } nr = Math.max(nr, BC.near) }
-  c.near = nr; c.far = r + 120; c.updateProjectionMatrix(); c.updateMatrixWorld();
+  if (r < 30) bagHide(c, dt); else bagHideStep(dt);
+  c.near = Math.max(.05, r - 30); c.far = r + 120; c.updateProjectionMatrix(); c.updateMatrixWorld();
   VCAM = c;
 }
 /* ---------- перетаскивание: вещи с пола — в клетки, из клеток — на пол или в другие клетки ---------- */
@@ -3221,7 +3266,8 @@ function frame(now) {
       if (winZone(t.body.position)) {                          // летит в корзину: продаём, когда опустится ниже края (или застрянет над ней)
         t.zoneT = (t.zoneT || 0) + dt; if (t.body.position.y < SHOP.floor + BASKET.h + .12 || t.zoneT > .8) { sold.push(t); continue } }
       else { t.zoneT = 0; depenetrate(t); if (lostItem(t)) returnItem(t);
-        if (t.ghost ? !charHits(t) : CH.state !== 'walk' && charHits(t)) { t.ghost = !t.ghost; t.body.collisionFilterMask = t.ghost ? G_BLOCK : G_BLOCK | G_CHAR } } }   // упал или запрыгнул прямо на предмет — не расталкиваем
+        if (t.ghost ? !charHits(t) : CH.state !== 'walk' && charHits(t)) { t.ghost = !t.ghost; t.body.collisionFilterMask = tMask(t) }
+        if (t.sep) sepStep(t, dt) } }   // упал или запрыгнул прямо на предмет — не расталкиваем; застрял в другой вещи — раздвигаем
     { const bp = t.body.position, bq = t.body.quaternion, lp = t.vp || (t.vp = new THREE.Vector3(1e9, 0, 0)), lq = t.vq || (t.vq = new THREE.Quaternion());   // картинку двигаем, только если тело сдвинулось заметно:
       const dq = Math.abs(lq.x * bq.x + lq.y * bq.y + lq.z * bq.z + lq.w * bq.w);                                                                // дрожь лежащих друг на друге вещей не видна
       if (t.held || lp.distanceToSquared(bp) > 1e-5 || dq < .99998) { lp.set(bp.x, bp.y, bp.z); lq.set(bq.x, bq.y, bq.z, bq.w);
