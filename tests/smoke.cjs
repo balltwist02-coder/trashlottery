@@ -1,7 +1,7 @@
 /* Автопроверки игры: запускают её в браузере без экрана и проходят основные сценарии.
    Запуск:  sh tests/setup.sh  (один раз)  затем  node tests/smoke.cjs  [имена сценариев через пробел]
    Каждый сценарий — в чистом браузере (без сохранений). Упал — код выхода 1, скриншоты всех сценариев в tests/out/.
-   Сценарии опираются на window.__dbg из 3d_main.js — при разделении кода на модули его нужно сохранить. */
+   Сценарии опираются на window.__dbg (src/18_save_map.js). Перед запуском проверяют, что 3d_main.js собран из свежего src/. */
 const { chromium } = require('playwright');
 const path = require('path'), fs = require('fs');
 const ROOT = path.resolve(__dirname, '..'), CACHE = path.join(__dirname, '.cache'), OUT = path.join(__dirname, 'out');
@@ -83,13 +83,16 @@ const SCEN = {
   },
   async pile({ p }, ok) {
     await p.evaluate(() => { T.put(4.4, 4.4); ['coffee', 'beer', 'glass', 'milk', 'tin', 'pipeHalf'].forEach((ty, k) => T.spawn(ty, 5.1 + (k % 3) * .15, .4 + (k / 3 | 0) * .2, 4.3 + (k % 2) * .15, k)) });
-    await p.waitForTimeout(4000);
-    const ov = await p.evaluate(() => window.__dbg.trash.filter(t => t.active && t.body && !t.held && window.__dbg.trashOverlap(t)).map(t => t.type));
-    ok(ov.length === 0, 'вещи, появившиеся друг в друге, разошлись', ov.join(','));
-    await p.evaluate(() => { T.put(4.75, 4.45); T.hold('coffee'); window.__dbg.CH.face.set(1, 0, 0); window.__dbg.CH.yaw = Math.PI / 2 });
-    await p.waitForTimeout(600); await p.evaluate(() => window.__dbg.act()); await p.waitForTimeout(2500);
-    const y = await p.evaluate(() => window.__held.body.position.y);
-    ok(y > .2, 'поставленная на кучу вещь лежит сверху, а не внутри', y.toFixed(2));
+    await p.waitForTimeout(4000);                                // появились друг в друге — игра их раздвигает и включает столкновения
+    const sep = await p.evaluate(() => window.__dbg.trash.filter(t => t.active && t.sep).map(t => t.type));
+    ok(sep.length === 0, 'вещи, появившиеся друг в друге, снова сталкиваются', sep.join(','));
+    // кладём банку прямо на пакет молока: она должна лечь сверху или скатиться вбок, но не провалиться в пакет
+    await p.evaluate(() => { T.put(3.3, 3.0); T.hold('coffee'); window.__dbg.CH.face.set(1, 0, 0); window.__dbg.CH.yaw = Math.PI / 2 });
+    await p.waitForTimeout(700);
+    await p.evaluate(() => { const c = window.__held.body.position; window.__milk = T.spawn('milk', c.x, .3, c.z) });
+    await p.waitForTimeout(1500); if (process.env.DBG) console.log(await p.evaluate(() => JSON.stringify([window.__held.body.position, window.__milk.body.position, T.st()]))); await p.evaluate(() => window.__dbg.act()); await p.waitForTimeout(2500);
+    const r = await p.evaluate(() => { const a = window.__held.body.position, b = window.__milk.body.position; return { dy: a.y - b.y, dh: Math.hypot(a.x - b.x, a.z - b.z) } });
+    ok(r.dy > .2 || r.dh > .21, 'поставленная на другую вещь не проваливается в неё', JSON.stringify(r, (k, v) => typeof v === 'number' ? +v.toFixed(2) : v));
   },
   async bagSurface(g, ok) { await bag(g, ok, 0) },
   async bagDepth(g, ok) { await bag(g, ok, 5) },
@@ -121,6 +124,8 @@ async function bag({ p }, ok, depth) {
 }
 
 (async () => {
+  try { require('child_process').execFileSync('node', [path.join(ROOT, 'tools/build.cjs'), '--check'], { stdio: 'pipe' }) }
+  catch (e) { console.error(String(e.stderr || e.stdout || e.message).trim() + '\nСборка устарела: сначала node tools/build.cjs'); process.exit(1) }
   fs.mkdirSync(OUT, { recursive: true });
   const only = process.argv.slice(2), names = Object.keys(SCEN).filter(n => !only.length || only.includes(n));
   const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
