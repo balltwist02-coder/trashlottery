@@ -261,6 +261,13 @@ function kzAvatar() {
   R('#dedbd4', 6, 11, 4, 1); R('#9c5c4a', 7, 12, 2, 1);
   return c.toDataURL();
 }
+/* аватар налоговой: серый герб-щит с золотой каймой */
+function taxAvatar() {
+  const c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d'), R = (col, a, b, w, h) => { x.fillStyle = col; x.fillRect(a, b, w, h) };
+  R('#2c3e57', 0, 0, 16, 16); R('#d9b24a', 4, 2, 8, 9); R('#d9b24a', 5, 11, 6, 1); R('#d9b24a', 6, 12, 4, 1); R('#d9b24a', 7, 13, 2, 1);
+  R('#8a93a3', 5, 3, 6, 8); R('#8a93a3', 6, 11, 4, 1); R('#5c6577', 7, 4, 2, 6); R('#5c6577', 6, 6, 4, 1);
+  return c.toDataURL();
+}
 const SMS = PHONE.register({
   id: 'sms', name: 'Сообщения',
   theme: { bg: '#0f1519', acc: '#2fbd63', bar: 'rgba(47,189,99,.07)' },
@@ -270,7 +277,7 @@ const SMS = PHONE.register({
     H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#f4fff7'; x.fillRect(i, y, 1, 1) } }));
   },
   m: {},                                             // переписки с неизвестных номеров: {c:[номера ответов], nw}
-  unread() { return (Q.nw ? 1 : 0) + Object.values(this.m).filter(m => m.nw).length },
+  unread() { return (Q.nw ? 1 : 0) + (GAME.tx && GAME.tx.nw ? 1 : 0) + Object.values(this.m).filter(m => m.nw).length },
   badge() {                                          // счётчик на значке приложения и точка на кнопке телефона
     const n = this.unread(), ic = PHONE.root.querySelector('.po-ic'); if (!ic) return;
     let s = ic.querySelector('sup'); if (n && !s) { s = document.createElement('sup'); ic.append(s) } if (s) { if (n) s.textContent = n; else s.remove() }
@@ -299,6 +306,7 @@ const SMS = PHONE.register({
         body.textContent = '';
         const rows = [];
         if (Q.s || Q.i > 0) rows.push({ title: 'Кудзуя-сан', sub: Q.nw ? 'Новое сообщение' : app.kzLast(), avatar: kzAvatar(), nw: Q.nw, on: () => app.kzChat(ctx, page) });
+        const tx = GAME.tx; if (tx && tx.L && tx.L.length) rows.push({ title: 'Налоговая служба', sub: tx.nw ? 'Новое сообщение' : tx.L[tx.L.length - 1][1], avatar: taxAvatar(), nw: tx.nw, on: () => app.taxChat(ctx, page) });
         for (const id of Object.keys(app.m)) { const g = DT_PEOPLE[id]; if (!g) continue; const m = app.m[id];
           rows.push({ title: g.name, sub: m.nw ? 'Новое сообщение' : app.lastLine(id) || '…', avatar: dtPortrait(g).toDataURL(), nw: m.nw, on: () => app.chat(ctx, g, page) }) }
         if (!rows.length) { const e = u.h('div', 'dt-empty'); e.append(u.h('div', 'big', '💬'), u.h('div', '', 'Сообщений пока нет.')); body.append(e); return }
@@ -335,6 +343,12 @@ const SMS = PHONE.register({
     })();
   },
 
+  /* письма налоговой (src/19_shop.js кладёт их в GAME.tx.L): только читать */
+  taxChat(ctx, parent) {
+    const tx = GAME.tx; tx.nw = false; this.badge();
+    const page = ctx.push({ title: 'Налоговая служба', render() { }, onBack() { parent.refresh && parent.refresh(); return false } });
+    const chat = ctx.ui.chat(page); for (const [, t] of tx.L) chat.say('them', t);
+  },
   /* последняя реплика в переписке с неизвестным номером — для подписи в списке */
   lastLine(id) {
     const S = DT_SCRIPTS[id], m = this.m[id]; if (!S || !m) return '';

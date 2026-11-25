@@ -11,7 +11,7 @@ async function saveGame(force, items) {
   if (!GAME.ok) { if (!GSAVE.warned) { GSAVE.warned = true; toast('Сохранение не загрузилось — прогресс этой сессии не запишется') } return false }
   if (GSAVE.busy || GAME.moving && !items) return false;          // переезд: пишем только запись нового участка, остальное ждёт перезагрузки
   const recs = items || gameItems();
-  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk, q: Q, bag: BAG.items.map(it => [it.t.type, it.c[0], it.c.length > 1 ? it.c[1] : -1]) };
+  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk, q: Q, tx: GAME.tx, lk: GAME.lk | 0, pk: GAME.pk | 0, bag: BAG.items.map(it => [it.t.type, it.c[0], it.c.length > 1 ? it.c[1] : -1]) };
   const sig = JSON.stringify(head) + '|' + recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');
   if (!force && sig === GSAVE.sig) return true;
   const parts = []; let cur = '';
@@ -28,7 +28,7 @@ if (GAME.ok && GAME.fresh) saveGame(true);
 /* ---------- карта: рулетка участков ----------
    прокрутка бесплатна, когда участок докопан до дна; раньше — только за звёзды. Шансы на экране, гарант фиолетового.
    результат запоминается сразу (закрыть окно и перекрутить нельзя); «Перейти к участку» — новый участок, старый пропадает навсегда */
-const PLOT_ODDS = [['g', 70], ['b', 25], ['p', 5]], GUAR = 10, SPIN_STARS = 20;
+const PLOT_ODDS = [['g', 70], ['b', 25], ['p', 5]], GUAR = 10, SPIN_STARS = 20, MAPR = {};   // MAPR.render — перерисовать окно участков (после покупки)
 { const st = document.createElement('style'); st.textContent = `
 #mapwrap .map{width:min(100%,420px);max-height:calc(100vh - 32px);overflow:auto}
 .rl{position:relative;height:118px;overflow:hidden;background:#100d0a;border-radius:2px;box-shadow:inset 0 0 0 2px #2a221b,inset 0 0 24px rgba(0,0,0,.8)}
@@ -54,6 +54,13 @@ const PLOT_ODDS = [['g', 70], ['b', 25], ['p', 5]], GUAR = 10, SPIN_STARS = 20;
 .pl-chip{display:inline-block;padding:1px 7px;border-radius:9px;font:700 11px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#101010;margin-left:6px;vertical-align:1px}
 .pl-stats{display:grid;grid-template-columns:auto auto;gap:2px 12px;font:500 12.5px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--muted)}
 .pl-stats b{color:var(--fg);font-variant-numeric:tabular-nums;text-align:right}
+.rl.arrest::before,.rl.arrest::after{content:'НАЛОГ НЕ УПЛАЧЕН · АРЕСТ · НАЛОГ НЕ УПЛАЧЕН · АРЕСТ';position:absolute;left:-20%;width:140%;z-index:3;padding:3px 0;text-align:center;white-space:nowrap;overflow:hidden;
+  font:900 10px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:.06em;color:#fff;text-shadow:0 1px 0 #600;
+  background:repeating-linear-gradient(-45deg,#d8262c 0 14px,#b0151b 14px 28px);box-shadow:0 2px 0 rgba(0,0,0,.45),0 -1px 0 rgba(255,255,255,.25) inset}
+.rl.arrest::before{top:38px;transform:rotate(-9deg)}.rl.arrest::after{top:64px;transform:rotate(7deg)}
+.rl.arrest .rl-strip{filter:grayscale(.85) brightness(.55)}
+.rl-go.tax{background:#d8262c;color:#fff}
+.rl-luck{color:#7fe07a;font-weight:700}
 .mv-veil{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#0b0f16;color:#e9f0ee;font:700 16px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 `; document.head.appendChild(st) }
 
@@ -81,13 +88,16 @@ function plotIcon(r) {
   const CW = 76, STEP = 82;
   let spinning = false;
   const cardEl = r => { const c = h('div', 'rl-card'); c.style.setProperty('--rc', RAR[r].col); c.append(plotIcon(r), h('div', '', RAR[r].name), h('div', '', RAR[r].layers + ' слоёв')); return c };
-  const roll = () => { if (GAME.p >= GUAR - 1) return 'p'; let x = Math.random() * 100; for (const [r, w] of PLOT_ODDS) if ((x -= w) < 0) return r; return 'g' };
+  const roll = lucky => { if (GAME.p >= GUAR - 1) return 'p'; let x = Math.random() * 100; for (const [r, w] of plotOdds(lucky)) if ((x -= w) < 0) return r; return 'g' };   // с удачей — свои шансы
   const filler = () => { let x = Math.random() * 100; for (const [r, w] of [['g', 60], ['b', 28], ['p', 12]]) if ((x -= w) < 0) return r; return 'g' };
   function fillStrip(win, at, total) { strip.textContent = ''; for (let k = 0; k < total; k++) strip.append(cardEl(k === at ? win : filler())) }
   const offsetFor = (at, jit) => at * STEP + CW / 2 - rl.clientWidth / 2 + jit;
   function renderOdds() {
     odds.textContent = '';
-    for (const [r, w] of PLOT_ODDS) { const s = h('span'); const b = h('b'); b.style.background = RAR[r].col; s.append(b, `${RAR[r].name} ${w}%`); odds.append(s) }
+    const lucky = plotOdds(GAME.lk > 0);
+    PLOT_ODDS.forEach(([r, w], k) => { const s = h('span'); const b = h('b'); b.style.background = RAR[r].col; const l = lucky[k][1];
+      s.append(b, `${RAR[r].name} ${w}%` + (GAME.lk > 0 ? ` → ${+l.toFixed(1)}%` : '')); odds.append(s) });
+    if (GAME.lk > 0) odds.append(h('span', 'rl-luck', `🍀 Удача: ещё ${GAME.lk} ${GAME.lk === 1 ? 'крутка' : 'крутки'}`));
     odds.append(h('span', '', `Гарант фиолетового: через ${Math.max(1, GUAR - GAME.p)}`));
   }
   function renderCard() {
@@ -98,8 +108,9 @@ function plotIcon(r) {
     info.append(t, s); card.append(ic, info);
   }
   function renderButton() {
-    note.textContent = ''; go.classList.remove('star'); go.disabled = spinning;
+    note.textContent = ''; go.classList.remove('star', 'tax'); go.disabled = spinning; rl.classList.toggle('arrest', !GAME.nx && taxDue());
     if (GAME.nx) { go.textContent = 'Перейти к участку'; note.textContent = 'Текущий участок пропадёт навсегда — вернуться на него нельзя'; return }
+    if (taxDue()) { go.classList.add('tax'); go.textContent = `Оплатить налог на землю — ${taxAmount()} ⭐`; note.textContent = 'Участок под арестом: крутки откроются после оплаты налога. Копать можно'; return }
     if (done()) { go.textContent = 'Крутить бесплатно'; note.textContent = 'Участок докопан до дна — прокрутка бесплатная'; return }
     go.classList.add('star'); go.textContent = `Крутить за ${SPIN_STARS} ⭐`;
     note.textContent = canPay ? 'Бесплатно — когда докопаешь участок до дна. Уйдёшь — вернуться нельзя' : 'Сейчас — только в Телеграме. Бесплатно — когда докопаешь участок до дна';
@@ -112,8 +123,8 @@ function plotIcon(r) {
     else { fillStrip(GAME.pl.r, 3, 7); requestAnimationFrame(() => strip.style.transform = `translateX(${-offsetFor(3, 0)}px)`); res.textContent = '' }
   }
   async function spin() {
-    if (spinning || GAME.nx) return; spinning = true; renderButton();
-    const r = roll(); GAME.p = r === 'p' ? 0 : GAME.p + 1;
+    if (spinning || GAME.nx || taxDue()) return; spinning = true; renderButton();
+    const r = roll(await takeLuck()); GAME.p = r === 'p' ? 0 : GAME.p + 1;   // удачу списывает сервер; каждая крутка — одна удача
     GAME.nx = { r, s: newSeed(), n: GAME.pl.n + 1 }; saveGame(true);          // результат записан до анимации
     const AT = 42, TOTAL = 48, jit = (Math.random() - .5) * CW * .7; fillStrip(r, AT, TOTAL);
     const x1 = offsetFor(AT, jit), T = 5200, t0 = performance.now(); let lastK = -1; res.textContent = '';
@@ -141,6 +152,7 @@ function plotIcon(r) {
   go.addEventListener('click', async () => {
     haptic('light');
     if (GAME.nx) return move();
+    if (taxDue()) { go.disabled = true; await payTax(); render(); return }
     if (done()) return spin();
     if (!canPay) return;
     go.disabled = true;
@@ -150,6 +162,7 @@ function plotIcon(r) {
       tg.openInvoice(r.link, status => { if (status === 'paid') spin(); else { if (status === 'failed') toast('Оплата не прошла'); renderButton() } });
     } catch (e) { toast('Не получилось открыть оплату — попробуй позже'); renderButton() }
   });
+  MAPR.render = render;
   mapbtn.addEventListener('click', () => { mapwrap.hidden = false; render(); mapclose.focus(); haptic('light') });
   mapclose.addEventListener('click', () => { if (spinning) return; mapwrap.hidden = true; mapbtn.focus(); haptic('light') });
 }

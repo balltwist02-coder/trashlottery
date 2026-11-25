@@ -11,9 +11,9 @@ import { createKudzuya } from './kudzuya.js?v=1';
    сколько выкопано в каждой клетке, какие предметы уже откопаны, где лежат откопанные вещи вне дома, монеты и счётчики.
    ключи облака Телеграма (у каждого игрока своё; в браузере — localStorage): game = {v, …, n}, game_0.. = вещи «тип,x,y,z,qx,qy,qz,qw;…» */
 const RAR = {
-  g: { name: 'Зелёный', col: '#5fc24a', layers: 20, trash: .6 },
-  b: { name: 'Синий', col: '#4a90ff', layers: 27, trash: .7 },
-  p: { name: 'Фиолетовый', col: '#b65cff', layers: 35, trash: .8 },
+  g: { name: 'Зелёный', col: '#5fc24a', layers: 20, trash: .6, tier: 0 },     // tier — уровень редкости: удача умножает шанс на LUCK_MUL^tier,
+  b: { name: 'Синий', col: '#4a90ff', layers: 27, trash: .7, tier: 1 },       // так что новой редкости достаточно дать уровень
+  p: { name: 'Фиолетовый', col: '#b65cff', layers: 35, trash: .8, tier: 2 },
 };
 const GAME_V = 1;
 const mulberry = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296 };
@@ -60,6 +60,7 @@ function genPlot(r, seed) {
   return out;
 }
 const GAME = await loadGame();
+if (!GAME.tx || !(GAME.tx.until > 0)) { const now = Date.now(); GAME.tx = { t0: now, until: now + 30 * 864e5, L: [] } }   // налог на землю: срок — через месяц от первого запуска (магазин — src/19_shop.js)
 const PLOT = GAME.pl.h ? window.PLOT3D : genPlot(GAME.pl.r, GAME.pl.s), TEX = window.TEX3D;
 const N = 6, DIG = PLOT.length - 10, BOT = DIG + 10;   // ниже дна ямы — ещё 10 слоёв цельного камня, чтобы мир не обрывался            // сетка 6×6: две декоративные стенки сзади и сбоку, яма — передние 4×4; нижние 10 слоёв срезаны
 const PIT0 = 2, PIT1 = 6, PC = (PIT0 + PIT1) / 2; // яма занимает x,z от 2 до 6
@@ -903,7 +904,7 @@ function tap(e) {
     const { i, j, z } = h.object.userData, a = isAct(i, j);
     if (a >= 0 && diggable(a, z) && reach(a)) {
       if (a !== standCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
-      digCell(a); return }
+      digHit(a); return }
   }
   act();                                                       // иначе — инструмент в ту сторону, куда смотрит персонаж
 }
@@ -1087,6 +1088,12 @@ function digCell(a) {
   if (z >= 1) SMS.unlock('stranger');                         // начали второй слой — СМС с неизвестного номера
   if (!SHOP.revealed && ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) revealShop();
 }
+/* удар киркой: с киркой 2×2 (покупка навсегда, GAME.pk) вскрывает весь квадрат 2×2 ямы, в котором клетка, — только клетки на том же слое */
+function digHit(a) {
+  const z = d[a]; digCell(a); if (!GAME.pk) return;
+  const [i, j] = ACT[a], qi = (i - PIT0) >> 1, qj = (j - PIT0) >> 1;
+  ACT.forEach(([ci, cj], q) => { if (q !== a && (ci - PIT0) >> 1 === qi && (cj - PIT0) >> 1 === qj && d[q] === z && z < DIG) digCell(q) });
+}
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
   if (!tool) { haptic('warn'); return }
@@ -1104,8 +1111,8 @@ function act() {
     const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
   if (tool === 'trowel') { const s = spotAhead(); if (s && !s.state) loosen(s); else { shakeTool('trowel'); toast(s ? 'Уже разрыхлено — подставь консервную банку' : 'Лопатка рыхлит землю там, где на стенке черви') } return }
   const a = standCell(), nb = a < 0 ? -1 : cellAt(CH.x + CH.face.x * (R + .48), CH.z + CH.face.z * (R + .48));
-  if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else shakeTool('pick'); return }   // стенка перед нами
-  if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
+  if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digHit(nb); else shakeTool('pick'); return }   // стенка перед нами
+  if (a >= 0 && diggable(a, d[a])) { digHit(a); return }      // блок под ногами — после него падаем вниз
   shakeTool('pick');
 }
 function itemPt(t) {                                           // ближняя к персонажу точка предмета: у шины и скелета край намного ближе середины
@@ -1740,6 +1747,13 @@ function kzAvatar() {
   R('#dedbd4', 6, 11, 4, 1); R('#9c5c4a', 7, 12, 2, 1);
   return c.toDataURL();
 }
+/* аватар налоговой: серый герб-щит с золотой каймой */
+function taxAvatar() {
+  const c = document.createElement('canvas'); c.width = c.height = 16; const x = c.getContext('2d'), R = (col, a, b, w, h) => { x.fillStyle = col; x.fillRect(a, b, w, h) };
+  R('#2c3e57', 0, 0, 16, 16); R('#d9b24a', 4, 2, 8, 9); R('#d9b24a', 5, 11, 6, 1); R('#d9b24a', 6, 12, 4, 1); R('#d9b24a', 7, 13, 2, 1);
+  R('#8a93a3', 5, 3, 6, 8); R('#8a93a3', 6, 11, 4, 1); R('#5c6577', 7, 4, 2, 6); R('#5c6577', 6, 6, 4, 1);
+  return c.toDataURL();
+}
 const SMS = PHONE.register({
   id: 'sms', name: 'Сообщения',
   theme: { bg: '#0f1519', acc: '#2fbd63', bar: 'rgba(47,189,99,.07)' },
@@ -1749,7 +1763,7 @@ const SMS = PHONE.register({
     H.forEach((r, y) => [...r].forEach((ch, i) => { if (ch === 'W') { x.fillStyle = '#f4fff7'; x.fillRect(i, y, 1, 1) } }));
   },
   m: {},                                             // переписки с неизвестных номеров: {c:[номера ответов], nw}
-  unread() { return (Q.nw ? 1 : 0) + Object.values(this.m).filter(m => m.nw).length },
+  unread() { return (Q.nw ? 1 : 0) + (GAME.tx && GAME.tx.nw ? 1 : 0) + Object.values(this.m).filter(m => m.nw).length },
   badge() {                                          // счётчик на значке приложения и точка на кнопке телефона
     const n = this.unread(), ic = PHONE.root.querySelector('.po-ic'); if (!ic) return;
     let s = ic.querySelector('sup'); if (n && !s) { s = document.createElement('sup'); ic.append(s) } if (s) { if (n) s.textContent = n; else s.remove() }
@@ -1778,6 +1792,7 @@ const SMS = PHONE.register({
         body.textContent = '';
         const rows = [];
         if (Q.s || Q.i > 0) rows.push({ title: 'Кудзуя-сан', sub: Q.nw ? 'Новое сообщение' : app.kzLast(), avatar: kzAvatar(), nw: Q.nw, on: () => app.kzChat(ctx, page) });
+        const tx = GAME.tx; if (tx && tx.L && tx.L.length) rows.push({ title: 'Налоговая служба', sub: tx.nw ? 'Новое сообщение' : tx.L[tx.L.length - 1][1], avatar: taxAvatar(), nw: tx.nw, on: () => app.taxChat(ctx, page) });
         for (const id of Object.keys(app.m)) { const g = DT_PEOPLE[id]; if (!g) continue; const m = app.m[id];
           rows.push({ title: g.name, sub: m.nw ? 'Новое сообщение' : app.lastLine(id) || '…', avatar: dtPortrait(g).toDataURL(), nw: m.nw, on: () => app.chat(ctx, g, page) }) }
         if (!rows.length) { const e = u.h('div', 'dt-empty'); e.append(u.h('div', 'big', '💬'), u.h('div', '', 'Сообщений пока нет.')); body.append(e); return }
@@ -1814,6 +1829,12 @@ const SMS = PHONE.register({
     })();
   },
 
+  /* письма налоговой (src/19_shop.js кладёт их в GAME.tx.L): только читать */
+  taxChat(ctx, parent) {
+    const tx = GAME.tx; tx.nw = false; this.badge();
+    const page = ctx.push({ title: 'Налоговая служба', render() { }, onBack() { parent.refresh && parent.refresh(); return false } });
+    const chat = ctx.ui.chat(page); for (const [, t] of tx.L) chat.say('them', t);
+  },
   /* последняя реплика в переписке с неизвестным номером — для подписи в списке */
   lastLine(id) {
     const S = DT_SCRIPTS[id], m = this.m[id]; if (!S || !m) return '';
@@ -3359,42 +3380,9 @@ resize(); addEventListener('resize', resize); if (tg && tg.onEvent) tg.onEvent('
 window.__dbg = { THREE, scene, cam, shopG, SHOP, openShop, addCoins, revealShop, basketTake, nearShop, get coins() { return coins }, digCell, LG, computeLight, lightAt, updateLight, grabItem, dropItem, tap, sun, renderer, CH, act, joy, d, trash, blocks, world, settle, updateTrash, cur, removeBlock, activate, breakTrash, setTool, grabs, LADS, KIT, mountLadder, KIRYU, LC, LAD };
 requestAnimationFrame(frame);
 
-/* ---------- поддержать автора: оплата звёздами Telegram через наш сервер ----------
-   сервер создаёт ссылку на оплату и сам записывает прошедшие платежи; игра только открывает окно оплаты
-   и спрашивает у сервера, сколько звёзд игрок уже подарил (значок сторонника) */
+/* ---------- оплата звёздами Telegram — через наш сервер ----------
+   сервер создаёт ссылку на оплату и сам записывает прошедшие платежи; магазин — в src/19_shop.js */
 const PAY_API = 'https://trashlottery-pay.balltwist02.workers.dev';
-const SUP_TERMS = `1. «Поддержать автора» — добровольное пожертвование разработчику. За него — благодарность и значок сторонника в игре, других товаров и преимуществ нет.
-2. Оплата — только звёздами Telegram, цена видна в окне оплаты до подтверждения.
-3. Платёж прошёл по ошибке — напиши в течение 14 дней через /paysupport в боте, вернём звёзды.
-4. Поддержка Telegram с покупками в этом боте не помогает — по оплате пиши через /paysupport.
-5. Игра в разработке, возможны ошибки и изменения.`;
-{
-  const canPay = !!(tg && tg.initData && tg.openInvoice && tg.isVersionAtLeast && tg.isVersionAtLeast('6.1'));
-  const btn = document.getElementById('supbtn'), wrap = document.getElementById('supwrap'), close = document.getElementById('supclose');
-  const fan = document.getElementById('supfan'), terms = document.getElementById('supterms'), opts = [...wrap.querySelectorAll('.opt')];
-  icon(XI, { k: '#10141f', x: '#e9f0ee' }, close); terms.textContent = SUP_TERMS;
-  const api = (path, body) => fetch(PAY_API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData, ...body }) }).then(r => r.json());
-  const showFan = n => { btn.classList.toggle('fan', n > 0); fan.hidden = !(n > 0); fan.textContent = `⭐ Ты сторонник игры — подарено ${n} ⭐. Спасибо!` };
-  const refresh = () => api('/api/me').then(r => { if (typeof r.stars === 'number') showFan(r.stars) }).catch(() => { });
-  if (canPay) { btn.hidden = false; refresh() }
-  btn.addEventListener('click', () => { wrap.hidden = false; close.focus(); haptic('light') });
-  close.addEventListener('click', () => { wrap.hidden = true; btn.focus(); haptic('light') });
-  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.hidden = true });
-  document.getElementById('suptermsbtn').addEventListener('click', () => { terms.hidden = !terms.hidden });
-  for (const o of opts) o.addEventListener('click', async () => {
-    opts.forEach(b => b.disabled = true);
-    try {
-      const r = await api('/api/invoice', { product: o.dataset.p });
-      if (!r.link) throw new Error(r.error || 'нет ссылки');
-      tg.openInvoice(r.link, status => {
-        if (status === 'paid') { haptic('medium'); toast('Спасибо за поддержку! ⭐', 2); setTimeout(refresh, 1500); setTimeout(refresh, 5000) }
-        else if (status === 'failed') toast('Оплата не прошла');
-      });
-    } catch (e) { toast('Не получилось открыть оплату — попробуй позже') }
-    opts.forEach(b => b.disabled = false);
-  });
-}
-
 /* ---------- сохранение прогресса ----------
    раз в 3 секунды сверяем «снимок» (монеты, раскопки, вещи вне дома с точностью 5 см); изменилось — пишем. Свернули игру — пишем сразу. */
 const GSAVE = { sig: '', busy: false, warned: false };
@@ -3408,7 +3396,7 @@ async function saveGame(force, items) {
   if (!GAME.ok) { if (!GSAVE.warned) { GSAVE.warned = true; toast('Сохранение не загрузилось — прогресс этой сессии не запишется') } return false }
   if (GSAVE.busy || GAME.moving && !items) return false;          // переезд: пишем только запись нового участка, остальное ждёт перезагрузки
   const recs = items || gameItems();
-  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk, q: Q, bag: BAG.items.map(it => [it.t.type, it.c[0], it.c.length > 1 ? it.c[1] : -1]) };
+  const head = { v: GAME_V, c: coins, p: GAME.p, pl: GAME.pl, d: GAME.moving ? ACT.map(() => 0) : d.slice(), u: GAME.u, st: GAME.st, w: SPOTS.map(s => s.state | 0), nx: GAME.nx, lad: GAME.moving ? [] : [...LADS.keys()], rk: GAME.moving ? null : KIT.rk, q: Q, tx: GAME.tx, lk: GAME.lk | 0, pk: GAME.pk | 0, bag: BAG.items.map(it => [it.t.type, it.c[0], it.c.length > 1 ? it.c[1] : -1]) };
   const sig = JSON.stringify(head) + '|' + recs.map(r => r.split(',').slice(0, 4).map((v, i) => i ? Math.round(+v * 20) : v).join()).sort().join(';');
   if (!force && sig === GSAVE.sig) return true;
   const parts = []; let cur = '';
@@ -3425,7 +3413,7 @@ if (GAME.ok && GAME.fresh) saveGame(true);
 /* ---------- карта: рулетка участков ----------
    прокрутка бесплатна, когда участок докопан до дна; раньше — только за звёзды. Шансы на экране, гарант фиолетового.
    результат запоминается сразу (закрыть окно и перекрутить нельзя); «Перейти к участку» — новый участок, старый пропадает навсегда */
-const PLOT_ODDS = [['g', 70], ['b', 25], ['p', 5]], GUAR = 10, SPIN_STARS = 20;
+const PLOT_ODDS = [['g', 70], ['b', 25], ['p', 5]], GUAR = 10, SPIN_STARS = 20, MAPR = {};   // MAPR.render — перерисовать окно участков (после покупки)
 { const st = document.createElement('style'); st.textContent = `
 #mapwrap .map{width:min(100%,420px);max-height:calc(100vh - 32px);overflow:auto}
 .rl{position:relative;height:118px;overflow:hidden;background:#100d0a;border-radius:2px;box-shadow:inset 0 0 0 2px #2a221b,inset 0 0 24px rgba(0,0,0,.8)}
@@ -3451,6 +3439,13 @@ const PLOT_ODDS = [['g', 70], ['b', 25], ['p', 5]], GUAR = 10, SPIN_STARS = 20;
 .pl-chip{display:inline-block;padding:1px 7px;border-radius:9px;font:700 11px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#101010;margin-left:6px;vertical-align:1px}
 .pl-stats{display:grid;grid-template-columns:auto auto;gap:2px 12px;font:500 12.5px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--muted)}
 .pl-stats b{color:var(--fg);font-variant-numeric:tabular-nums;text-align:right}
+.rl.arrest::before,.rl.arrest::after{content:'НАЛОГ НЕ УПЛАЧЕН · АРЕСТ · НАЛОГ НЕ УПЛАЧЕН · АРЕСТ';position:absolute;left:-20%;width:140%;z-index:3;padding:3px 0;text-align:center;white-space:nowrap;overflow:hidden;
+  font:900 10px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:.06em;color:#fff;text-shadow:0 1px 0 #600;
+  background:repeating-linear-gradient(-45deg,#d8262c 0 14px,#b0151b 14px 28px);box-shadow:0 2px 0 rgba(0,0,0,.45),0 -1px 0 rgba(255,255,255,.25) inset}
+.rl.arrest::before{top:38px;transform:rotate(-9deg)}.rl.arrest::after{top:64px;transform:rotate(7deg)}
+.rl.arrest .rl-strip{filter:grayscale(.85) brightness(.55)}
+.rl-go.tax{background:#d8262c;color:#fff}
+.rl-luck{color:#7fe07a;font-weight:700}
 .mv-veil{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#0b0f16;color:#e9f0ee;font:700 16px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 `; document.head.appendChild(st) }
 
@@ -3478,13 +3473,16 @@ function plotIcon(r) {
   const CW = 76, STEP = 82;
   let spinning = false;
   const cardEl = r => { const c = h('div', 'rl-card'); c.style.setProperty('--rc', RAR[r].col); c.append(plotIcon(r), h('div', '', RAR[r].name), h('div', '', RAR[r].layers + ' слоёв')); return c };
-  const roll = () => { if (GAME.p >= GUAR - 1) return 'p'; let x = Math.random() * 100; for (const [r, w] of PLOT_ODDS) if ((x -= w) < 0) return r; return 'g' };
+  const roll = lucky => { if (GAME.p >= GUAR - 1) return 'p'; let x = Math.random() * 100; for (const [r, w] of plotOdds(lucky)) if ((x -= w) < 0) return r; return 'g' };   // с удачей — свои шансы
   const filler = () => { let x = Math.random() * 100; for (const [r, w] of [['g', 60], ['b', 28], ['p', 12]]) if ((x -= w) < 0) return r; return 'g' };
   function fillStrip(win, at, total) { strip.textContent = ''; for (let k = 0; k < total; k++) strip.append(cardEl(k === at ? win : filler())) }
   const offsetFor = (at, jit) => at * STEP + CW / 2 - rl.clientWidth / 2 + jit;
   function renderOdds() {
     odds.textContent = '';
-    for (const [r, w] of PLOT_ODDS) { const s = h('span'); const b = h('b'); b.style.background = RAR[r].col; s.append(b, `${RAR[r].name} ${w}%`); odds.append(s) }
+    const lucky = plotOdds(GAME.lk > 0);
+    PLOT_ODDS.forEach(([r, w], k) => { const s = h('span'); const b = h('b'); b.style.background = RAR[r].col; const l = lucky[k][1];
+      s.append(b, `${RAR[r].name} ${w}%` + (GAME.lk > 0 ? ` → ${+l.toFixed(1)}%` : '')); odds.append(s) });
+    if (GAME.lk > 0) odds.append(h('span', 'rl-luck', `🍀 Удача: ещё ${GAME.lk} ${GAME.lk === 1 ? 'крутка' : 'крутки'}`));
     odds.append(h('span', '', `Гарант фиолетового: через ${Math.max(1, GUAR - GAME.p)}`));
   }
   function renderCard() {
@@ -3495,8 +3493,9 @@ function plotIcon(r) {
     info.append(t, s); card.append(ic, info);
   }
   function renderButton() {
-    note.textContent = ''; go.classList.remove('star'); go.disabled = spinning;
+    note.textContent = ''; go.classList.remove('star', 'tax'); go.disabled = spinning; rl.classList.toggle('arrest', !GAME.nx && taxDue());
     if (GAME.nx) { go.textContent = 'Перейти к участку'; note.textContent = 'Текущий участок пропадёт навсегда — вернуться на него нельзя'; return }
+    if (taxDue()) { go.classList.add('tax'); go.textContent = `Оплатить налог на землю — ${taxAmount()} ⭐`; note.textContent = 'Участок под арестом: крутки откроются после оплаты налога. Копать можно'; return }
     if (done()) { go.textContent = 'Крутить бесплатно'; note.textContent = 'Участок докопан до дна — прокрутка бесплатная'; return }
     go.classList.add('star'); go.textContent = `Крутить за ${SPIN_STARS} ⭐`;
     note.textContent = canPay ? 'Бесплатно — когда докопаешь участок до дна. Уйдёшь — вернуться нельзя' : 'Сейчас — только в Телеграме. Бесплатно — когда докопаешь участок до дна';
@@ -3509,8 +3508,8 @@ function plotIcon(r) {
     else { fillStrip(GAME.pl.r, 3, 7); requestAnimationFrame(() => strip.style.transform = `translateX(${-offsetFor(3, 0)}px)`); res.textContent = '' }
   }
   async function spin() {
-    if (spinning || GAME.nx) return; spinning = true; renderButton();
-    const r = roll(); GAME.p = r === 'p' ? 0 : GAME.p + 1;
+    if (spinning || GAME.nx || taxDue()) return; spinning = true; renderButton();
+    const r = roll(await takeLuck()); GAME.p = r === 'p' ? 0 : GAME.p + 1;   // удачу списывает сервер; каждая крутка — одна удача
     GAME.nx = { r, s: newSeed(), n: GAME.pl.n + 1 }; saveGame(true);          // результат записан до анимации
     const AT = 42, TOTAL = 48, jit = (Math.random() - .5) * CW * .7; fillStrip(r, AT, TOTAL);
     const x1 = offsetFor(AT, jit), T = 5200, t0 = performance.now(); let lastK = -1; res.textContent = '';
@@ -3538,6 +3537,7 @@ function plotIcon(r) {
   go.addEventListener('click', async () => {
     haptic('light');
     if (GAME.nx) return move();
+    if (taxDue()) { go.disabled = true; await payTax(); render(); return }
     if (done()) return spin();
     if (!canPay) return;
     go.disabled = true;
@@ -3547,6 +3547,7 @@ function plotIcon(r) {
       tg.openInvoice(r.link, status => { if (status === 'paid') spin(); else { if (status === 'failed') toast('Оплата не прошла'); renderButton() } });
     } catch (e) { toast('Не получилось открыть оплату — попробуй позже'); renderButton() }
   });
+  MAPR.render = render;
   mapbtn.addEventListener('click', () => { mapwrap.hidden = false; render(); mapclose.focus(); haptic('light') });
   mapclose.addEventListener('click', () => { if (spinning) return; mapwrap.hidden = true; mapbtn.focus(); haptic('light') });
 }
@@ -3554,3 +3555,99 @@ Object.assign(window.__dbg, { GAME, saveGame, digAll: () => { for (let k = 0; k 
 // для автопроверок (tests/): создать вещь, мешок, телефон, проверки переноски — игре это ничем не мешает
 Object.assign(window.__dbg, { makeTrash, TYPES, CATS, PRICE, BAG, BC, bagOpen, bagClose, floorY, ACT, holdFreeAt, upFreeAt, trashOverlap, openPhone, closePhone, PH, SMS });
 Object.defineProperty(window.__dbg, 'VCAM', { get: () => VCAM });   // живая ссылка: Object.assign скопировал бы только текущее значение
+
+/* ---------- магазин за звёзды Telegram: налог на землю, удача на крутки, кирка 2×2 ----------
+   налог на землю: раз в 30 дней от первого запуска у каждого игрока (GAME.tx.until — до какого момента оплачено).
+   сумма растёт с номером участка, но медленно (корень) и с потолком. через 5 дней после начала периода — письмо налоговой;
+   срок прошёл, а не оплачено — крутки участков под арестом (копать и переехать на уже выпавший участок можно).
+   вне Телеграма оплатить нечем — там налога нет.
+   удача: GAME.lk — сколько круток ещё с удачей; кирка 2×2: GAME.pk (навсегда, см. digHit в src/05_character.js).
+   всё купленное и срок налога хранит сервер (server/worker.js): игра лишь спрашивает его (/api/me) и показывает.
+   время — по часам сервера (SRV.off — на сколько они расходятся с телефоном). сервер не ответил — налога нет, удача не тратится,
+   кирка — как была в прошлый раз */
+const DAY = 864e5, TAX_PERIOD = 30 * DAY, TAX_SMS_AFTER = 5 * DAY;
+const LUCK_SPINS = 3, LUCK_MUL = 1.5;
+const PAY_ON = !!(tg && tg.initData && tg.openInvoice && tg.isVersionAtLeast && tg.isVersionAtLeast('6.1'));
+const SHOP_TERMS = `1. Товары магазина — игровые: налог на землю продлевает право крутить участки на 30 дней, удача действует на указанное число круток, кирка 2×2 — навсегда.
+2. Оплата — только звёздами Telegram, цена видна в окне оплаты до подтверждения.
+3. Платёж прошёл по ошибке или товар не появился — напиши в течение 14 дней через /paysupport в боте, разберёмся или вернём звёзды.
+4. Поддержка Telegram с покупками в этом боте не помогает — по оплате пиши через /paysupport.
+5. Игра в разработке, возможны ошибки и изменения.`;
+const SRV = { ok: false, off: 0, tax: 0 }, srvNow = () => Date.now() + SRV.off;
+const taxAmount = () => SRV.tax || Math.min(49, Math.round(15 + 3 * Math.sqrt(GAME.pl.n)));   // считает сервер: 1 участок — 18 ⭐, 10 — 24, 100 — 45, потолок 49
+function taxDue() { return PAY_ON && SRV.ok && srvNow() >= GAME.tx.until }
+const srvApi = (path, body = {}) => fetch(PAY_API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData, plot: GAME.pl.n, ...body }) }).then(r => r.json());
+function srvApply(r) {
+  if (!r || typeof r.taxUntil !== 'number') return false;
+  SRV.ok = true; SRV.off = r.now - Date.now(); SRV.tax = r.tax; GAME.tx.until = r.taxUntil; GAME.lk = r.luck | 0; GAME.pk = r.pick ? 1 : 0;
+  if (!document.getElementById('supwrap').hidden) SHOPUI.render(); if (!mapwrap.hidden && MAPR.render) MAPR.render(); SHOPUI.dot(); return true;
+}
+async function srvSync() { if (!PAY_ON) return false; try { return srvApply(await srvApi('/api/me')) } catch (e) { return false } }
+async function takeLuck() {                                      // крутка с удачей: сервер списывает одну; не ответил — крутим без удачи
+  if (!(PAY_ON && SRV.ok && GAME.lk > 0)) return false;
+  try { const r = await srvApi('/api/luck'); srvApply(r); return !!r.ok } catch (e) { return false }
+}
+const taxDate = t => new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+function plotOdds(lucky) {                                       // шансы редкостей в % — с удачей или без
+  const w = PLOT_ODDS.map(([r, p]) => [r, p * (lucky ? LUCK_MUL ** RAR[r].tier : 1)]), s = w.reduce((a, [, p]) => a + p, 0);
+  return w.map(([r, p]) => [r, p / s * 100]);
+}
+/* покупка: сервер выставляет счёт; после оплаты товар выдаёт сервер — ждём, пока он это подтвердит (got — «товар уже у игрока?») */
+async function payStars(product, got, done) {
+  if (!PAY_ON) { toast('Покупки — только в Телеграме'); return false }
+  try {
+    const r = await srvApi('/api/invoice', { product });
+    if (!r.link) throw new Error(r.error || 'нет ссылки');
+    const st = await new Promise(res => tg.openInvoice(r.link, res));
+    if (st !== 'paid') { if (st === 'failed') toast('Оплата не прошла'); return false }
+    haptic('medium'); toast('Оплата прошла — получаем покупку…', 2);
+    for (let k = 0; k < 8; k++) { await new Promise(w => setTimeout(w, k ? 1500 : 600)); if (await srvSync() && got()) { done(); saveGame(true); return true } }
+    toast('Оплата прошла — покупка появится через минуту', 3); setTimeout(srvSync, 30000); return true;
+  } catch (e) { toast('Не получилось открыть оплату — попробуй позже'); return false }
+}
+function taxLetter(text) { const tx = GAME.tx; tx.L.push([Date.now(), text]); if (tx.L.length > 8) tx.L.splice(0, tx.L.length - 8); tx.nw = true;
+  SMS.badge(); SMS.buzz(); SMS.refresh(); toast('СМС от Налоговой службы…', 2) }
+function payTax() {
+  const amt = taxAmount(), u0 = GAME.tx.until;
+  return payStars('tax', () => GAME.tx.until > u0, () => {
+    taxLetter(`Налог на землю получен: ${amt} ⭐. Спасибо! Следующий платёж — до ${taxDate(GAME.tx.until)}.`); GAME.tx.nw = false; SMS.badge();
+    toast('Налог оплачен — крутки снова доступны', 2); MAPR.render && MAPR.render() });
+}
+function taxTick() {                                             // письма налоговой: напоминание через 5 дней после начала периода и арест в срок
+  if (!PAY_ON || !SRV.ok) return; const tx = GAME.tx, now = srvNow();
+  if (now >= tx.until - TAX_PERIOD + TAX_SMS_AFTER && tx.w !== tx.until && now < tx.until) { tx.w = tx.until;
+    taxLetter(`Уважаемый владелец участка №${GAME.pl.n}! Налог на землю — ${taxAmount()} ⭐, оплатить до ${taxDate(tx.until)}. Оплатить можно в магазине (⭐). Без оплаты участок будет арестован: новые участки крутить будет нельзя.`) }
+  if (now >= tx.until && tx.o !== tx.until) { tx.o = tx.until;
+    taxLetter(`Срок уплаты налога на землю истёк. Участок №${GAME.pl.n} под арестом: крутки новых участков закрыты до оплаты (${taxAmount()} ⭐, магазин ⭐). Копать можно.`) }
+  SHOPUI.dot();
+}
+const SHOPUI = { render() { }, dot() { } };
+{
+  const btn = document.getElementById('supbtn'), wrap = document.getElementById('supwrap'), close = document.getElementById('supclose');
+  const list = document.getElementById('supopts'), terms = document.getElementById('supterms');
+  icon(XI, { k: '#10141f', x: '#e9f0ee' }, close); terms.textContent = SHOP_TERMS;
+  const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e };
+  const row = (name, sub, price, on, cls) => { const b = h('button', 'opt' + (cls ? ' ' + cls : '')); b.type = 'button'; const s = h('span'); s.append(h('span', '', name), h('small', '', sub)); b.append(s, h('b', '', price));
+    if (on) b.addEventListener('click', async () => { list.querySelectorAll('.opt').forEach(o => o.disabled = true); await on(); SHOPUI.render() }); else b.disabled = true; list.append(b) };
+  SHOPUI.render = () => {
+    list.textContent = ''; const tx = GAME.tx, now = srvNow(), open = now >= tx.until - TAX_PERIOD + TAX_SMS_AFTER;
+    if (!PAY_ON) row('Налог на землю', 'Платится раз в месяц — только в Телеграме', '—', null);
+    else if (!SRV.ok) row('Налог на землю', 'Нет связи с сервером — попробуй позже', '…', null);
+    else if (taxDue()) row('Налог на землю', 'Просрочен — крутки участков под арестом', taxAmount() + ' ⭐', payTax, 'due');
+    else row('Налог на землю', open ? `Оплатить до ${taxDate(tx.until)}` : `Оплачен до ${taxDate(tx.until)}`, open ? taxAmount() + ' ⭐' : '✓', open ? payTax : null);
+    row(`Удача на ${LUCK_SPINS} крутки`, `Синий и фиолетовый участки выпадают чаще` + (GAME.lk > 0 ? ` · осталось ${GAME.lk}` : ''), '59 ⭐',
+      () => { const l0 = GAME.lk | 0; return payStars('luck3', () => GAME.lk > l0, () => { toast('🍀 Удача на ' + LUCK_SPINS + ' крутки', 2); MAPR.render && MAPR.render() }) });
+    if (GAME.pk) row('Кирка 2×2', 'Куплена — один удар вскрывает квадрат 2×2', '✓', null);
+    else row('Кирка 2×2', 'Навсегда: один удар вскрывает квадрат 2×2', '799 ⭐', () => payStars('pick22', () => GAME.pk, () => toast('Кирка 2×2 — твоя! Копай квадратами', 2)));
+    SHOPUI.dot();
+  };
+  SHOPUI.dot = () => { let d = btn.querySelector('.due'); const due = taxDue(); if (due && !d) { d = h('i', 'due'); btn.append(d) } if (!due && d) d.remove() };
+  if (PAY_ON) btn.hidden = false;
+  btn.addEventListener('click', () => { SHOPUI.render(); wrap.hidden = false; close.focus(); haptic('light') });
+  close.addEventListener('click', () => { wrap.hidden = true; btn.focus(); haptic('light') });
+  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.hidden = true });
+  document.getElementById('suptermsbtn').addEventListener('click', () => { terms.hidden = !terms.hidden });
+  srvSync().then(taxTick); setInterval(taxTick, 5000); setInterval(srvSync, 5 * 60e3);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) srvSync() });   // вернулся в игру — свериться с сервером
+}
+Object.assign(window.__dbg, { taxDue, taxAmount, plotOdds, taxTick, srvSync, SRV, SHOPUI, digHit, SMS, d });

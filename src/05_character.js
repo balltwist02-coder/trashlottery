@@ -82,6 +82,12 @@ function digCell(a) {
   if (z >= 1) SMS.unlock('stranger');                         // начали второй слой — СМС с неизвестного номера
   if (!SHOP.revealed && ACT.some(([ci, cj], q) => cj === PIT0 && ci >= SHOP.i0 && ci < SHOP.i1 && d[q] > SHOP.z0)) revealShop();
 }
+/* удар киркой: с киркой 2×2 (покупка навсегда, GAME.pk) вскрывает весь квадрат 2×2 ямы, в котором клетка, — только клетки на том же слое */
+function digHit(a) {
+  const z = d[a]; digCell(a); if (!GAME.pk) return;
+  const [i, j] = ACT[a], qi = (i - PIT0) >> 1, qj = (j - PIT0) >> 1;
+  ACT.forEach(([ci, cj], q) => { if (q !== a && (ci - PIT0) >> 1 === qi && (cj - PIT0) >> 1 === qj && d[q] === z && z < DIG) digCell(q) });
+}
 function busy() { shakeTool(tool); toast('Руки заняты — сначала поставь ' + (CH.held.type === 'lantern' ? 'фонарь' : 'предмет')) }
 function act() {
   if (!tool) { haptic('warn'); return }
@@ -99,8 +105,8 @@ function act() {
     const t = nearItem(t => TYPES[t.type].breaks); if (t) { CH.swing = .3; breakTrash(t) } else shakeTool('bar'); return }
   if (tool === 'trowel') { const s = spotAhead(); if (s && !s.state) loosen(s); else { shakeTool('trowel'); toast(s ? 'Уже разрыхлено — подставь консервную банку' : 'Лопатка рыхлит землю там, где на стенке черви') } return }
   const a = standCell(), nb = a < 0 ? -1 : cellAt(CH.x + CH.face.x * (R + .48), CH.z + CH.face.z * (R + .48));
-  if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digCell(nb); else shakeTool('pick'); return }   // стенка перед нами
-  if (a >= 0 && diggable(a, d[a])) { digCell(a); return }      // блок под ногами — после него падаем вниз
+  if (nb >= 0 && nb !== a && floorY(nb) > floorY(a) + .01) { if (diggable(nb, d[nb])) digHit(nb); else shakeTool('pick'); return }   // стенка перед нами
+  if (a >= 0 && diggable(a, d[a])) { digHit(a); return }      // блок под ногами — после него падаем вниз
   shakeTool('pick');
 }
 function itemPt(t) {                                           // ближняя к персонажу точка предмета: у шины и скелета край намного ближе середины

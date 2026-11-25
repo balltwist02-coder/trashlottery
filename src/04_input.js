@@ -57,7 +57,7 @@ function tap(e) {
     const { i, j, z } = h.object.userData, a = isAct(i, j);
     if (a >= 0 && diggable(a, z) && reach(a)) {
       if (a !== standCell()) { const [ci, cj] = ACT[a]; const v = new THREE.Vector3(ci + .5 - CH.x, 0, cj + .5 - CH.z); v.x = Math.abs(v.x) > Math.abs(v.z) ? Math.sign(v.x) : 0; v.z = v.x ? 0 : Math.sign(v.z); CH.face.copy(v) }
-      digCell(a); return }
+      digHit(a); return }
   }
   act();                                                       // иначе — инструмент в ту сторону, куда смотрит персонаж
 }

@@ -7,9 +7,17 @@ const path = require('path'), fs = require('fs');
 const ROOT = path.resolve(__dirname, '..'), CACHE = path.join(__dirname, '.cache'), OUT = path.join(__dirname, 'out');
 const PAGE = process.env.PAGE || 'index.html';
 
-async function openGame(browser) {
+async function openGame(browser, opt = {}) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 760 }, deviceScaleFactor: 1 });
   const p = await ctx.newPage(), errors = [];
+  // поддельный Телеграм и поддельный сервер оплаты (как server/worker.js): окно оплаты сразу отвечает «paid», сервер выдаёт товар
+  const srv = { until: Date.now() + 30 * 864e5, luck: 0, pick: 0, plots: 1, shift: 0, paid: [] };
+  const taxOf = n => Math.min(49, Math.round(15 + 3 * Math.sqrt(n)));
+  const sNow = () => Date.now() + srv.shift, sState = () => ({ now: sNow(), taxUntil: srv.until, tax: taxOf(srv.plots), luck: srv.luck, pick: srv.pick });
+  if (opt.tg) await p.addInitScript(() => {
+    window.Telegram = { WebApp: { initData: 'test', ready() { }, expand() { }, setHeaderColor() { }, setBackgroundColor() { }, onEvent() { }, isVersionAtLeast: v => parseFloat(v) < 6.5,
+      openInvoice(link, cb) { fetch('https://trashlottery-pay.balltwist02.workers.dev/test/paid', { method: 'POST', body: link }).then(() => cb('paid')) } } };
+  });
   p.on('pageerror', e => errors.push('JS: ' + e.message));
   p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|vibrate/.test(m.text())) errors.push('console: ' + m.text()); if (m.type() === 'warning' && /без категории/.test(m.text())) errors.push(m.text()) });
   await p.route('**/*', r => {
@@ -18,6 +26,17 @@ async function openGame(browser) {
     if (u.includes('cannon-es.js')) return r.fulfill({ path: path.join(CACHE, 'cannon-es/dist/cannon-es.js'), contentType: 'text/javascript' });
     if (u.startsWith('http://game/')) { const f = path.join(ROOT, decodeURIComponent(new URL(u).pathname)); if (!fs.existsSync(f)) return r.fulfill({ status: 404 });
       return r.fulfill({ path: f, contentType: f.endsWith('.js') ? 'text/javascript' : f.endsWith('.html') ? 'text/html' : undefined }) }
+    if (opt.tg && u.includes('workers.dev/')) {
+      const H = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' }, J = o => r.fulfill({ headers: H, contentType: 'application/json', body: JSON.stringify(o) });
+      if (r.request().method() === 'OPTIONS') return r.fulfill({ headers: H, body: '' });
+      const path = new URL(u).pathname, raw = r.request().postData() || '{}';
+      if (path === '/test/paid') { const pr = raw; srv.paid.push(pr);
+        if (pr === 'tax') srv.until = Math.max(sNow(), srv.until) + 30 * 864e5; if (pr === 'luck3') srv.luck += 3; if (pr === 'pick22') srv.pick = 1; return J({}) }
+      const b = JSON.parse(raw); if (b.plot) srv.plots = Math.max(srv.plots, b.plot);
+      if (path === '/api/me') return J(sState());
+      if (path === '/api/luck') { const ok = srv.luck > 0; if (ok) srv.luck--; return J({ ok, ...sState() }) }
+      if (path === '/api/invoice') return J({ link: b.product });
+    }
     return r.abort();                                            // Telegram, оплата и прочий интернет — не нужны
   });
   await p.goto('http://game/' + PAGE);
@@ -36,7 +55,7 @@ async function openGame(browser) {
       st() { const CH = D.CH; return { x: CH.x, y: CH.y, z: CH.z, yaw: CH.yaw, up: CH.up || 0, state: CH.state } },
     };
   });
-  return { p, ctx, errors };
+  return { p, ctx, errors, srv };
 }
 const J = { px: [.7, .7], mx: [-.7, -.7], pz: [-.7, .7], mz: [.7, -.7] };   // джойстик: куда идёт Кирью по осям мира (+x, −x, +z, −z)
 async function walk(p, dir, ms) { await p.evaluate(([x, y]) => T.joy(x, y), J[dir]); await p.waitForTimeout(ms); await p.evaluate(() => T.joy(0, 0)); await p.waitForTimeout(150); return p.evaluate(() => T.st()) }
@@ -103,6 +122,42 @@ const SCEN = {
     const r = await p.evaluate(() => ({ lads: [...window.__dbg.LADS.keys()], held: !!window.__dbg.CH.held }));
     ok(r.lads.length > 0 && !r.held, 'принёс лестницу к стенке и повесил', JSON.stringify(r));
   },
+  async shop({ p, srv }, ok) {
+    const s0 = await p.evaluate(() => ({ ok: window.__dbg.SRV.ok, due: window.__dbg.taxDue(), amt: window.__dbg.taxAmount(), vis: !document.getElementById('supbtn').hidden }));
+    ok(s0.ok && s0.vis && !s0.due && s0.amt === 18, 'сервер ответил, магазин виден, налог не просрочен, налог за 1 участок — 18 ⭐', JSON.stringify(s0));
+    // через 5 дней — письмо налоговой; через 30 — арест круток (время — по часам сервера)
+    srv.shift = 5 * 864e5 + 1000; await p.evaluate(async () => { await window.__dbg.srvSync(); window.__dbg.taxTick() });
+    ok(await p.evaluate(() => window.__dbg.GAME.tx.L.length === 1 && window.__dbg.SMS.unread() > 0), 'через 5 дней пришло письмо налоговой');
+    srv.shift = 31 * 864e5; await p.evaluate(async () => { await window.__dbg.srvSync(); window.__dbg.taxTick() });
+    await p.locator('#mapbtn').click(); await p.waitForTimeout(400);
+    const m = await p.evaluate(() => ({ arrest: document.querySelector('.rl').classList.contains('arrest'), btn: document.querySelector('.rl-go').textContent, L: window.__dbg.GAME.tx.L.length }));
+    ok(m.arrest && /налог/.test(m.btn) && m.L === 2, 'срок прошёл — крутки под арестом, кнопка «оплатить налог»', JSON.stringify(m));
+    await p.screenshot({ path: path.join(OUT, 'shop_arrest.png') });
+    await p.locator('.rl-go').click(); await p.waitForTimeout(1500);
+    const a = await p.evaluate(() => ({ due: window.__dbg.taxDue(), arrest: document.querySelector('.rl').classList.contains('arrest') }));
+    ok(!a.due && !a.arrest && srv.paid[0] === 'tax' && srv.until - (Date.now() + srv.shift) > 29 * 864e5, 'налог оплачен — сервер продлил срок, арест снят', JSON.stringify(a));
+    await p.locator('#mapclose').click();
+    // удача: покупка, шансы, списание сервером при крутке
+    await p.locator('#supbtn').click(); await p.waitForTimeout(300);
+    await p.locator('#supopts .opt', { hasText: 'Удача' }).click(); await p.waitForTimeout(1500);
+    const l = await p.evaluate(() => ({ lk: window.__dbg.GAME.lk, odds: window.__dbg.plotOdds(true).map(x => +x[1].toFixed(1)) }));
+    ok(l.lk === 3 && srv.luck === 3 && l.odds[2] > 9, 'удача куплена: 3 крутки на сервере, фиолетовый чаще', JSON.stringify(l));
+    await p.evaluate(() => document.getElementById('supwrap').hidden = true);
+    await p.evaluate(() => window.__dbg.digAll()); await p.waitForTimeout(500);
+    await p.locator('#mapbtn').click(); await p.waitForTimeout(400); await p.locator('.rl-go').click(); await p.waitForTimeout(6500);
+    ok(srv.luck === 2 && await p.evaluate(() => window.__dbg.GAME.lk === 2 && !!window.__dbg.GAME.nx), 'крутка с удачей: сервер списал одну', 'на сервере ' + srv.luck);
+    await p.locator('#mapclose').click();
+    // кирка 2×2 — в новой игре, чтобы яма была нетронутой
+  },
+  async pickaxe({ p, srv }, ok) {
+    await p.locator('#supbtn').click(); await p.waitForTimeout(300);
+    await p.locator('#supopts .opt', { hasText: 'Кирка' }).click(); await p.waitForTimeout(1500);
+    await p.screenshot({ path: path.join(OUT, 'shop_list.png') });
+    await p.evaluate(() => { document.getElementById('supwrap').hidden = true; T.put(2.5, 2.5) });
+    await p.evaluate(() => window.__dbg.digHit(0)); await p.waitForTimeout(300);
+    const dd = await p.evaluate(() => ({ pk: window.__dbg.GAME.pk, d: window.__dbg.d.slice() }));
+    ok(srv.pick === 1 && dd.pk === 1 && dd.d.filter(v => v > 0).length === 4 && dd.d[0] && dd.d[1] && dd.d[4] && dd.d[5], 'кирка 2×2 куплена на сервере, один удар вскрыл квадрат 2×2', JSON.stringify(dd));
+  },
   async phone({ p }, ok) {
     await p.evaluate(() => window.__dbg.openPhone()); const on = await until(p, () => window.__dbg.PH.on && window.__dbg.PH.k > .9, 6000);
     ok(on, 'телефон открылся');
@@ -131,7 +186,7 @@ async function bag({ p }, ok, depth) {
   const browser = await chromium.launch({ executablePath: process.env.CHROME || '/usr/bin/google-chrome', args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   let fails = 0; const t0 = Date.now();
   for (const n of names) {
-    const g = await openGame(browser), res = [];
+    const g = await openGame(browser, { tg: n === 'shop' || n === 'pickaxe' }), res = [];
     const ok = (cond, what, info = '') => res.push([!!cond, what, info]);
     try { await SCEN[n](g, ok) } catch (e) { res.push([false, 'сценарий упал', e.message.split('\n')[0]]) }
     await g.p.waitForTimeout(300); await g.p.screenshot({ path: path.join(OUT, n + '.png') });

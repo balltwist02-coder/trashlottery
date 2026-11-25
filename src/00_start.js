@@ -11,9 +11,9 @@ import { createKudzuya } from './kudzuya.js?v=1';
    сколько выкопано в каждой клетке, какие предметы уже откопаны, где лежат откопанные вещи вне дома, монеты и счётчики.
    ключи облака Телеграма (у каждого игрока своё; в браузере — localStorage): game = {v, …, n}, game_0.. = вещи «тип,x,y,z,qx,qy,qz,qw;…» */
 const RAR = {
-  g: { name: 'Зелёный', col: '#5fc24a', layers: 20, trash: .6 },
-  b: { name: 'Синий', col: '#4a90ff', layers: 27, trash: .7 },
-  p: { name: 'Фиолетовый', col: '#b65cff', layers: 35, trash: .8 },
+  g: { name: 'Зелёный', col: '#5fc24a', layers: 20, trash: .6, tier: 0 },     // tier — уровень редкости: удача умножает шанс на LUCK_MUL^tier,
+  b: { name: 'Синий', col: '#4a90ff', layers: 27, trash: .7, tier: 1 },       // так что новой редкости достаточно дать уровень
+  p: { name: 'Фиолетовый', col: '#b65cff', layers: 35, trash: .8, tier: 2 },
 };
 const GAME_V = 1;
 const mulberry = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296 };
@@ -60,6 +60,7 @@ function genPlot(r, seed) {
   return out;
 }
 const GAME = await loadGame();
+if (!GAME.tx || !(GAME.tx.until > 0)) { const now = Date.now(); GAME.tx = { t0: now, until: now + 30 * 864e5, L: [] } }   // налог на землю: срок — через месяц от первого запуска (магазин — src/19_shop.js)
 const PLOT = GAME.pl.h ? window.PLOT3D : genPlot(GAME.pl.r, GAME.pl.s), TEX = window.TEX3D;
 const N = 6, DIG = PLOT.length - 10, BOT = DIG + 10;   // ниже дна ямы — ещё 10 слоёв цельного камня, чтобы мир не обрывался            // сетка 6×6: две декоративные стенки сзади и сбоку, яма — передние 4×4; нижние 10 слоёв срезаны
 const PIT0 = 2, PIT1 = 6, PC = (PIT0 + PIT1) / 2; // яма занимает x,z от 2 до 6
